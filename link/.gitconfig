@@ -49,17 +49,19 @@
   logsince  = log --pretty='* %s' --reverse
   logsinceh = log --pretty='%C(dim)%h%C(reset) %s' --reverse
   # stats shorcuts fra https://gist.github.com/hofmannsven/6814278
-  stats        = log -10 --dirstat=files,1,cumulative --ignore-blank-lines --abbrev-commit --oneline --graph --decorate
-  rebasesign   = rebase --exec 'git commit --amend --no-edit -n -S'
-  sign         = commit --amend --no-edit -S
+  stats      = log -10 --dirstat=files,1,cumulative --ignore-blank-lines --abbrev-commit --oneline --graph --decorate
+  rebasesign = rebase --exec 'git commit --amend --no-edit -n -S'
+  sign       = commit --amend --no-edit -S
   # clean/remove merged branches
-  gone          = !git branch -v | grep gone | awk '{print $1}'
-  fetchall      = !find . -type d -maxdepth 1 -mindepth 1 | parallel --keep-order \"test -d {}/.git && echo {} && git -C {} fetch --tags -f --all\"
+  gone       = !git branch -v | grep gone | awk '{print $1}'
+  #fetchall   = !find . -type d -maxdepth 1 -mindepth 1 | parallel --keep-order \"test -d {}/.git && echo {} && git -C {} fetch --tags -f --all\" 2>/dev/null || true
+  fetchall   = !find . -type d -maxdepth 1 -mindepth 1 | parallel --keep-order 'test -d {}/.git && git -C {} remote get-url origin &>/dev/null && test -n "$(git -C {} remote get-url origin)" && echo {} && git -C {} fetch --tags -f --all' || true
 
   # check-whitespace usage:
   # git check-whitespace | grep trailing | cut -d: -f1 | uniq -u -z | xargs -0 sed --in-place -e 's/[ \t]+$//'
   # from https://stackoverflow.com/a/40371757/109305
   check-whitespace = !git diff-tree --check $(git hash-object -t tree /dev/null) HEAD
+        stashlog = reflog show stash --date=iso
 
 [fetch]
   recursesubmodules = true
