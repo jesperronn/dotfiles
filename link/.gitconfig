@@ -32,7 +32,6 @@
   brs          = branch --sort committerdate
   sw           = switch
   root         = rev-parse --show-toplevel
-  cdroot       = ! cd "$(git rev-parse --show-toplevel)"
   sha          = rev-parse HEAD
   taglist      = for-each-ref --sort taggerdate --color --format '%(align:25,left)%(refname:short)%(end) %(objectname:short) %(color:blue)%(taggerdate:short)%(color:reset)%(color:cyan)%(committerdate:short)%(color:reset)' refs/tags
   branchlist   = git for-each-ref --sort committerdate --format '%(objectname:short) %(color:blue)%(authordate:short)%(color:reset) %(align:36,left)%(refname:short)%(end)%09(%(authorname))' refs/remotes
@@ -61,7 +60,7 @@
   # git check-whitespace | grep trailing | cut -d: -f1 | uniq -u -z | xargs -0 sed --in-place -e 's/[ \t]+$//'
   # from https://stackoverflow.com/a/40371757/109305
   check-whitespace = !git diff-tree --check $(git hash-object -t tree /dev/null) HEAD
-        stashlog = reflog show stash --date=iso
+  stashlog = reflog show stash --date=iso
 
 [fetch]
   recursesubmodules = true

@@ -49,3 +49,9 @@ function cp_date() {
   set +u
   cp -v "$file" "$(_calc_backup_filename "$file" )"
 }
+
+# Git aliases with '!' execute in a subshell, so cd commands only affect that subshell
+# and don't persist to the parent shell. These must be shell functions instead.
+function cdroot() {
+  cd "$(git rev-parse --show-toplevel)" || return 1
+}
