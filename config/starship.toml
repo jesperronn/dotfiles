@@ -1,3 +1,6 @@
+# Get editor completions based on the config schema
+"$schema" = 'https://starship.rs/config-schema.json'
+
 format = """
 $username\
 $hostname\
@@ -9,6 +12,11 @@ $cmd_duration\
 $line_break\
 $status\
 $character"""
+
+# Replace the '❯' symbol in the prompt with something else
+[character] # The name of the module we are configuring is 'character'
+success_symbol = '[\$](bold green)'
+
 
 [directory]
 style = "blue"
