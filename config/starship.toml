@@ -15,7 +15,8 @@ $character"""
 
 # Replace the '❯' symbol in the prompt with something else
 [character] # The name of the module we are configuring is 'character'
-success_symbol = '[\$](bold green)'
+success_symbol = '\$(bold green)'
+error_symbol = '\$(bold red)'
 
 
 [directory]
@@ -48,7 +49,7 @@ untracked = ""
 
 [status]
 disabled = false
-symbol = "🤔 "
+symbol = "✖ " # "🤔 "if not set, default to '❌'
 
 [python]
 format = "[$virtualenv]($style) "
