@@ -13,7 +13,9 @@
 
 
 
+# existing generated completion file -- to reuse
 DST=~/bin/.git-completion.bash
+# generate if not existing
 if [ ! -f $DST ]; then
   "$DOTFILES/bin/setup/git-completion.sh"
 fi
@@ -21,7 +23,9 @@ source "$DST"
 
 
 # kubectl autocompletion
+# existing generated completion file -- to reuse
 DST=~/bin/.kubectl-completion.bash
+# generate if not existing
 if [ ! -f $DST ]; then
   kubectl completion bash > $DST
 fi

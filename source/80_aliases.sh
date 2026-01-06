@@ -14,17 +14,43 @@ alias tophist="history | awk '{print \$4}' | awk 'BEGIN{FS=\"|\"}{print \$1}' | 
 # test if needed with `echo "test" | gpg --clearsign`
 export GPG_TTY=$(tty)
 
-# chrome shortcut
-# from https://developers.google.com/web/updates/2017/04/headless-chrome
-alias chrome="/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome"
-
 # avoid Chromium asking for Firewall permissions on every launch of Puppeteer in Catalina
 # tip from https://github.com/puppeteer/puppeteer/issues/4752#issuecomment-586599843
 alias sign_puppeteer="sudo codesign --force --deep --sign - ./node_modules/puppeteer/.local-chromium/mac-*/chrome-mac/Chromium.app"
 
+# Flush Directory Service cache
+alias flush="dscacheutil -flushcache"
+
 function _timestamp() {
   date '+%Y%m%dT%H%M%S'
 }
+
+# convert unix timestamp (in seconds or milliseconds) to ISO 8601 format
+# usage examples:
+#   ts2iso 1672531199000
+#    echo 1672531199000 | ts2iso
+_ts2human(){
+  local ts input
+  if [ -n "$1" ]; then
+    input="$1"
+  elif [ ! -t 0 ]; then
+    input="$(cat)"
+  else
+    input="$(date +%s%3N)"
+  fi
+  ts="$(echo "$input" | tr -d '\n')"
+  local len=${#ts}
+  if [ $len -ge 13 ]; then
+    s=$((ts/1000))
+    ms=$(printf "%03d" $((ts%1000)))
+  else
+    s=$ts
+    ms="000"
+  fi
+  date -r $s +"%Y-%m-%dT%H:%M:%S" | awk -v ms="$ms" '{print $0 "." ms "+" strftime("%z", s)}'
+}
+alias ts2human='_ts2human'
+
 
 function _calc_backup_filename(){
   set -u

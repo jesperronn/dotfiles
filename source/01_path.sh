@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 
 paths=(
-  ~/.local/bin
+  $HOME/.local/bin
   $DOTFILES/bin
   "/Applications/IntelliJ IDEA.app/Contents/MacOS"
   /usr/local/bin

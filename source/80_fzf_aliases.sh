@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 
-eval "$(fzf --bash)"
+[ -f ~/.fzf.bash ] && source ~/.fzf.bash
 
 # git integration: https://github.com/junegunn/fzf-git.sh/blob/main/README.md
 # List of bindings

@@ -2,6 +2,9 @@
 
 alias k='kubectl'
 
+alias lzd='lazydocker'
+alias lz='lazydocker'
+
 
 # Cisco vpn credentials can be fired from command line. copy this file
 # and use it like this:
