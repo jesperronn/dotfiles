@@ -323,6 +323,29 @@ setup_links() {
     fi
 }
 
+ensure_privileged_ports() {
+    echo "🛡️ Ensuring Podman VM can bind to port 443..."
+    local CURRENT_LIMIT
+    CURRENT_LIMIT=$(podman machine ssh "sysctl -n net.ipv4.ip_unprivileged_port_start" 2>/dev/null | tr -d '\r')
+
+    if [ -z "$CURRENT_LIMIT" ]; then
+        echo "⚠️ Unable to read current privileged port limit from the Podman VM. Skipping automatic fix."
+        return
+    fi
+
+    if [ "$CURRENT_LIMIT" -le 443 ]; then
+        echo "✅ Podman VM already allows privileged ports down to $CURRENT_LIMIT."
+        return
+    fi
+
+    echo "⚙️ Lowering net.ipv4.ip_unprivileged_port_start to 443 inside the Podman VM..."
+    if podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system" >/dev/null; then
+        echo "🔓 Podman VM updated: containers can now bind to port 443."
+    else
+        echo "❌ Failed to update the privileged port limit. Please rerun 'podman-allow-port-443' manually after starting the VM."
+    fi
+}
+
 cleanup_aliases() {
     echo "🔍 Checking for conflicting shell aliases..."
 
@@ -357,6 +380,7 @@ run_main() {
     setup_binaries
     cleanup_aliases
     setup_links
+    ensure_privileged_ports
 
     echo "✨ Migration complete! Run: source $CONF_FILE"
     echo "💡 Use 'docker login <registry>' going forward so Podman and docker-compose remain in sync."
