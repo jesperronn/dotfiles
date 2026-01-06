@@ -99,12 +99,19 @@ install_tooling() {
 
 init_podman() {
     if ! podman machine inspect podman-machine-default >/dev/null 2>&1; then
-        echo "🤖 Initializing Podman machine (6 CPUs, 9GB RAM, 100GB Disk)..."
-        podman machine init --cpus 6 --memory 9000 --disk-size 100
+        echo "🤖 Initializing fresh High-Performance Podman machine..."
+        # Simplified for Podman 5.7.1 compatibility
+        # Defaults to AppleHV + VirtioFS on M-series Macs
+        podman machine init \
+            --cpus 6 \
+            --memory 9000 \
+            --disk-size 100 \
+            --rootful=false
     fi
+
+    echo "🚀 Starting Podman machine..."
     podman machine start 2>/dev/null || echo "ℹ️ Machine already running."
 }
-
 configure_shell() {
     echo "📝 Injecting configuration into $CONF_FILE..."
 
@@ -146,17 +153,22 @@ EOF
         echo "export PODMAN_ADVISORY_MODE=false" >> "${CONF_FILE}"
     fi
 
-    # 5. Provide a helper function to allow rootless Podman to bind to port 443
+    # 5. Provide a helper function for port 443
     if ! grep -q "podman-allow-port-443" "${CONF_FILE}"; then
         cat << 'EOF' >> "${CONF_FILE}"
 
 # Allows rootless Podman containers to listen on privileged ports like 443.
-# Warns that sudo will be invoked inside the Podman VM during the one-time change.
 podman-allow-port-443() {
     echo "⚠️ Running sudo inside the Podman VM to open port 443 (one-time change)."
     podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
 }
 EOF
+    fi
+
+    # 6. Performance Optimization: Parallel Pulls and DNS speedup
+    if ! grep -q "export PODMAN_PULL_PARALLEL" "$CONF_FILE"; then
+        echo "export PODMAN_PULL_PARALLEL=5" >> "$CONF_FILE"
+        echo "export GODEBUG=netdns=go" >> "$CONF_FILE"
     fi
 }
 
