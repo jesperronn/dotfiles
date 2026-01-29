@@ -133,6 +133,8 @@ local colors = {
     arrow_background_leader = scheme_colors.catppuccin.macchiato.crust,
 }
 
+config.enable_scroll_bar = true
+
 
 --[[
 ============================
@@ -173,12 +175,23 @@ config.keys = {
     {
         mods = "ALT",
         key = "LeftArrow",
-        action = wezterm.action.SendKey { key = "LeftArrow", mods = "CTRL" }
+        action = wezterm.action.SendString "\x1bb"
     },
     {
         mods = "ALT",
         key = "RightArrow",
-        action = wezterm.action.SendKey { key = "RightArrow", mods = "CTRL" }
+        action = wezterm.action.SendString "\x1bf"
+    },
+    -- macOS Terminal-like tab navigation
+    {
+        mods = "CMD|SHIFT",
+        key = "LeftArrow",
+        action = wezterm.action.ActivateTabRelative(-1)
+    },
+    {
+        mods = "CMD|SHIFT",
+        key = "RightArrow",
+        action = wezterm.action.ActivateTabRelative(1)
     },
 
     -- Leader Keybindings -- tab and pane management
@@ -275,14 +288,88 @@ config.tab_bar_at_bottom = false -- modified
 config.use_fancy_tab_bar = true
 config.tab_and_split_indices_are_zero_based = false
 
+
+local function compute_cwd_title(pane)
+    local function normalize_path(path)
+        if not path then
+            return nil
+        end
+        return path:gsub("/+$", "")
+    end
+
+    local function basename(path)
+        if not path or path == "" then
+            return ""
+        end
+        return path:match("[^/]+$") or path
+    end
+
+    local function uri_to_path(uri)
+        if not uri then
+            return nil
+        end
+        if type(uri) == "table" and uri.file_path then
+            return uri.file_path
+        end
+        if type(uri) == "string" then
+            if uri:match("^file://") then
+                return wezterm.uri_to_path(uri)
+            end
+            return uri
+        end
+        return nil
+    end
+
+    local function cwd_path(pane_obj)
+        local cwd_uri = nil
+        if pane_obj and pane_obj.get_current_working_dir then
+            cwd_uri = pane_obj:get_current_working_dir()
+        elseif pane_obj and pane_obj.current_working_dir then
+            cwd_uri = pane_obj.current_working_dir
+        end
+        return uri_to_path(cwd_uri)
+    end
+
+    local function git_root(path)
+        if not path then
+            return nil
+        end
+        local success, stdout, _ = wezterm.run_child_process { "git", "-C", path, "rev-parse", "--show-toplevel" }
+        if not success or not stdout or stdout == "" then
+            return nil
+        end
+        return normalize_path(stdout:gsub("%s+$", ""))
+    end
+
+    local cwd = normalize_path(cwd_path(pane))
+    if not cwd then
+        return nil
+    end
+
+    local root = git_root(cwd)
+    if root then
+        local root_name = basename(root)
+        if cwd == root then
+            return root_name
+        end
+        local subfolder = basename(cwd)
+        return root_name .. "/" .. subfolder
+    end
+
+    return basename(cwd)
+end
+
 local function tab_title(tab_info)
     local title = tab_info.tab_title
-    -- if the tab title is explicitly set, take that
     if title and #title > 0 then
         return title
     end
-    -- Otherwise, use the title from the active pane
-    -- in that tab
+
+    local computed = compute_cwd_title(tab_info.active_pane)
+    if computed and #computed > 0 then
+        return computed
+    end
+
     return tab_info.active_pane.title
 end
 
@@ -317,6 +404,12 @@ wezterm.on(
                 { Text = right_edge_text },
             }
         end
+
+        return {
+            { Text = left_edge_text },
+            { Text = title },
+            { Text = right_edge_text },
+        }
     end
 )
 
@@ -332,6 +425,15 @@ wezterm.on("update-status", function(window, _)
     local arrow_foreground = { Foreground = { Color = colors.arrow_foreground_leader } }
     local arrow_background = { Background = { Color = colors.arrow_background_leader } }
     local prefix = ""
+
+    local pane = window:active_pane()
+    local active_tab = window:active_tab()
+    if pane and active_tab then
+        local computed_title = compute_cwd_title(pane)
+        if computed_title and #computed_title > 0 then
+            active_tab:set_title(computed_title)
+        end
+    end
 
     -- leaader is active
     if window:leader_is_active() then
