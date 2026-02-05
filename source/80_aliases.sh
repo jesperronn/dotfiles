@@ -81,3 +81,13 @@ function cp_date() {
 function cdroot() {
   cd "$(git rev-parse --show-toplevel)" || return 1
 }
+
+# Trace a symlink path through all its hops to the final destination
+trace_link() {
+    local target="$1"
+    while [ -L "$target" ]; do
+        ls -ld "$target"
+        target=$(readlink "$target")
+    done
+    ls -ld "$target"
+}
