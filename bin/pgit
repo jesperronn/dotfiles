@@ -101,24 +101,27 @@ pgit_collect_repo_dirs() {
 
 pgit_init_runtime_state() {
   P_GIT_NO_OUTPUT_DIRS=()
+  P_GIT_FAILED_REPOS=()
 }
 
 pgit_worker() {
   local dir="$1"
+  local result_file="$2"
+  shift
   shift
 
-  local marker_file
   local output
   local exit_code=0
+  local had_output=0
 
   output="$(git -C "$dir" "$@" 2>&1)" || exit_code=$?
 
   if [[ -n "$output" ]]; then
+    had_output=1
     echo -e "${P_GIT_H1}${dir}${P_GIT_H2}\n${output}"
-  else
-    marker_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/marker.XXXXXX")"
-    printf '%s\n' "$dir" > "$marker_file"
   fi
+
+  printf '%s\n%s\n%s\n' "$exit_code" "$had_output" "$dir" > "$result_file"
 
   return $exit_code
 }
@@ -133,25 +136,73 @@ pgit_cleanup_parallel_state() {
   fi
 }
 
-pgit_collect_parallel_no_output() {
-  local marker_file
+pgit_collect_parallel_results() {
+  local result_file
+  local result_lines=()
+  local exit_code
+  local had_output
+  local dir
 
   P_GIT_NO_OUTPUT_DIRS=()
+  P_GIT_FAILED_REPOS=()
 
-  for marker_file in "${P_GIT_PARALLEL_TMP_DIR}"/*; do
-    [[ -f "$marker_file" ]] || continue
-    P_GIT_NO_OUTPUT_DIRS=("${P_GIT_NO_OUTPUT_DIRS[@]}" "$(cat "$marker_file")")
+  for result_file in "$@"; do
+    [[ -f "$result_file" ]] || continue
+    mapfile -t result_lines < "$result_file"
+
+    exit_code="${result_lines[0]:-0}"
+    had_output="${result_lines[1]:-0}"
+    dir="${result_lines[2]:-}"
+
+    if [[ "$had_output" == "0" ]]; then
+      P_GIT_NO_OUTPUT_DIRS=("${P_GIT_NO_OUTPUT_DIRS[@]}" "$dir")
+    fi
+
+    if [[ "$exit_code" != "0" ]]; then
+      P_GIT_FAILED_REPOS=("${P_GIT_FAILED_REPOS[@]}" "${dir}"$'\t'"${exit_code}")
+    fi
   done
 }
 
 pgit_run_repos_parallel() {
-  export P_GIT_H1 P_GIT_H2 P_GIT_PARALLEL_TMP_DIR
+  local dir
+  local worker_pid
+  local output_file
+  local result_file
+  local run_status=0
+  local worker_pids=()
+  local output_files=()
+  local result_files=()
 
-  printf '%s\0' "${P_GIT_REPO_DIRS[@]}" | xargs -0 -I {} -P 0 "$0" --pgit-worker {} "${P_GIT_GIT_ARGS[@]}"
+  for dir in "${P_GIT_REPO_DIRS[@]}"; do
+    output_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/output.XXXXXX")"
+    result_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/result.XXXXXX")"
 
-  local run_status=$?
-  pgit_collect_parallel_no_output
-  return $run_status
+    pgit_worker "$dir" "$result_file" "${P_GIT_GIT_ARGS[@]}" > "$output_file" &
+    worker_pids=("${worker_pids[@]}" "$!")
+    output_files=("${output_files[@]}" "$output_file")
+    result_files=("${result_files[@]}" "$result_file")
+  done
+
+  for worker_pid in "${worker_pids[@]}"; do
+    if ! wait "$worker_pid"; then
+      :
+    fi
+  done
+
+  for output_file in "${output_files[@]}"; do
+    if [[ -s "$output_file" ]]; then
+      cat "$output_file"
+    fi
+  done
+
+  pgit_collect_parallel_results "${result_files[@]}"
+
+  if [[ ${#P_GIT_FAILED_REPOS[@]} -gt 0 ]]; then
+    run_status="${P_GIT_FAILED_REPOS[0]##*$'\t'}"
+  fi
+
+  return "$run_status"
 }
 
 pgit_run_repos() {
@@ -171,6 +222,24 @@ pgit_report_no_output() {
     echo -e "${P_GIT_H1}no output from${P_GIT_H2}"
     printf '%s\n' "${P_GIT_NO_OUTPUT_DIRS[@]}"
   fi
+}
+
+pgit_report_errors() {
+  local failed_repo
+  local dir
+  local exit_code
+
+  if [[ ${#P_GIT_FAILED_REPOS[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo -e "${P_GIT_H1}errors${P_GIT_H2}"
+
+  for failed_repo in "${P_GIT_FAILED_REPOS[@]}"; do
+    dir="${failed_repo%%$'\t'*}"
+    exit_code="${failed_repo##*$'\t'}"
+    printf '%s (exit %s)\n' "$dir" "$exit_code"
+  done
 }
 
 run_main() {
@@ -200,6 +269,7 @@ run_main() {
 
   local run_status=0
   pgit_run_repos || run_status=$?
+  pgit_report_errors
   pgit_report_no_output
 
   return $run_status
