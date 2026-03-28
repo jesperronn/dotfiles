@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+#
+# Run a git command in multiple repositories.
+#
+# Usage examples:
+#   pgit fetch
+#   pgit branch --show-current
+#   pgit repo-a repo-b -- status -sb
+
+set -euo pipefail
+
+C_0="\e[0m"
+C_BOLD="\e[1m"
+C_MAGENTA="\e[35m"
+
+usage() {
+  cat <<'HELP'
+pgit
+
+Usage:
+  pgit [dirs --] <git-command> [git-args...]
+
+Examples:
+  pgit fetch
+  pgit branch --show-current
+  pgit repo-a repo-b -- status -sb
+
+Notes:
+  - Without dirs, all immediate subdirectories are considered.
+  - A directory is included only if it is a git repository (work tree or bare).
+HELP
+}
+
+parse_args() {
+  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    usage
+    return 2
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    usage
+    return 1
+  fi
+}
+
+is_git_repo_dir() {
+  local dir="$1"
+  git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || git -C "$dir" rev-parse --is-bare-repository >/dev/null 2>&1
+}
+
+pgit_collect_inputs() {
+  P_GIT_DIRS=()
+  P_GIT_GIT_ARGS=()
+
+  local separator_found=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      separator_found=1
+      continue
+    fi
+
+    if [[ $separator_found -eq 0 ]]; then
+      P_GIT_DIRS=("${P_GIT_DIRS[@]}" "$arg")
+    else
+      P_GIT_GIT_ARGS=("${P_GIT_GIT_ARGS[@]}" "$arg")
+    fi
+  done
+
+  if [[ $separator_found -eq 0 ]]; then
+    P_GIT_DIRS=(*/)
+    P_GIT_GIT_ARGS=("$@")
+  fi
+}
+
+pgit_init_colors() {
+  P_GIT_H1=""
+  P_GIT_H2=""
+
+  if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    P_GIT_H1="$(tput setaf 5; tput smul; tput bold)"
+    P_GIT_H2="$(tput sgr0)"
+  fi
+}
+
+pgit_collect_repo_dirs() {
+  P_GIT_REPO_DIRS=()
+
+  local d
+
+  for d in "${P_GIT_DIRS[@]}"; do
+    [[ -d "$d" ]] || continue
+    [[ "$d" != "/" ]] && d="${d%/}"
+
+    if is_git_repo_dir "$d"; then
+      P_GIT_REPO_DIRS=("${P_GIT_REPO_DIRS[@]}" "$d")
+    fi
+  done
+}
+
+pgit_init_runtime_state() {
+  P_GIT_NO_OUTPUT_DIRS=()
+}
+
+pgit_worker() {
+  local dir="$1"
+  shift
+
+  local marker_file
+  local output
+  local exit_code=0
+
+  output="$(git -C "$dir" "$@" 2>&1)" || exit_code=$?
+
+  if [[ -n "$output" ]]; then
+    echo -e "${P_GIT_H1}${dir}${P_GIT_H2}\n${output}"
+  else
+    marker_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/marker.XXXXXX")"
+    printf '%s\n' "$dir" > "$marker_file"
+  fi
+
+  return $exit_code
+}
+
+pgit_init_parallel_state() {
+  P_GIT_PARALLEL_TMP_DIR="$(mktemp -d)"
+}
+
+pgit_cleanup_parallel_state() {
+  if [[ -n "${P_GIT_PARALLEL_TMP_DIR:-}" && -d "${P_GIT_PARALLEL_TMP_DIR}" ]]; then
+    rm -rf "${P_GIT_PARALLEL_TMP_DIR}"
+  fi
+}
+
+pgit_collect_parallel_no_output() {
+  local marker_file
+
+  P_GIT_NO_OUTPUT_DIRS=()
+
+  for marker_file in "${P_GIT_PARALLEL_TMP_DIR}"/*; do
+    [[ -f "$marker_file" ]] || continue
+    P_GIT_NO_OUTPUT_DIRS=("${P_GIT_NO_OUTPUT_DIRS[@]}" "$(cat "$marker_file")")
+  done
+}
+
+pgit_run_repos_parallel() {
+  export P_GIT_H1 P_GIT_H2 P_GIT_PARALLEL_TMP_DIR
+
+  printf '%s\0' "${P_GIT_REPO_DIRS[@]}" | xargs -0 -I {} -P 0 "$0" --pgit-worker {} "${P_GIT_GIT_ARGS[@]}"
+
+  local run_status=$?
+  pgit_collect_parallel_no_output
+  return $run_status
+}
+
+pgit_run_repos() {
+  pgit_init_parallel_state
+  local run_status=0
+  pgit_run_repos_parallel || run_status=$?
+  pgit_cleanup_parallel_state
+  return $run_status
+}
+
+pgit_report_no_repos() {
+  echo -e "${C_BOLD}${C_MAGENTA}No git repositories found in selected directories.${C_0}" >&2
+}
+
+pgit_report_no_output() {
+  if [[ ${#P_GIT_NO_OUTPUT_DIRS[@]} -gt 0 ]]; then
+    echo -e "${P_GIT_H1}no output from${P_GIT_H2}"
+    printf '%s\n' "${P_GIT_NO_OUTPUT_DIRS[@]}"
+  fi
+}
+
+run_main() {
+  if [[ "${1:-}" == "--pgit-worker" ]]; then
+    shift
+    pgit_worker "$@"
+    return $?
+  fi
+
+  local parse_status=0
+  parse_args "$@" || parse_status=$?
+  case $parse_status in
+    0) ;;
+    1) return 1 ;;
+    2) return 0 ;;
+  esac
+
+  pgit_collect_inputs "$@"
+  pgit_init_colors
+  pgit_init_runtime_state
+  pgit_collect_repo_dirs
+
+  if [[ ${#P_GIT_REPO_DIRS[@]} -eq 0 ]]; then
+    pgit_report_no_repos
+    return 1
+  fi
+
+  local run_status=0
+  pgit_run_repos || run_status=$?
+  pgit_report_no_output
+
+  return $run_status
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  run_main "$@"
+fi
