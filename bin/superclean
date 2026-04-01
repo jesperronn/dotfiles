@@ -1,0 +1,1860 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+if [[ "${1-}" == "source" ]]; then
+  SUPERCLEAN_SOURCE_ONLY=1
+  shift || true
+else
+  SUPERCLEAN_SOURCE_ONLY=0
+fi
+
+SUPER_CLEAN_DRY_RUN=0
+SUPER_CLEAN_VERBOSE=0
+SUPER_CLEAN_INTERACTIVE=0
+SUPER_CLEAN_AGGRESSIVE=0
+SUPER_CLEAN_COLOR_ENABLED=1
+SUPER_CLEAN_SUDO_ENABLED=1
+SUPER_CLEAN_HAS_FD=0
+SUPER_CLEAN_HAS_FZF=0
+SUPER_CLEAN_SUDO_CHECKED=0
+SUPER_CLEAN_TOUCH_ID_SUDO_AVAILABLE=0
+SUPER_CLEAN_SUDO_SESSION_READY=0
+SUPER_CLEAN_GROUP_NODE=1
+SUPER_CLEAN_GROUP_JAVA=1
+SUPER_CLEAN_GROUP_RUBY=1
+SUPER_CLEAN_GROUP_GO=1
+SUPER_CLEAN_GROUP_BREW=1
+SUPER_CLEAN_GROUP_APPS=1
+SUPER_CLEAN_GROUP_LOGS=1
+SUPER_CLEAN_GROUP_HOOKS=1
+SUPER_CLEAN_GROUP_CONTAINERS=1
+SUPER_CLEAN_POSITIVE_GROUP_FLAGS=0
+SUPER_CLEAN_TOTAL_RECLAIMED_KB=0
+SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=0
+SUPER_CLEAN_START_AVAIL_KB=0
+SUPER_CLEAN_TARGET_DIRS_CACHED=0
+SUPER_CLEAN_HOOKS_CACHED=0
+SUPER_CLEAN_DISCOVERED_TARGET_DIRS=""
+SUPER_CLEAN_DISCOVERED_HOOKS=""
+SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
+SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=0
+
+C_DIM=$'\033[2m'
+C_BOLD=$'\033[1m'
+C_RED=$'\033[31m'
+C_GREEN=$'\033[32m'
+C_PURPLE=$'\033[38;5;141m'
+C_MAGENTA=$'\033[35m'
+C_ORANGE=$'\033[38;5;214m'
+C_0=$'\033[0m'
+
+SUPER_CLEAN_ROOTS=(
+  "$HOME/src"
+  "$HOME/projects"
+)
+
+SUPER_CLEAN_DEEP_TARGETS=(
+  "node_modules"
+  "target"
+)
+
+SUPER_CLEAN_AGGRESSIVE_DEEP_TARGETS=(
+  "log"
+)
+
+SUPER_CLEAN_TARGETED_PATHS=(
+  "$HOME/Library/Caches/JetBrains"
+  "$HOME/Library/Caches/typescript"
+  "$HOME/Library/Developer/Xcode/DerivedData"
+  "$HOME/.cache"
+)
+
+SUPER_CLEAN_AGGRESSIVE_PATHS=(
+  "$HOME/.gradle/caches"
+  "$HOME/.ivy2/cache"
+  "$HOME/.m2/repository"
+  "$HOME/.pnpm-store"
+  "$HOME/.yarn/cache"
+  "$HOME/.bun/install/cache"
+  "$HOME/Library/Caches/Google/Chrome"
+  "$HOME/Library/Caches/BraveSoftware/Brave-Browser"
+  "$HOME/Library/Caches/com.microsoft.VSCode"
+  "$HOME/Library/Caches/Cypress"
+  "$HOME/Library/Caches/ms-playwright"
+  "$HOME/Library/Caches/Yarn"
+  "$HOME/Library/Application Support/Atom/Cache"
+)
+
+SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT="$HOME/Library/Caches"
+
+superclean_usage() {
+  local header_style="" flag_style="" command_style="" parameter_style="" reset_style=""
+
+  if (( SUPER_CLEAN_COLOR_ENABLED )); then
+    header_style="${C_BOLD}${C_ORANGE}"
+    flag_style="$C_GREEN"
+    command_style="${C_BOLD}${C_PURPLE}"
+    parameter_style="$C_MAGENTA"
+    reset_style="$C_0"
+  fi
+
+  printf 'Developer cache and project cleanup utility for local workstations.\n\n'
+  printf '%sUsage:%s %ssuperclean%s %s[OPTIONS]%s\n\n' "$header_style" "$reset_style" "$command_style" "$reset_style" "$parameter_style" "$reset_style"
+
+  printf '%sOverall flags:%s\n' "$header_style" "$reset_style"
+  printf '  %s%s%s\n' "$flag_style" '-n, --dry-run' "$reset_style"
+  printf '          Show what would be cleaned, including sizes, without changing anything.\n'
+  printf '  %s%s%s\n' "$flag_style" '--verbose' "$reset_style"
+  printf '          Print extra progress details.\n'
+  printf '  %s%s%s\n' "$flag_style" '-i, --interactive' "$reset_style"
+  printf '          Review deep-scan folders before deletion; uses fzf when available.\n'
+  printf '  %s%s%s\n' "$flag_style" '--aggressive' "$reset_style"
+  printf '          Enable slower or riskier cleanup steps.\n'
+  printf '  %s%s%s\n' "$flag_style" '--color' "$reset_style"
+  printf '          Enable colored output (default).\n'
+  printf '  %s%s%s\n' "$flag_style" '--no-color' "$reset_style"
+  printf '          Disable colored output.\n'
+  printf '  %s%s%s\n' "$flag_style" '--sudo' "$reset_style"
+  printf '          Allow sudo for sudo-required cleanup tasks (default).\n'
+  printf '  %s%s%s\n' "$flag_style" '--no-sudo' "$reset_style"
+  printf '          Skip cleanup tasks that require sudo.\n'
+  printf '  %s%s%s\n' "$flag_style" '-h, --help' "$reset_style"
+  printf '          Show this help.\n\n'
+
+  printf '%sGroup flags:%s\n' "$header_style" "$reset_style"
+  printf '  %s%s%s\n' "$flag_style" '--node, --no-node' "$reset_style"
+  printf '          Include or exclude Node cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--java, --no-java' "$reset_style"
+  printf '          Include or exclude Java cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--ruby, --no-ruby' "$reset_style"
+  printf '          Include or exclude Ruby cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--go, --no-go' "$reset_style"
+  printf '          Include or exclude Go cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--brew, --no-brew' "$reset_style"
+  printf '          Include or exclude Homebrew cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--apps, --no-apps' "$reset_style"
+  printf '          Include or exclude app/system cache cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--logs, --no-logs' "$reset_style"
+  printf '          Include or exclude aggressive log cleanup.\n'
+  printf '  %s%s%s\n' "$flag_style" '--hooks, --no-hooks' "$reset_style"
+  printf '          Include or exclude project cleanup hooks.\n'
+  printf '  %s%s%s\n' "$flag_style" '--containers, --no-containers' "$reset_style"
+  printf '          Include or exclude aggressive container prune commands.\n'
+}
+
+superclean_log() {
+  printf '%s\n' "$*"
+}
+
+superclean_color_print() {
+  local color=$1
+  shift
+
+  if (( SUPER_CLEAN_COLOR_ENABLED )); then
+    printf '%s%s%s\n' "$color" "$*" "$C_0"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+superclean_info() {
+  superclean_color_print "${C_BOLD}${C_ORANGE}" "$*"
+}
+
+superclean_success() {
+  superclean_color_print "$C_GREEN" "$*"
+}
+
+superclean_verbose() {
+  if (( SUPER_CLEAN_VERBOSE )); then
+    superclean_color_print "$C_DIM" "$*"
+  fi
+}
+
+superclean_error() {
+  superclean_color_print "$C_RED" "$*" >&2
+}
+
+superclean_warn() {
+  superclean_warn_orange "$*"
+}
+
+superclean_warn_orange() {
+  if (( SUPER_CLEAN_COLOR_ENABLED )); then
+    printf '%sWarning: %s%s\n' "$C_ORANGE" "$*" "$C_0" >&2
+  else
+    printf 'Warning: %s\n' "$*" >&2
+  fi
+}
+
+superclean_live_scan_enabled() {
+  [[ -t 1 ]]
+}
+
+superclean_live_scan_status_clear() {
+  if (( ! SUPER_CLEAN_LIVE_SCAN_ACTIVE )); then
+    return 0
+  fi
+
+  if (( SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED > 0 )); then
+    printf '\r\033[2K\033[1A\r\033[2K'
+  else
+    printf '\r\033[2K'
+  fi
+}
+
+superclean_live_scan_start() {
+  local title=$1
+
+  SUPER_CLEAN_LIVE_SCAN_ACTIVE=1
+  SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=0
+  superclean_info "[+] Scanning $title"
+}
+
+superclean_terminal_cols() {
+  local cols
+
+  cols=$(tput cols 2>/dev/null || true)
+  if [[ "$cols" =~ ^[0-9]+$ ]] && (( cols > 0 )); then
+    printf '%s' "$cols"
+  else
+    printf '120'
+  fi
+}
+
+superclean_truncate_path() {
+  local path=$1
+  local max_len=${2:-90}
+  local path_len=${#path}
+
+  if (( path_len <= max_len )); then
+    printf '%s' "$path"
+    return 0
+  fi
+
+  if (( max_len <= 3 )); then
+    printf '%s' "${path:0:max_len}"
+    return 0
+  fi
+
+  printf '%s...' "${path:0:max_len-3}"
+}
+
+superclean_live_scan_status() {
+  local processed=$1
+  local matched=$2
+  local total_kb=$3
+  local current=$4
+  local current_display
+  local stats_style="" reset_style=""
+  local prefix cols max_current_len
+
+  (( SUPER_CLEAN_LIVE_SCAN_ACTIVE )) || return 0
+
+  if (( SUPER_CLEAN_COLOR_ENABLED )); then
+    stats_style="$C_DIM"
+    reset_style="$C_0"
+  fi
+
+  cols=$(superclean_terminal_cols)
+  prefix=$(printf 'Scanned: %s folders   Matched: %s   Estimated: %s   Current: ' "$processed" "$matched" "$(superclean_format_kb "$total_kb")")
+  max_current_len=$(( cols - ${#prefix} - 4 ))
+  if (( max_current_len < 12 )); then
+    max_current_len=12
+  fi
+  current_display=$(superclean_truncate_path "$current" "$max_current_len")
+  superclean_live_scan_status_clear
+  printf '%sScanned: %s folders   Matched: %s   Estimated: %s%s\n' \
+    "$stats_style" "$processed" "$matched" "$(superclean_format_kb "$total_kb")" "$reset_style"
+  printf '%sCurrent: %s%s' "$stats_style" "$current_display" "$reset_style"
+  SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=2
+}
+
+superclean_live_scan_finish() {
+  local title=$1
+  local matched=$2
+  local total_kb=$3
+
+  superclean_live_scan_status_clear
+  SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
+  SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=0
+
+  superclean_success "[+] Completed $title: $matched folders, $(superclean_format_kb "$total_kb")"
+}
+
+superclean_hook_progress_start() {
+  local title=$1
+
+  if [[ -t 1 ]]; then
+    superclean_info "[+] $title"
+  fi
+}
+
+superclean_hook_progress_status() {
+  local processed=$1
+  local total=$2
+  local current=$3
+  local current_display
+  local stats_style="" reset_style=""
+  local prefix cols max_current_len
+
+  [[ -t 1 ]] || return 0
+
+  if (( SUPER_CLEAN_COLOR_ENABLED )); then
+    stats_style="$C_DIM"
+    reset_style="$C_0"
+  fi
+
+  cols=$(superclean_terminal_cols)
+  prefix=$(printf 'Processed: %s/%s   Current: ' "$processed" "$total")
+  max_current_len=$(( cols - ${#prefix} - 4 ))
+  if (( max_current_len < 12 )); then
+    max_current_len=12
+  fi
+  current_display=$(superclean_truncate_path "$current" "$max_current_len")
+  printf '\r\033[2K%sProcessed: %s/%s   Current: %s%s' \
+    "$stats_style" "$processed" "$total" "$current_display" "$reset_style"
+}
+
+superclean_hook_progress_finish() {
+  local title=$1
+  local succeeded=$2
+  local failed=$3
+
+  [[ -t 1 ]] || return 0
+  printf '\r\033[2K'
+  if (( failed > 0 )); then
+    superclean_warn_orange "$title complete: $succeeded succeeded, $failed failed"
+  else
+    superclean_success "[+] $title complete: $succeeded succeeded"
+  fi
+}
+
+superclean_restore_terminal() {
+  printf '\r\033[2K%s\033[?25h\n' "$C_0" >/dev/tty 2>/dev/null || true
+}
+
+superclean_register_cleanup_trap() {
+  trap 'superclean_restore_terminal' EXIT INT TERM
+}
+
+superclean_enable_only_mode() {
+  if (( SUPER_CLEAN_POSITIVE_GROUP_FLAGS )); then
+    return 0
+  fi
+
+  SUPER_CLEAN_POSITIVE_GROUP_FLAGS=1
+  SUPER_CLEAN_GROUP_NODE=0
+  SUPER_CLEAN_GROUP_JAVA=0
+  SUPER_CLEAN_GROUP_RUBY=0
+  SUPER_CLEAN_GROUP_GO=0
+  SUPER_CLEAN_GROUP_BREW=0
+  SUPER_CLEAN_GROUP_APPS=0
+  SUPER_CLEAN_GROUP_LOGS=0
+  SUPER_CLEAN_GROUP_HOOKS=0
+  SUPER_CLEAN_GROUP_CONTAINERS=0
+}
+
+superclean_set_group() {
+  local group=$1
+  local value=$2
+
+  case "$group" in
+    node) SUPER_CLEAN_GROUP_NODE=$value ;;
+    java) SUPER_CLEAN_GROUP_JAVA=$value ;;
+    ruby) SUPER_CLEAN_GROUP_RUBY=$value ;;
+    go) SUPER_CLEAN_GROUP_GO=$value ;;
+    brew) SUPER_CLEAN_GROUP_BREW=$value ;;
+    apps) SUPER_CLEAN_GROUP_APPS=$value ;;
+    logs) SUPER_CLEAN_GROUP_LOGS=$value ;;
+    hooks) SUPER_CLEAN_GROUP_HOOKS=$value ;;
+    containers) SUPER_CLEAN_GROUP_CONTAINERS=$value ;;
+  esac
+}
+
+superclean_group_enabled() {
+  local group=$1
+
+  case "$group" in
+    node) (( SUPER_CLEAN_GROUP_NODE )) ;;
+    java) (( SUPER_CLEAN_GROUP_JAVA )) ;;
+    ruby) (( SUPER_CLEAN_GROUP_RUBY )) ;;
+    go) (( SUPER_CLEAN_GROUP_GO )) ;;
+    brew) (( SUPER_CLEAN_GROUP_BREW )) ;;
+    apps) (( SUPER_CLEAN_GROUP_APPS )) ;;
+    logs) (( SUPER_CLEAN_GROUP_LOGS )) ;;
+    hooks) (( SUPER_CLEAN_GROUP_HOOKS )) ;;
+    containers) (( SUPER_CLEAN_GROUP_CONTAINERS )) ;;
+    *) return 1 ;;
+  esac
+}
+
+superclean_group_description() {
+  local group=$1
+
+  case "$group" in
+    node) printf '%s' 'Node runtime caches' ;;
+    java) printf '%s' 'Java runtime caches' ;;
+    ruby) printf '%s' 'Ruby runtime caches' ;;
+    go) printf '%s' 'Go runtime caches' ;;
+    brew) printf '%s' 'Homebrew caches' ;;
+    apps) printf '%s' 'App and system caches' ;;
+    logs) printf '%s' 'Aggressive log cleanup' ;;
+    hooks) printf '%s' 'Project cleanup hooks' ;;
+    containers) printf '%s' 'Container prune commands' ;;
+    *) return 1 ;;
+  esac
+}
+
+superclean_format_group_selector_row() {
+  local group=$1
+  printf '%s\t%s\n' "$group" "$(superclean_group_description "$group")"
+}
+
+superclean_fzf_multiselect_args() {
+  printf '%s\n' \
+    '--height=50%' \
+    '--border' \
+    '--layout=reverse' \
+    '--bind=ctrl-a:select-all,ctrl-d:deselect-all'
+}
+
+superclean_interactive_select_cleanup_groups() {
+  local selected
+  local group
+  local -a rows=()
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  for group in node java ruby go brew apps logs hooks containers; do
+    superclean_group_enabled "$group" || continue
+    rows+=("$(superclean_format_group_selector_row "$group")")
+  done
+
+  ((${#rows[@]} > 0)) || return 0
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(printf '%s\n' "${rows[@]}" | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=1,2 \
+      "${fzf_args[@]}" \
+      --prompt="Select groups to clean > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -z "$selected" ]]; then
+      superclean_log "[-] No cleanup groups selected"
+      SUPER_CLEAN_POSITIVE_GROUP_FLAGS=1
+      superclean_set_group node 0
+      superclean_set_group java 0
+      superclean_set_group ruby 0
+      superclean_set_group go 0
+      superclean_set_group brew 0
+      superclean_set_group apps 0
+      superclean_set_group logs 0
+      superclean_set_group hooks 0
+      superclean_set_group containers 0
+      return 0
+    fi
+
+    SUPER_CLEAN_POSITIVE_GROUP_FLAGS=1
+    superclean_set_group node 0
+    superclean_set_group java 0
+    superclean_set_group ruby 0
+    superclean_set_group go 0
+    superclean_set_group brew 0
+    superclean_set_group apps 0
+    superclean_set_group logs 0
+    superclean_set_group hooks 0
+    superclean_set_group containers 0
+
+    while IFS=$'\t' read -r group _description; do
+      [[ -n "$group" ]] || continue
+      superclean_set_group "$group" 1
+    done <<< "$selected"
+
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  for group in node java ruby go brew apps logs hooks containers; do
+    superclean_group_enabled "$group" || continue
+    if superclean_prompt_yes_no "Enable $(superclean_group_description "$group")?"; then
+      continue
+    fi
+    superclean_set_group "$group" 0
+  done
+
+  SUPER_CLEAN_POSITIVE_GROUP_FLAGS=1
+}
+
+superclean_path_selected_for_cleanup() {
+  local path=$1
+
+  case "$path" in
+    "$HOME/.gradle/caches"|"$HOME/.ivy2/cache"|"$HOME/.m2/repository")
+      superclean_group_enabled java
+      ;;
+    "$HOME/.pnpm-store"|"$HOME/.yarn/cache"|"$HOME/.bun/install/cache"|"$HOME/Library/Caches/Cypress"|"$HOME/Library/Caches/ms-playwright"|"$HOME/Library/Caches/Yarn")
+      superclean_group_enabled node
+      ;;
+    "$HOME/Library/Caches/Google/Chrome"|"$HOME/Library/Caches/BraveSoftware/Brave-Browser"|"$HOME/Library/Caches/com.microsoft.VSCode"|"$HOME/Library/Application Support/Atom/Cache"|"$HOME/Library/Caches/JetBrains"|"$HOME/Library/Caches/typescript"|"$HOME/Library/Developer/Xcode/DerivedData"|"$HOME/.cache"|"$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT")
+      superclean_group_enabled apps
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+superclean_protips() {
+  if (( ! SUPER_CLEAN_HAS_FD )); then
+    superclean_log "Protip: This script runs faster if you install \"fd\" (\`brew install fd\`)"
+  fi
+
+  if (( SUPER_CLEAN_INTERACTIVE )) && (( ! SUPER_CLEAN_HAS_FZF )); then
+    superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  fi
+}
+
+superclean_detect_tools() {
+  if command -v fd >/dev/null 2>&1; then
+    SUPER_CLEAN_HAS_FD=1
+  else
+    SUPER_CLEAN_HAS_FD=0
+  fi
+
+  if command -v fzf >/dev/null 2>&1; then
+    SUPER_CLEAN_HAS_FZF=1
+  else
+    SUPER_CLEAN_HAS_FZF=0
+  fi
+}
+
+superclean_parse_args() {
+  while (($#)); do
+    case "$1" in
+      -n|--dry-run)
+        SUPER_CLEAN_DRY_RUN=1
+        ;;
+      --verbose)
+        SUPER_CLEAN_VERBOSE=1
+        ;;
+      -i|--interactive)
+        SUPER_CLEAN_INTERACTIVE=1
+        ;;
+      --aggressive)
+        SUPER_CLEAN_AGGRESSIVE=1
+        ;;
+      --color)
+        SUPER_CLEAN_COLOR_ENABLED=1
+        ;;
+      --no-color)
+        SUPER_CLEAN_COLOR_ENABLED=0
+        ;;
+      --sudo)
+        SUPER_CLEAN_SUDO_ENABLED=1
+        ;;
+      --no-sudo)
+        SUPER_CLEAN_SUDO_ENABLED=0
+        ;;
+      --node|--java|--ruby|--go|--brew|--apps|--logs|--hooks|--containers)
+        superclean_enable_only_mode
+        superclean_set_group "${1#--}" 1
+        ;;
+      --no-node|--no-java|--no-ruby|--no-go|--no-brew|--no-apps|--no-logs|--no-hooks|--no-containers)
+        superclean_set_group "${1#--no-}" 0
+        ;;
+      -h|--help)
+        superclean_usage
+        return 1
+        ;;
+      *)
+        superclean_warn "Unknown option: $1"
+        superclean_usage >&2
+        return 2
+        ;;
+    esac
+    shift
+  done
+
+  return 0
+}
+
+superclean_format_kb() {
+  local size_kb=${1:-0}
+
+  awk -v size_kb="$size_kb" '
+    function human(value, unit) {
+      if (unit == "KB") return sprintf("%.1f KB", value)
+      if (unit == "MB") return sprintf("%.1f MB", value)
+      if (unit == "GB") return sprintf("%.2f GB", value)
+      return sprintf("%.2f TB", value)
+    }
+    BEGIN {
+      if (size_kb < 1024) {
+        print human(size_kb, "KB")
+      } else if (size_kb < 1024 * 1024) {
+        print human(size_kb / 1024, "MB")
+      } else if (size_kb < 1024 * 1024 * 1024) {
+        print human(size_kb / (1024 * 1024), "GB")
+      } else {
+        print human(size_kb / (1024 * 1024 * 1024), "TB")
+      }
+    }
+  '
+}
+
+superclean_path_size_kb() {
+  local path=$1
+  local du_output
+
+  [[ -e "$path" ]] || {
+    echo 0
+    return 0
+  }
+
+  du_output=$(du -sk "$path" 2>/dev/null || true)
+  if [[ -z "$du_output" ]]; then
+    echo 0
+    return 0
+  fi
+
+  awk '{print $1 + 0}' <<<"$du_output"
+}
+
+superclean_existing_roots() {
+  local root
+
+  for root in "${SUPER_CLEAN_ROOTS[@]}"; do
+    [[ -d "$root" ]] && printf '%s\n' "$root"
+  done
+
+  return 0
+}
+
+superclean_join_by() {
+  local delimiter=$1
+  shift || true
+  local first=1
+  local item
+
+  for item in "$@"; do
+    if (( first )); then
+      printf '%s' "$item"
+      first=0
+    else
+      printf '%s%s' "$delimiter" "$item"
+    fi
+  done
+}
+
+superclean_sum_paths_kb() {
+  local total_kb=0
+  local path size_kb
+
+  for path in "$@"; do
+    [[ -n "$path" ]] || continue
+    [[ -e "$path" ]] || continue
+    size_kb=$(superclean_path_size_kb "$path")
+    total_kb=$(( total_kb + size_kb ))
+  done
+
+  echo "$total_kb"
+}
+
+superclean_format_estimate_suffix() {
+  local size_kb=${1:-0}
+
+  if (( size_kb > 0 )); then
+    printf ' (est. %s)' "$(superclean_format_kb "$size_kb")"
+  fi
+}
+
+superclean_rvm_cleanup_estimate_kb() {
+  superclean_sum_paths_kb "$HOME/.rvm/archives" "$HOME/.rvm/src"
+}
+
+superclean_go_cleanup_estimate_kb() {
+  local gocache gomodcache
+
+  command -v go >/dev/null 2>&1 || {
+    echo 0
+    return 0
+  }
+
+  gocache=$(go env GOCACHE 2>/dev/null || true)
+  gomodcache=$(go env GOMODCACHE 2>/dev/null || true)
+  superclean_sum_paths_kb "$gocache" "$gomodcache"
+}
+
+superclean_brew_cleanup_estimate_kb() {
+  local brew_cache
+
+  command -v brew >/dev/null 2>&1 || {
+    echo 0
+    return 0
+  }
+
+  brew_cache=$(brew --cache 2>/dev/null || true)
+  superclean_sum_paths_kb "$brew_cache"
+}
+
+superclean_gem_cleanup_estimate_kb() {
+  local gem_base_dir="$HOME/.rvm/gems"
+  local total_kb=0
+  local prev_key="" prev_path=""
+  local key path basename
+  local -a gem_dirs=()
+  local -a duplicate_paths=()
+  local du_output
+
+  [[ -d "$gem_base_dir" ]] || {
+    echo 0
+    return 0
+  }
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] && gem_dirs+=("$path")
+  done < <(find "$gem_base_dir" -mindepth 2 -maxdepth 2 -type d -name gems -print 2>/dev/null || true)
+
+  ((${#gem_dirs[@]} > 0)) || {
+    echo 0
+    return 0
+  }
+
+  while IFS=$'\t' read -r key _version path; do
+    [[ -n "$key" && -n "$path" ]] || continue
+
+    if [[ "$key" == "$prev_key" && -n "$prev_path" ]]; then
+      duplicate_paths+=("$prev_path")
+    fi
+
+    prev_key=$key
+    prev_path=$path
+  done < <(
+    find "${gem_dirs[@]}" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | while IFS= read -r path; do
+      basename=$(basename "$path")
+      if [[ "$basename" =~ ^(.+)-([0-9][A-Za-z0-9._-]*)$ ]]; then
+        printf '%s\t%s\t%s\n' "$(dirname "$path")|${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$path"
+      fi
+    done | sort -t $'\t' -k1,1 -k2,2V
+  )
+
+  ((${#duplicate_paths[@]} > 0)) || {
+    echo 0
+    return 0
+  }
+
+  du_output=$(du -sk "${duplicate_paths[@]}" 2>/dev/null || true)
+  if [[ -n "$du_output" ]]; then
+    total_kb=$(awk '{sum += $1} END {print sum + 0}' <<<"$du_output")
+  fi
+
+  echo "$total_kb"
+}
+
+superclean_prompt_yes_no() {
+  local prompt=$1
+  local reply
+
+  read -r -p "$prompt [y/N]: " reply
+  [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+superclean_capture_start_disk() {
+  SUPER_CLEAN_START_AVAIL_KB=$(df -k "$HOME" | awk 'NR==2 {print $4 + 0}')
+}
+
+superclean_current_avail_kb() {
+  df -k "$HOME" | awk 'NR==2 {print $4 + 0}'
+}
+
+superclean_touch_id_sudo_available() {
+  if (( SUPER_CLEAN_SUDO_CHECKED )); then
+    (( SUPER_CLEAN_TOUCH_ID_SUDO_AVAILABLE ))
+    return $?
+  fi
+
+  SUPER_CLEAN_SUDO_CHECKED=1
+  SUPER_CLEAN_TOUCH_ID_SUDO_AVAILABLE=0
+
+  [[ "$OSTYPE" == darwin* ]] || return 1
+
+  if grep -q 'pam_tid\.so' /etc/pam.d/sudo /etc/pam.d/sudo_local 2>/dev/null; then
+    SUPER_CLEAN_TOUCH_ID_SUDO_AVAILABLE=1
+    return 0
+  fi
+
+  return 1
+}
+
+superclean_ensure_sudo_session() {
+  if (( SUPER_CLEAN_SUDO_SESSION_READY || SUPER_CLEAN_DRY_RUN )); then
+    return 0
+  fi
+
+  if superclean_touch_id_sudo_available; then
+    superclean_log "[+] Touch ID sudo is available"
+  else
+    superclean_verbose "Touch ID sudo is not available; falling back to standard sudo prompt"
+  fi
+
+  sudo -v
+  SUPER_CLEAN_SUDO_SESSION_READY=1
+}
+
+superclean_can_use_sudo_for_task() {
+  local description=$1
+
+  if (( ! SUPER_CLEAN_AGGRESSIVE )); then
+    superclean_warn_orange "$description requires sudo and will be skipped unless --aggressive is enabled."
+    return 1
+  fi
+
+  if (( ! SUPER_CLEAN_SUDO_ENABLED )); then
+    superclean_warn_orange "$description requires sudo and will be skipped because --no-sudo is enabled."
+    return 1
+  fi
+
+  return 0
+}
+
+superclean_report_reclaimed() {
+  local end_avail_kb reclaimed_kb combined_estimate_kb
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    combined_estimate_kb=$(( SUPER_CLEAN_TOTAL_RECLAIMED_KB + SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB ))
+    superclean_success "Estimated Reclaimable Space (combined): $(superclean_format_kb "$combined_estimate_kb")"
+    superclean_success "Potential Space Reclaimable (path removals only): $(superclean_format_kb "$SUPER_CLEAN_TOTAL_RECLAIMED_KB")"
+    if (( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB > 0 )); then
+      superclean_info "Additional Estimated Reclaimable Space (command-driven): $(superclean_format_kb "$SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB")"
+      superclean_verbose "Combined estimate may overcount if command-driven cleanup overlaps with path removals"
+    fi
+    return 0
+  fi
+
+  end_avail_kb=$(superclean_current_avail_kb)
+  reclaimed_kb=$(( end_avail_kb - SUPER_CLEAN_START_AVAIL_KB ))
+  if (( reclaimed_kb < 0 )); then
+    reclaimed_kb=0
+  fi
+
+  superclean_success "Total Space Reclaimed: $(superclean_format_kb "$reclaimed_kb")"
+}
+
+superclean_describe_path_action() {
+  local label=$1
+  local path=$2
+  local size_kb
+
+  size_kb=$(superclean_path_size_kb "$path")
+  printf '%s\t%s\t(%s KB)\n' "$label" "$path" "$size_kb"
+}
+
+superclean_path_needs_sudo() {
+  local path=$1
+  local parent
+
+  [[ -e "$path" ]] || return 1
+
+  parent=$(dirname "$path")
+
+  if [[ ! -O "$path" ]] || [[ ! -O "$parent" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+superclean_hook_needs_sudo() {
+  local hook=$1
+  local project_root
+
+  project_root=$(superclean_hook_project_root "$hook")
+  [[ -d "$project_root" ]] || return 1
+
+  if [[ ! -O "$project_root" ]]; then
+    return 0
+  fi
+
+  return 1
+}
+
+superclean_warn_sudo_if_needed() {
+  local path hook warned=0
+
+  if (( ! SUPER_CLEAN_AGGRESSIVE )); then
+    return 0
+  fi
+
+  superclean_info "[+] Preflighting sudo requirements"
+  superclean_verbose "Checking selected paths, deep-scan candidates, and hooks for possible sudo needs"
+
+  for path in "${SUPER_CLEAN_TARGETED_PATHS[@]}"; do
+    superclean_path_selected_for_cleanup "$path" || continue
+    if superclean_path_needs_sudo "$path"; then
+      if (( ! warned )); then
+        superclean_warn_orange "Some cleanup actions may require sudo."
+        if (( SUPER_CLEAN_AGGRESSIVE && SUPER_CLEAN_SUDO_ENABLED )); then
+          if superclean_touch_id_sudo_available; then
+            superclean_warn_orange "Touch ID sudo appears to be available on this Mac."
+          else
+            superclean_warn_orange "Touch ID sudo does not appear to be available; standard sudo prompt will be used if needed."
+          fi
+        elif (( ! SUPER_CLEAN_AGGRESSIVE )); then
+          superclean_warn_orange "sudo-required tasks will be skipped unless --aggressive is enabled."
+        else
+          superclean_warn_orange "sudo-required tasks will be skipped because --no-sudo is enabled."
+        fi
+        warned=1
+      fi
+      superclean_warn_orange "sudo may be needed for path cleanup: $path"
+    fi
+  done
+
+  for path in "${SUPER_CLEAN_AGGRESSIVE_PATHS[@]}"; do
+    superclean_path_selected_for_cleanup "$path" || continue
+    if superclean_path_needs_sudo "$path"; then
+      if (( ! warned )); then
+        superclean_warn_orange "Some cleanup actions may require sudo."
+        if (( SUPER_CLEAN_AGGRESSIVE && SUPER_CLEAN_SUDO_ENABLED )); then
+          if superclean_touch_id_sudo_available; then
+            superclean_warn_orange "Touch ID sudo appears to be available on this Mac."
+          else
+            superclean_warn_orange "Touch ID sudo does not appear to be available; standard sudo prompt will be used if needed."
+          fi
+        elif (( ! SUPER_CLEAN_AGGRESSIVE )); then
+          superclean_warn_orange "sudo-required tasks will be skipped unless --aggressive is enabled."
+        else
+          superclean_warn_orange "sudo-required tasks will be skipped because --no-sudo is enabled."
+        fi
+        warned=1
+      fi
+      superclean_warn_orange "sudo may be needed for path cleanup: $path"
+    fi
+  done
+
+  superclean_verbose "Checking deep-scan candidates for possible sudo needs"
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if superclean_path_needs_sudo "$path"; then
+      if (( ! warned )); then
+        superclean_warn_orange "Some cleanup actions may require sudo."
+        if (( SUPER_CLEAN_AGGRESSIVE && SUPER_CLEAN_SUDO_ENABLED )); then
+          if superclean_touch_id_sudo_available; then
+            superclean_warn_orange "Touch ID sudo appears to be available on this Mac."
+          else
+            superclean_warn_orange "Touch ID sudo does not appear to be available; standard sudo prompt will be used if needed."
+          fi
+        elif (( ! SUPER_CLEAN_AGGRESSIVE )); then
+          superclean_warn_orange "sudo-required tasks will be skipped unless --aggressive is enabled."
+        else
+          superclean_warn_orange "sudo-required tasks will be skipped because --no-sudo is enabled."
+        fi
+        warned=1
+      fi
+      superclean_warn_orange "sudo may be needed for deep-scan cleanup: $path"
+    fi
+  done < <(superclean_cached_target_dirs)
+
+  superclean_verbose "Checking project hooks for possible sudo needs"
+  while IFS= read -r hook; do
+    [[ -n "$hook" ]] || continue
+    if superclean_hook_needs_sudo "$hook"; then
+      if (( ! warned )); then
+        superclean_warn_orange "Some cleanup actions may require sudo."
+        if (( SUPER_CLEAN_AGGRESSIVE && SUPER_CLEAN_SUDO_ENABLED )); then
+          if superclean_touch_id_sudo_available; then
+            superclean_warn_orange "Touch ID sudo appears to be available on this Mac."
+          else
+            superclean_warn_orange "Touch ID sudo does not appear to be available; standard sudo prompt will be used if needed."
+          fi
+        elif (( ! SUPER_CLEAN_AGGRESSIVE )); then
+          superclean_warn_orange "sudo-required tasks will be skipped unless --aggressive is enabled."
+        else
+          superclean_warn_orange "sudo-required tasks will be skipped because --no-sudo is enabled."
+        fi
+        warned=1
+      fi
+      superclean_warn_orange "sudo may be needed for project hook: $hook"
+    fi
+  done < <(superclean_cached_hooks)
+
+  if superclean_path_selected_for_cleanup "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT" && [[ -d "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT" ]] && superclean_path_needs_sudo "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT"; then
+    if (( ! warned )); then
+      superclean_warn_orange "Some cleanup actions may require sudo."
+      if (( SUPER_CLEAN_AGGRESSIVE && SUPER_CLEAN_SUDO_ENABLED )); then
+        if superclean_touch_id_sudo_available; then
+          superclean_warn_orange "Touch ID sudo appears to be available on this Mac."
+        else
+          superclean_warn_orange "Touch ID sudo does not appear to be available; standard sudo prompt will be used if needed."
+        fi
+      elif (( ! SUPER_CLEAN_AGGRESSIVE )); then
+        superclean_warn_orange "sudo-required tasks will be skipped unless --aggressive is enabled."
+      else
+        superclean_warn_orange "sudo-required tasks will be skipped because --no-sudo is enabled."
+      fi
+      warned=1
+    fi
+    superclean_warn_orange "sudo may be needed for broad cache cleanup: $SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT"
+  fi
+
+  if (( ! warned )); then
+    superclean_verbose "No sudo requirement detected during preflight"
+  fi
+
+  return 0
+}
+
+superclean_plan_path_group() {
+  local label=$1
+  local title=$2
+  shift 2
+  local path size_kb processed=0 matched=0 total_kb=0
+  local current=""
+  local -a rows=()
+  local live_mode=0
+
+  if superclean_live_scan_enabled; then
+    live_mode=1
+    superclean_live_scan_start "$title"
+  else
+    superclean_info "[+] Planning $title"
+  fi
+
+  for path in "$@"; do
+    processed=$(( processed + 1 ))
+    current=$path
+    if (( live_mode )); then
+      superclean_live_scan_status "$processed" "$matched" "$total_kb" "$current"
+    fi
+
+    if [[ -e "$path" ]]; then
+      size_kb=$(superclean_path_size_kb "$path")
+      matched=$(( matched + 1 ))
+      total_kb=$(( total_kb + size_kb ))
+      rows+=("$(printf '%s\t%s\t(%s KB)' "$label" "$path" "$size_kb")")
+      if (( live_mode )); then
+        superclean_live_scan_status "$processed" "$matched" "$total_kb" "$current"
+      fi
+    elif (( SUPER_CLEAN_VERBOSE && ! live_mode )); then
+      superclean_verbose "Skipping missing path: $path"
+    fi
+  done
+
+  if (( live_mode )); then
+    superclean_live_scan_finish "$title" "$matched" "$total_kb"
+  fi
+
+  if (( ! live_mode && SUPER_CLEAN_VERBOSE && ${#rows[@]} > 0 )); then
+    printf '%s\n' "${rows[@]}"
+  fi
+}
+
+superclean_run_command() {
+  local label=$1
+  shift
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    superclean_info "[dry-run] Would run: $label"
+    superclean_verbose "Command: $*"
+    return 0
+  fi
+
+  superclean_info "[+] $label..."
+  "$@"
+}
+
+superclean_remove_path() {
+  local path=$1
+  local size_kb
+
+  [[ -e "$path" ]] || return 0
+
+  size_kb=$(superclean_path_size_kb "$path")
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    SUPER_CLEAN_TOTAL_RECLAIMED_KB=$(( SUPER_CLEAN_TOTAL_RECLAIMED_KB + size_kb ))
+    superclean_success "[dry-run] Would remove $(superclean_format_kb "$size_kb"): $path"
+    return 0
+  fi
+
+  if superclean_path_needs_sudo "$path"; then
+    superclean_can_use_sudo_for_task "Path cleanup for $path" || return 0
+    superclean_ensure_sudo_session
+    sudo rm -rf "$path"
+  else
+    rm -rf "$path"
+  fi
+  SUPER_CLEAN_TOTAL_RECLAIMED_KB=$(( SUPER_CLEAN_TOTAL_RECLAIMED_KB + size_kb ))
+  superclean_success "[+] Removed $(superclean_format_kb "$size_kb"): $path"
+}
+
+superclean_maybe_run_tool_cleanup() {
+  local tool_name=$1
+  local label=$2
+  shift 2
+
+  if ! command -v "$tool_name" >/dev/null 2>&1; then
+    superclean_verbose "Skipping unavailable tool: $tool_name"
+    return 0
+  fi
+
+  superclean_run_command "$label" "$@"
+}
+
+superclean_plan_runtime_caches() {
+  local estimate_kb
+
+  superclean_info "[+] Planning runtime cache cleanup"
+
+  if superclean_group_enabled node && command -v npm >/dev/null 2>&1; then
+    superclean_log "  - npm cache clean --force"
+  fi
+
+  if superclean_group_enabled node && [[ -d "$HOME/.npm" ]]; then
+    superclean_describe_path_action "npm-cache-dir" "$HOME/.npm"
+  fi
+
+  if superclean_group_enabled ruby && command -v rvm >/dev/null 2>&1; then
+    estimate_kb=$(superclean_rvm_cleanup_estimate_kb)
+    SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=$(( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB + estimate_kb ))
+    superclean_log "  - rvm cleanup all$(superclean_format_estimate_suffix "$estimate_kb")"
+  fi
+
+  if superclean_group_enabled ruby && command -v gem >/dev/null 2>&1; then
+    estimate_kb=$(superclean_gem_cleanup_estimate_kb)
+    SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=$(( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB + estimate_kb ))
+    superclean_log "  - gem cleanup$(superclean_format_estimate_suffix "$estimate_kb")"
+  fi
+
+  if superclean_group_enabled go && command -v go >/dev/null 2>&1; then
+    estimate_kb=$(superclean_go_cleanup_estimate_kb)
+    SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=$(( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB + estimate_kb ))
+    superclean_log "  - go clean -cache -modcache$(superclean_format_estimate_suffix "$estimate_kb")"
+  fi
+
+  if superclean_group_enabled brew && command -v brew >/dev/null 2>&1; then
+    estimate_kb=$(superclean_brew_cleanup_estimate_kb)
+    SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=$(( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB + estimate_kb ))
+    superclean_log "  - brew cleanup -s$(superclean_format_estimate_suffix "$estimate_kb")"
+  fi
+}
+
+superclean_apply_runtime_caches() {
+  if superclean_group_enabled node; then
+    superclean_maybe_run_tool_cleanup npm "Cleaning NPM cache" npm cache clean --force
+    superclean_remove_path "$HOME/.npm"
+  fi
+  if superclean_group_enabled ruby; then
+    superclean_maybe_run_tool_cleanup rvm "Cleaning RVM archives" rvm cleanup all
+    superclean_maybe_run_tool_cleanup gem "Cleaning old gem versions" gem cleanup
+  fi
+  if superclean_group_enabled go; then
+    superclean_maybe_run_tool_cleanup go "Cleaning Go build and module caches" go clean -cache -modcache
+  fi
+  if superclean_group_enabled brew; then
+    superclean_maybe_run_tool_cleanup brew "Cleaning Homebrew caches" brew cleanup -s
+  fi
+}
+
+superclean_plan_system_paths() {
+  local targeted_paths=()
+  local aggressive_paths=()
+  local path
+
+  for path in "${SUPER_CLEAN_TARGETED_PATHS[@]}"; do
+    superclean_path_selected_for_cleanup "$path" && targeted_paths+=("$path")
+  done
+
+  ((${#targeted_paths[@]} > 0)) && superclean_plan_path_group "system-cache" "targeted system cache cleanup" "${targeted_paths[@]}"
+
+  if (( SUPER_CLEAN_AGGRESSIVE )); then
+    for path in "${SUPER_CLEAN_AGGRESSIVE_PATHS[@]}"; do
+      superclean_path_selected_for_cleanup "$path" && aggressive_paths+=("$path")
+    done
+    ((${#aggressive_paths[@]} > 0)) && superclean_plan_path_group "aggressive-cache" "AGGRESSIVE cache cleanup" "${aggressive_paths[@]}"
+    if superclean_group_enabled apps && [[ -d "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT" ]]; then
+      superclean_describe_path_action "aggressive-broad-cache" "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT"
+    fi
+  fi
+}
+
+superclean_apply_broad_cache_wipe() {
+  local path
+
+  [[ -d "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT" ]] || return 0
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    superclean_success "[dry-run] Would remove contents of: $SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT"
+    return 0
+  fi
+
+  if ! superclean_prompt_yes_no "AGGRESSIVE: Remove all contents of $SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT?"; then
+    superclean_log "[-] Skipping AGGRESSIVE broad cache wipe"
+    return 0
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    superclean_remove_path "$path"
+  done < <(find "$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT" -mindepth 1 -maxdepth 1 -print 2>/dev/null)
+}
+
+superclean_apply_system_paths() {
+  local path
+
+  for path in "${SUPER_CLEAN_TARGETED_PATHS[@]}"; do
+    superclean_path_selected_for_cleanup "$path" || continue
+    superclean_remove_path "$path"
+  done
+
+  if (( SUPER_CLEAN_AGGRESSIVE )); then
+    for path in "${SUPER_CLEAN_AGGRESSIVE_PATHS[@]}"; do
+      superclean_path_selected_for_cleanup "$path" || continue
+      superclean_remove_path "$path"
+    done
+
+    if superclean_group_enabled apps; then
+      superclean_apply_broad_cache_wipe
+    fi
+  fi
+}
+
+superclean_should_exclude_dir() {
+  local path=$1
+
+  [[ "$path" == */.git ]] && return 0
+  [[ "$path" == */.direnv ]] && return 0
+  return 1
+}
+
+superclean_should_skip_hook_path() {
+  local path=$1
+
+  [[ "$path" == *"/.git/"* ]] && return 0
+  [[ "$path" == *"/.direnv/"* ]] && return 0
+  [[ "$path" == *"/node_modules/"* ]] && return 0
+  [[ "$path" == *"/target/"* ]] && return 0
+  return 1
+}
+
+superclean_makefile_max_depth() {
+  echo 3
+}
+
+superclean_filter_nested_targets() {
+  local path existing
+  local kept=()
+  local normalized_path normalized_existing
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    normalized_path=${path%/}
+
+    for existing in "${kept[@]}"; do
+      normalized_existing=${existing%/}
+      if [[ "$normalized_path" == "$normalized_existing"/* ]]; then
+        continue 2
+      fi
+    done
+
+    kept+=("$normalized_path")
+    printf '%s\n' "$normalized_path"
+  done
+}
+
+superclean_discover_target_dirs() {
+  local roots=()
+  local root target path
+
+  while IFS= read -r root; do
+    roots+=("$root")
+  done < <(superclean_existing_roots)
+
+  if ((${#roots[@]} == 0)); then
+    return 0
+  fi
+
+  for target in "${SUPER_CLEAN_DEEP_TARGETS[@]}"; do
+    case "$target" in
+      node_modules)
+        superclean_group_enabled node || continue
+        ;;
+      target)
+        superclean_group_enabled java || continue
+        ;;
+    esac
+    if (( SUPER_CLEAN_HAS_FD )); then
+      for root in "${roots[@]}"; do
+        while IFS= read -r path; do
+          superclean_should_exclude_dir "$path" && continue
+          printf '%s\n' "$path"
+        done < <(fd -H -I -t d "^${target}$" "$root")
+      done
+    else
+      for root in "${roots[@]}"; do
+        while IFS= read -r path; do
+          superclean_should_exclude_dir "$path" && continue
+          printf '%s\n' "$path"
+        done < <(find "$root" -type d -name "$target" -prune -print 2>/dev/null)
+      done
+    fi
+  done
+
+  if (( SUPER_CLEAN_AGGRESSIVE )); then
+    for target in "${SUPER_CLEAN_AGGRESSIVE_DEEP_TARGETS[@]}"; do
+      if [[ "$target" == "log" ]] && ! superclean_group_enabled logs; then
+        continue
+      fi
+      if (( SUPER_CLEAN_HAS_FD )); then
+        for root in "${roots[@]}"; do
+          while IFS= read -r path; do
+            superclean_should_exclude_dir "$path" && continue
+            printf '%s\n' "$path"
+          done < <(fd -H -I -t d "^${target}$" "$root")
+        done
+      else
+        for root in "${roots[@]}"; do
+          while IFS= read -r path; do
+            superclean_should_exclude_dir "$path" && continue
+            printf '%s\n' "$path"
+          done < <(find "$root" -type d -name "$target" -prune -print 2>/dev/null)
+        done
+      fi
+    done
+  fi
+
+  return 0
+}
+
+superclean_cached_target_dirs() {
+  if (( ! SUPER_CLEAN_TARGET_DIRS_CACHED )); then
+    SUPER_CLEAN_DISCOVERED_TARGET_DIRS=$(superclean_discover_target_dirs | sort -u | superclean_filter_nested_targets || true)
+    SUPER_CLEAN_TARGET_DIRS_CACHED=1
+  fi
+
+  [[ -n "$SUPER_CLEAN_DISCOVERED_TARGET_DIRS" ]] || return 0
+  printf '%s\n' "$SUPER_CLEAN_DISCOVERED_TARGET_DIRS"
+}
+
+superclean_plan_deep_scan() {
+  local path size_kb
+  local group_total_kb=0
+  local current=""
+  local processed=0
+  local matched=0
+  local -a rows=()
+  local live_mode=0
+
+  if superclean_live_scan_enabled; then
+    live_mode=1
+    superclean_live_scan_start "deep-scan candidates"
+  else
+    superclean_info "[+] Planning deep scan candidates"
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    processed=$(( processed + 1 ))
+    current=$path
+    if (( live_mode )); then
+      superclean_live_scan_status "$processed" "$matched" "$group_total_kb" "$current"
+    fi
+    size_kb=$(superclean_path_size_kb "$path")
+    matched=$(( matched + 1 ))
+    group_total_kb=$(( group_total_kb + size_kb ))
+    rows+=("$(printf 'deep-scan\t%s\t(%s KB)' "$path" "$size_kb")")
+    if (( live_mode )); then
+      superclean_live_scan_status "$processed" "$matched" "$group_total_kb" "$current"
+    fi
+  done < <(superclean_cached_target_dirs)
+
+  if (( live_mode )); then
+    superclean_live_scan_finish "deep-scan candidates" "$matched" "$group_total_kb"
+  fi
+
+  if (( ! live_mode && SUPER_CLEAN_VERBOSE && ${#rows[@]} > 0 )); then
+    printf '%s\n' "${rows[@]}"
+  fi
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    SUPER_CLEAN_TOTAL_RECLAIMED_KB=$(( SUPER_CLEAN_TOTAL_RECLAIMED_KB + group_total_kb ))
+  fi
+}
+
+superclean_emit_size_path_lines() {
+  local path size_kb
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    size_kb=$(superclean_path_size_kb "$path")
+    printf '%012d\t%s %s\t%s\n' "$size_kb" "$path" "$(superclean_format_kb "$size_kb")" "$path"
+  done
+}
+
+superclean_interactive_select_paths() {
+  local selected
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(superclean_cached_target_dirs | superclean_emit_size_path_lines | \
+      superclean_filter_nested_targets | \
+      fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=2 \
+      "${fzf_args[@]}" \
+      --prompt="Select folders to remove > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $3}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    if superclean_prompt_yes_no "Remove $path?"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(superclean_cached_target_dirs)
+}
+
+superclean_apply_deep_scan() {
+  local paths=()
+  local path
+  local has_candidates=0
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    return 0
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    has_candidates=1
+    break
+  done < <(superclean_cached_target_dirs)
+
+  if (( ! has_candidates )); then
+    superclean_verbose "No deep-scan candidates found"
+    return 0
+  fi
+
+  if (( SUPER_CLEAN_INTERACTIVE )); then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(superclean_interactive_select_paths)
+  else
+    if ! superclean_prompt_yes_no "Proceed with Deep Scan of configured roots for removable project artifacts?"; then
+      superclean_info "[-] Skipping deep scan"
+      return 0
+    fi
+
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(superclean_cached_target_dirs)
+  fi
+
+  for path in "${paths[@]}"; do
+    superclean_remove_path "$path"
+  done
+}
+
+superclean_file_contains_clean_target() {
+  local file=$1
+  grep -Eq '^clean([[:space:]]|:)' "$file"
+}
+
+superclean_find_hook_candidates() {
+  local roots=()
+  local root found
+  local max_depth
+
+  while IFS= read -r root; do
+    roots+=("$root")
+  done < <(superclean_existing_roots)
+
+  for root in "${roots[@]}"; do
+    max_depth=$(superclean_makefile_max_depth)
+
+    if (( SUPER_CLEAN_HAS_FD )); then
+      while IFS= read -r found; do
+        [[ -n "$found" ]] || continue
+        superclean_should_skip_hook_path "$found" && continue
+        printf '%s\n' "$found"
+      done < <(fd -H -I -t f . "$root" | awk '
+        /\/(bin|scripts)\/(clean|clean\.sh|cleanup|cleanup\.sh)$/ { print }
+      ')
+
+      while IFS= read -r found; do
+        [[ -n "$found" ]] || continue
+        superclean_should_skip_hook_path "$found" && continue
+        printf '%s\n' "$found"
+      done < <(fd -H -I -t f --max-depth "$max_depth" '^Makefile$' "$root")
+    else
+      while IFS= read -r found; do
+        [[ -n "$found" ]] || continue
+        superclean_should_skip_hook_path "$found" && continue
+        printf '%s\n' "$found"
+      done < <(find "$root" -type f \( \
+        -path '*/bin/clean' -o \
+        -path '*/bin/clean.sh' -o \
+        -path '*/bin/cleanup' -o \
+        -path '*/bin/cleanup.sh' -o \
+        -path '*/scripts/clean' -o \
+        -path '*/scripts/clean.sh' -o \
+        -path '*/scripts/cleanup' -o \
+        -path '*/scripts/cleanup.sh' \
+      \) -print 2>/dev/null)
+
+      while IFS= read -r found; do
+        [[ -n "$found" ]] || continue
+        superclean_should_skip_hook_path "$found" && continue
+        printf '%s\n' "$found"
+      done < <(find "$root" -maxdepth "$max_depth" -type f -name 'Makefile' -print 2>/dev/null)
+    fi
+  done
+
+  return 0
+}
+
+superclean_hook_project_root() {
+  local hook=$1
+
+  case "$(basename "$hook")" in
+    Makefile)
+      dirname "$hook"
+      ;;
+    *)
+      cd "$(dirname "$hook")/.." && pwd
+      ;;
+  esac
+}
+
+superclean_find_unique_hooks() {
+  local hook root seen_roots=""
+
+  while IFS= read -r hook; do
+    [[ -n "$hook" ]] || continue
+    root=$(superclean_hook_project_root "$hook")
+    case "
+$seen_roots
+" in
+      *"
+$root
+"*)
+        continue
+        ;;
+      *)
+        seen_roots="${seen_roots}
+$root"
+        printf '%s\n' "$hook"
+        ;;
+    esac
+  done < <(superclean_find_hook_candidates | sort)
+}
+
+superclean_cached_hooks() {
+  if (( ! SUPER_CLEAN_HOOKS_CACHED )); then
+    SUPER_CLEAN_DISCOVERED_HOOKS=$(superclean_find_unique_hooks || true)
+    SUPER_CLEAN_HOOKS_CACHED=1
+  fi
+
+  [[ -n "$SUPER_CLEAN_DISCOVERED_HOOKS" ]] || return 0
+  printf '%s\n' "$SUPER_CLEAN_DISCOVERED_HOOKS"
+}
+
+superclean_plan_hooks() {
+  local hook processed=0 total=0
+
+  superclean_group_enabled hooks || return 0
+
+  while IFS= read -r hook; do
+    [[ -n "$hook" ]] && total=$(( total + 1 ))
+  done < <(superclean_cached_hooks)
+
+  if [[ -t 1 ]]; then
+    superclean_hook_progress_start "Planning project hooks"
+    while IFS= read -r hook; do
+      [[ -n "$hook" ]] || continue
+      processed=$(( processed + 1 ))
+      superclean_hook_progress_status "$processed" "$total" "$hook"
+    done < <(superclean_cached_hooks)
+    superclean_hook_progress_finish "Planning project hooks" "$total" 0
+    return 0
+  fi
+
+  superclean_info "[+] Planning project hooks"
+  while IFS= read -r hook; do
+    [[ -n "$hook" ]] || continue
+    superclean_log "  - $hook"
+  done < <(superclean_cached_hooks)
+}
+
+superclean_format_hook_selector_row() {
+  local hook=$1
+  printf '%s\t%s\t%s\n' "$(superclean_hook_project_root "$hook")" "$(basename "$hook")" "$hook"
+}
+
+superclean_interactive_select_hooks() {
+  local selected
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(superclean_cached_hooks | while IFS= read -r hook; do
+      [[ -n "$hook" ]] || continue
+      superclean_format_hook_selector_row "$hook"
+    done | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=1,2 \
+      "${fzf_args[@]}" \
+      --prompt="Select projects to clean > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $3}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  local hook project_root
+  while IFS= read -r hook; do
+    [[ -n "$hook" ]] || continue
+    project_root=$(superclean_hook_project_root "$hook")
+    if superclean_prompt_yes_no "Run cleanup hook in $project_root?"; then
+      printf '%s\n' "$hook"
+    fi
+  done < <(superclean_cached_hooks)
+}
+
+superclean_render_hook_error() {
+  local hook=$1
+  local status=$2
+  local err_file=$3
+  local last_error_line failing_line="" source_line=""
+
+  printf '\r\033[2K' >&2
+
+  last_error_line=$(awk 'NF { line=$0 } END { print line }' "$err_file")
+  if [[ "$last_error_line" =~ line[[:space:]]+([0-9]+) ]]; then
+    failing_line=${BASH_REMATCH[1]}
+  fi
+
+  superclean_error "Hook failed (exit $status): $hook"
+  if [[ -n "$failing_line" ]]; then
+    superclean_warn_orange "Failing line: $failing_line"
+    if [[ -f "$hook" ]]; then
+      source_line=$(sed -n "${failing_line}p" "$hook" 2>/dev/null || true)
+      if [[ -n "$source_line" ]]; then
+        superclean_error "$(printf '%5s | %s' "$failing_line" "$source_line")"
+      fi
+    fi
+  fi
+  if [[ -n "$last_error_line" ]]; then
+    superclean_error "$last_error_line"
+  fi
+}
+
+superclean_run_hook_command() {
+  local hook=$1
+  local project_root=$2
+  shift 2
+  local status
+  local err_file out_file
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    superclean_info "[dry-run] Would run: $* in $project_root"
+    return 0
+  fi
+
+  err_file=$(mktemp)
+  out_file=$(mktemp)
+
+  set +e
+  (
+    cd "$project_root" || exit 1
+    "$@"
+  ) >"$out_file" 2>"$err_file"
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
+    superclean_render_hook_error "$hook" "$status" "$err_file"
+  fi
+
+  rm -f "$err_file" "$out_file"
+  return "$status"
+}
+
+superclean_apply_hook() {
+  local hook=$1
+  local project_root command_name status=0
+
+  case "$(basename "$hook")" in
+    Makefile)
+      superclean_file_contains_clean_target "$hook" || return 0
+      project_root=$(dirname "$hook")
+      if superclean_hook_needs_sudo "$hook"; then
+        superclean_can_use_sudo_for_task "Project hook make clean in $project_root" || return 0
+        superclean_ensure_sudo_session
+        if (( SUPER_CLEAN_DRY_RUN )); then
+          superclean_info "[dry-run] Would run: sudo make clean in $project_root"
+          return 0
+        fi
+        set +e
+        (cd "$project_root" && sudo make clean)
+        status=$?
+        set -e
+        if (( status != 0 )); then
+          superclean_error "Hook failed (exit $status): $hook"
+        fi
+        return "$status"
+      fi
+      superclean_run_hook_command "$hook" "$project_root" make clean
+      ;;
+    *)
+      [[ -x "$hook" ]] || return 0
+      project_root=$(cd "$(dirname "$hook")/.." && pwd)
+      command_name=$(basename "$hook")
+      if superclean_hook_needs_sudo "$hook"; then
+        superclean_can_use_sudo_for_task "Project hook $command_name in $project_root" || return 0
+        superclean_ensure_sudo_session
+        if (( SUPER_CLEAN_DRY_RUN )); then
+          superclean_info "[dry-run] Would run: sudo $command_name in $project_root"
+          return 0
+        fi
+        set +e
+        (cd "$project_root" && sudo "$hook")
+        status=$?
+        set -e
+        if (( status != 0 )); then
+          superclean_error "Hook failed (exit $status): $hook"
+        fi
+        return "$status"
+      fi
+      superclean_run_hook_command "$hook" "$project_root" "$hook"
+      ;;
+  esac
+}
+
+superclean_apply_hooks() {
+  local hook total=0 processed=0 succeeded=0 failed=0
+  local -a hooks=()
+
+  superclean_group_enabled hooks || return 0
+
+  if (( SUPER_CLEAN_INTERACTIVE )); then
+    while IFS= read -r hook; do
+      [[ -n "$hook" ]] && hooks+=("$hook")
+    done < <(superclean_interactive_select_hooks)
+  else
+    while IFS= read -r hook; do
+      [[ -n "$hook" ]] && hooks+=("$hook")
+    done < <(superclean_cached_hooks)
+  fi
+
+  total=${#hooks[@]}
+  (( total > 0 )) || return 0
+
+  if [[ -t 1 ]]; then
+    superclean_hook_progress_start "Running project hooks"
+  fi
+
+  for hook in "${hooks[@]}"; do
+    processed=$(( processed + 1 ))
+    if [[ -t 1 ]]; then
+      superclean_hook_progress_status "$processed" "$total" "$hook"
+    fi
+    if superclean_apply_hook "$hook"; then
+      succeeded=$(( succeeded + 1 ))
+    else
+      failed=$(( failed + 1 ))
+    fi
+  done
+
+  if [[ -t 1 ]]; then
+    superclean_hook_progress_finish "Running project hooks" "$succeeded" "$failed"
+  fi
+}
+
+superclean_apply_container_prune() {
+  if (( ! SUPER_CLEAN_AGGRESSIVE )) || ! superclean_group_enabled containers; then
+    return 0
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    if (( SUPER_CLEAN_DRY_RUN )); then
+      superclean_info "[dry-run] Would run: docker system prune -f"
+    elif superclean_prompt_yes_no "AGGRESSIVE: Run docker system prune -f?"; then
+      superclean_run_command "Pruning Docker system state" docker system prune -f
+    fi
+  fi
+
+  if command -v podman >/dev/null 2>&1; then
+    if (( SUPER_CLEAN_DRY_RUN )); then
+      superclean_info "[dry-run] Would run: podman system prune -f"
+    elif superclean_prompt_yes_no "AGGRESSIVE: Run podman system prune -f?"; then
+      superclean_run_command "Pruning Podman system state" podman system prune -f
+    fi
+  fi
+}
+
+superclean_confirm_aggressive_steps() {
+  if (( ! SUPER_CLEAN_AGGRESSIVE )); then
+    return 0
+  fi
+
+  superclean_warn_orange "AGGRESSIVE mode enabled"
+}
+
+superclean_main() {
+  superclean_parse_args "$@" || return $?
+  superclean_register_cleanup_trap
+  superclean_detect_tools
+  if (( SUPER_CLEAN_INTERACTIVE )); then
+    superclean_interactive_select_cleanup_groups
+  fi
+  superclean_protips
+  superclean_capture_start_disk
+  superclean_confirm_aggressive_steps
+  superclean_warn_sudo_if_needed
+
+  superclean_plan_runtime_caches
+  superclean_apply_runtime_caches
+
+  superclean_plan_system_paths
+  superclean_apply_system_paths
+
+  superclean_plan_hooks
+  superclean_apply_hooks
+
+  superclean_plan_deep_scan
+  superclean_apply_deep_scan
+
+  superclean_apply_container_prune
+
+  superclean_report_reclaimed
+}
+
+if (( ! SUPERCLEAN_SOURCE_ONLY )); then
+  superclean_main "$@"
+fi
