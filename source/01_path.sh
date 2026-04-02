@@ -3,6 +3,7 @@
 paths=(
   $HOME/.local/bin
   $DOTFILES/bin
+  $HOME/.npm-global/bin
   "/Applications/IntelliJ IDEA.app/Contents/MacOS"
   /usr/local/bin
 )
