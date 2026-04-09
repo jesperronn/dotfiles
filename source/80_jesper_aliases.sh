@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 
 alias k='kubectl'
-
+alias vi='nvim'
+alias vim='nvim'
 alias lzd='lazydocker'
-alias lz='lazydocker'
+alias lzg='lazygit'
 
 
 # Cisco vpn credentials can be fired from command line. copy this file

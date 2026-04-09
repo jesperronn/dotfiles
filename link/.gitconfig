@@ -11,7 +11,7 @@
   autocrlf     = input
   whitespace   = fix,space-before-tab,tab-in-indent,trailing-space
   excludesfile = ~/.gitignore_global
-  editor       = vim
+  editor       = nvim
   pager        = "less -M"
   pager        = "less -M -F -X -S"
 [apply]
