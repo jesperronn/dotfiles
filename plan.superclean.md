@@ -9,6 +9,11 @@ The script already implements the following behavior:
 * Runtime cleanup for npm, RVM, gems, Go, and Homebrew with dry-run estimates where practical.
 * Group-scoped flags for `node`, `java`, `ruby`, `go`, `brew`, `apps`, `logs`, `hooks`, and `containers`, including `--no-*` variants.
 * An upfront interactive group selector when `--interactive` is set, before any cleanup work starts.
+* Dry-run inventory reporting for `~/Library`, `~/Library/Application Support`, `~/Library/Containers`, `~/Library/Developer/CoreSimulator/Devices`, and `/Library`.
+* App-support classification that compares top-level support directories against installed apps and surfaces likely orphaned entries for review.
+* Review of cache-like subpaths inside still-installed app-support directories, including developer tools such as VS Code, Slack, and similar apps.
+* Interactive selection for orphaned app-support paths and installed-app cache-like subpaths when `--interactive` is combined with the `apps` group.
+* Read-only reporting for `~/Library/Caches/com.apple.bird` with guidance for forcing iCloud Drive sync cache rebuilds.
 * Deep-scan discovery across all configured roots with interactive selection, deduping, and pruning of nested targets.
 * Project hook discovery and execution, including executable script hooks and project-level `Makefile` cleanup.
 * Interactive multiselect support via `fzf` for groups, hooks, and deep-scan candidates, including bulk select/deselect bindings.
@@ -71,10 +76,12 @@ Targets heavy-duty temporary data stored by macOS and development environments.
 * **JetBrains:** `rm -rf ~/Library/Caches/JetBrains/*`
 * **TypeScript:** `rm -rf ~/Library/Caches/typescript/*`
 * **Xcode:** `rm -rf ~/Library/Developer/Xcode/DerivedData/*`
+* **iCloud sync cache review:** `~/Library/Caches/com.apple.bird` with aggressive review guidance rather than default deletion
 * **Home caches:** safe home-scoped cache paths such as `~/.cache`, `~/.gradle/caches`, `~/.ivy2/cache`, `~/.pnpm-store`, and `~/.yarn/cache`
 * **Browser cache (aggressive):** browser cache roots such as `~/Library/Caches/Google/Chrome` and `~/Library/Caches/BraveSoftware/Brave-Browser`
 * **Dev tool cache (aggressive):** editor and test-tool caches such as VS Code, Cypress, Playwright, Yarn, Bun, and old editor caches such as Atom, if present
 * **General cache wipe (aggressive):** `rm -rf ~/Library/Caches/*` (Optional/Prompted)
+* **System-wide review:** read-only size-ranked review of `/Library` to identify large system-wide `Application Support`, `Caches`, `Logs`, and similar areas before any future cleanup logic is added
 
 **Safety note:**
 * The general `~/Library/Caches/*` wipe must stay optional and separately confirmed because it is much broader than the targeted cache paths above.
@@ -147,7 +154,8 @@ This tier is opt-in via `--aggressive` and is reserved for cleanup that is broad
 ### Candidate Actions
 * Broad cache wipe: `rm -rf ~/Library/Caches/*`
 * Browser/editor/dev-tool cache cleanup
-* Stale app support cleanup under `~/Library/Application Support/*` for apps that are no longer installed, such as Claude
+* Stale app support cleanup under `~/Library/Application Support/*` and `/Library/Application Support/*` for apps that are no longer installed, such as Cypress, Warp (`dev.warp.Warp-Stable`), LM Studio, Claude, and similar developer tools
+* Cache-like subpath cleanup inside still-installed apps under `~/Library/Application Support/*` and `/Library/Application Support/*`, for paths such as `Cache`, `CachedData`, `CachedExtensionVSIXs`, `Code Cache`, `GPUCache`, `Crashpad`, `Service Worker`, `logs`, and similar regenerable artifacts
 * Optional project-local `log` directory cleanup
 * Maven local repository cleanup: `~/.m2/repository`
 * Container cleanup via tool commands, not raw path deletion
@@ -163,6 +171,12 @@ This tier is opt-in via `--aggressive` and is reserved for cleanup that is broad
 4. Do not attempt to reclaim container storage by manually deleting Docker/Podman state directories.
 5. Treat this tier as allowed to be slower than the default path.
 6. Prefer to group actions here if they may require apps to rebuild caches, may disrupt active sessions, or may take a long time to scan/prune.
+7. For `~/Library/Application Support`, first compare top-level support directories against installed apps in `/Applications` and `~/Applications`, using bundle names and bundle identifiers where practical.
+8. Only auto-remove support directories when the contents are judged risk-free and regenerable on reinstall or next launch, such as caches, indexes, downloaded models, crash data, temporary state, updater remnants, or clearly disposable support assets.
+9. Avoid auto-removal for support directories that may contain primary user data, local databases, exports, prompts, projects, sessions, or other non-regenerable content unless the user explicitly opts in during interactive review.
+10. Aggressive mode may suggest more stale app-support candidates than default mode, but must still limit automatic deletion to regenerable data and surface the rest as review-only recommendations.
+11. Extend the same stale-support and cache-subpath review model to `/Library/Application Support` as a system-wide, review-first workflow because paths there may require sudo and may affect multiple users.
+12. Treat sync caches such as `~/Library/Caches/com.apple.bird` as aggressive review targets: surface size and guidance, and only remove after explicit user confirmation because the cache will be rebuilt and may trigger re-index/re-download work.
 
 ---
 
@@ -200,6 +214,7 @@ If `--interactive` is enabled:
 Protip: Interactive cleanup is faster if you install "fzf" (`brew install fzf`)
 ```
 6. Live progress for deep-scan and hook execution should stay within the terminal width, with the current path on its own line during deep-scan.
+7. For the `apps` group, `--interactive --dry-run` should also offer review pickers for likely orphaned app-support directories and cache-like subpaths inside installed apps.
 
 ### Safety
 * **Disk Space Delta:**
@@ -252,9 +267,17 @@ CLEANUP COMPLETE: 12.4 GB Reclaimed.
 These are explicitly out of scope for the first implementation, but worth designing toward:
 
 * Add a `--system` mode for command-driven macOS cleanup tasks only.
+* Add a `--apps` mode for stale app data review and app-specific cache/support cleanup under user-owned Library paths.
+* Expand the current review model so `--apps` can separately classify user-scoped `~/Library` findings and system-scoped `/Library` findings.
 * `--system` should stay separate from `--apps` and should avoid raw path deletion for Apple privacy-sensitive or entitlement-sensitive app data like Safari, Photos, Music, TV, iCloud/CloudKit, Find My, Siri, and similar system-managed areas.
 * `--system` should also avoid raw cleanup under `~/Library/Containers/*`; those are app sandboxes and can reset app state, sessions, permissions, or extension data.
 * If container cleanup is ever added later, it should be a separate stale-orphaned-app workflow with explicit interactive confirmation, not part of normal `--system` or `--apps` cleanup.
+* Add a size-ranked `~/Library` inventory/report step that summarizes the largest top-level subfolders and the heaviest app-owned directories inside `~/Library/Application Support`, `~/Library/Caches`, `~/Library/Logs`, and similar user-owned areas.
+* The Library inventory should be able to sort by size and classify candidates as likely `--system`, likely `--apps`, review-only, or ignore.
+* `--apps` should compare app-support directory names against installed applications and surface likely orphaned directories for interactive review.
+* Where possible, `--apps --aggressive` may also suggest removing large regenerable assets for currently installed apps, such as downloaded models, browser engine caches, test runner artifacts, and updater leftovers, as long as they are expected to be recreated on demand.
+* Extend app-support review to cache-like subpaths inside installed apps, using a curated list of regenerable directory names compiled across both `~/Library/Application Support` and `/Library/Application Support`.
+* The reporting layer should prefer recommendations before deletion: show size, last-modified time, likely owning app, install match status, and whether the path appears regenerable or risky.
 * Likely future `--system` candidates:
   * `qlmanage -r cache` for Quick Look cache
   * `xcrun simctl delete unavailable` for stale iOS Simulator state

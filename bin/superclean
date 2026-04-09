@@ -21,6 +21,7 @@ SUPER_CLEAN_HAS_FZF=0
 SUPER_CLEAN_SUDO_CHECKED=0
 SUPER_CLEAN_TOUCH_ID_SUDO_AVAILABLE=0
 SUPER_CLEAN_SUDO_SESSION_READY=0
+SUPER_CLEAN_INSTALLED_APP_KEYS_CACHED=0
 SUPER_CLEAN_GROUP_NODE=1
 SUPER_CLEAN_GROUP_JAVA=1
 SUPER_CLEAN_GROUP_RUBY=1
@@ -38,6 +39,7 @@ SUPER_CLEAN_TARGET_DIRS_CACHED=0
 SUPER_CLEAN_HOOKS_CACHED=0
 SUPER_CLEAN_DISCOVERED_TARGET_DIRS=""
 SUPER_CLEAN_DISCOVERED_HOOKS=""
+SUPER_CLEAN_INSTALLED_APP_KEYS=""
 SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
 SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=0
 
@@ -78,6 +80,7 @@ SUPER_CLEAN_AGGRESSIVE_PATHS=(
   "$HOME/.pnpm-store"
   "$HOME/.yarn/cache"
   "$HOME/.bun/install/cache"
+  "$HOME/Library/Caches/com.apple.bird"
   "$HOME/Library/Caches/Google/Chrome"
   "$HOME/Library/Caches/BraveSoftware/Brave-Browser"
   "$HOME/Library/Caches/com.microsoft.VSCode"
@@ -88,6 +91,36 @@ SUPER_CLEAN_AGGRESSIVE_PATHS=(
 )
 
 SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT="$HOME/Library/Caches"
+SUPER_CLEAN_LIBRARY_INVENTORY_LIMIT=12
+SUPER_CLEAN_APP_SUPPORT_INVENTORY_LIMIT=15
+SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_PARENTS=6
+SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_CHILDREN=5
+SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_MIN_KB=102400
+SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT=20
+SUPER_CLEAN_CONTAINER_INVENTORY_LIMIT=10
+SUPER_CLEAN_CONTAINER_BREAKDOWN_PARENTS=5
+SUPER_CLEAN_CONTAINER_BREAKDOWN_CHILDREN=5
+SUPER_CLEAN_CORESIMULATOR_INVENTORY_LIMIT=8
+SUPER_CLEAN_SYSTEM_LIBRARY_INVENTORY_LIMIT=10
+
+SUPER_CLEAN_APP_SUPPORT_CACHE_NAMES=(
+  "Cache"
+  "Caches"
+  "CachedData"
+  "CachedConfigurations"
+  "CachedExtensions"
+  "CachedExtensionVSIXs"
+  "CachedProfilesData"
+  "Code Cache"
+  "GPUCache"
+  "blob_storage"
+  "Crashpad"
+  "DawnCache"
+  "DawnGraphiteCache"
+  "DawnWebGPUCache"
+  "Service Worker"
+  "logs"
+)
 
 superclean_usage() {
   local header_style="" flag_style="" command_style="" parameter_style="" reset_style=""
@@ -105,7 +138,7 @@ superclean_usage() {
 
   printf '%sOverall flags:%s\n' "$header_style" "$reset_style"
   printf '  %s%s%s\n' "$flag_style" '-n, --dry-run' "$reset_style"
-  printf '          Show what would be cleaned, including sizes, without changing anything.\n'
+  printf '          Show what would be cleaned, including sizes and read-only inventory reports, without changing anything.\n'
   printf '  %s%s%s\n' "$flag_style" '--verbose' "$reset_style"
   printf '          Print extra progress details.\n'
   printf '  %s%s%s\n' "$flag_style" '-i, --interactive' "$reset_style"
@@ -135,7 +168,7 @@ superclean_usage() {
   printf '  %s%s%s\n' "$flag_style" '--brew, --no-brew' "$reset_style"
   printf '          Include or exclude Homebrew cleanup.\n'
   printf '  %s%s%s\n' "$flag_style" '--apps, --no-apps' "$reset_style"
-  printf '          Include or exclude app/system cache cleanup.\n'
+  printf '          Include or exclude app/system cache cleanup and Library inventory reporting in dry-run mode.\n'
   printf '  %s%s%s\n' "$flag_style" '--logs, --no-logs' "$reset_style"
   printf '          Include or exclude aggressive log cleanup.\n'
   printf '  %s%s%s\n' "$flag_style" '--hooks, --no-hooks' "$reset_style"
@@ -336,8 +369,14 @@ superclean_restore_terminal() {
   printf '\r\033[2K%s\033[?25h\n' "$C_0" >/dev/tty 2>/dev/null || true
 }
 
+superclean_handle_interrupt() {
+  superclean_restore_terminal
+  exit 130
+}
+
 superclean_register_cleanup_trap() {
-  trap 'superclean_restore_terminal' EXIT INT TERM
+  trap 'superclean_restore_terminal' EXIT
+  trap 'superclean_handle_interrupt' INT TERM
 }
 
 superclean_enable_only_mode() {
@@ -503,7 +542,7 @@ superclean_path_selected_for_cleanup() {
     "$HOME/.pnpm-store"|"$HOME/.yarn/cache"|"$HOME/.bun/install/cache"|"$HOME/Library/Caches/Cypress"|"$HOME/Library/Caches/ms-playwright"|"$HOME/Library/Caches/Yarn")
       superclean_group_enabled node
       ;;
-    "$HOME/Library/Caches/Google/Chrome"|"$HOME/Library/Caches/BraveSoftware/Brave-Browser"|"$HOME/Library/Caches/com.microsoft.VSCode"|"$HOME/Library/Application Support/Atom/Cache"|"$HOME/Library/Caches/JetBrains"|"$HOME/Library/Caches/typescript"|"$HOME/Library/Developer/Xcode/DerivedData"|"$HOME/.cache"|"$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT")
+    "$HOME/Library/Caches/com.apple.bird"|"$HOME/Library/Caches/Google/Chrome"|"$HOME/Library/Caches/BraveSoftware/Brave-Browser"|"$HOME/Library/Caches/com.microsoft.VSCode"|"$HOME/Library/Application Support/Atom/Cache"|"$HOME/Library/Caches/JetBrains"|"$HOME/Library/Caches/typescript"|"$HOME/Library/Developer/Xcode/DerivedData"|"$HOME/.cache"|"$SUPER_CLEAN_AGGRESSIVE_BROAD_CACHE_ROOT")
       superclean_group_enabled apps
       ;;
     *)
@@ -628,6 +667,66 @@ superclean_path_size_kb() {
   awk '{print $1 + 0}' <<<"$du_output"
 }
 
+superclean_path_mtime_epoch() {
+  local path=$1
+
+  [[ -e "$path" ]] || {
+    echo 0
+    return 0
+  }
+
+  if stat -f '%m' "$path" >/dev/null 2>&1; then
+    stat -f '%m' "$path" 2>/dev/null || echo 0
+    return 0
+  fi
+
+  if stat -c '%Y' "$path" >/dev/null 2>&1; then
+    stat -c '%Y' "$path" 2>/dev/null || echo 0
+    return 0
+  fi
+
+  echo 0
+}
+
+superclean_format_mtime_epoch() {
+  local epoch=${1:-0}
+
+  if [[ ! "$epoch" =~ ^[0-9]+$ ]] || (( epoch <= 0 )); then
+    printf '%s' '-'
+    return 0
+  fi
+
+  date -r "$epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || printf '%s' '-'
+}
+
+superclean_print_size_label_path_line() {
+  local size_kb=$1
+  local label=$2
+  local path=$3
+  local label_width=${4:-13}
+  local size_num
+
+  size_num=$((10#$size_kb))
+  printf '  - %10s  %-*s  %s\n' "$(superclean_format_kb "$size_num")" "$label_width" "$label" "$path"
+}
+
+superclean_print_size_date_label_path_line() {
+  local size_kb=$1
+  local epoch=$2
+  local label=$3
+  local path=$4
+  local label_width=${5:-13}
+  local size_num
+
+  size_num=$((10#$size_kb))
+  printf '  - %10s  %-16s  %-*s  %s\n' \
+    "$(superclean_format_kb "$size_num")" \
+    "$(superclean_format_mtime_epoch "$epoch")" \
+    "$label_width" \
+    "$label" \
+    "$path"
+}
+
 superclean_existing_roots() {
   local root
 
@@ -673,6 +772,632 @@ superclean_format_estimate_suffix() {
 
   if (( size_kb > 0 )); then
     printf ' (est. %s)' "$(superclean_format_kb "$size_kb")"
+  fi
+}
+
+superclean_normalize_app_key() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
+}
+
+superclean_emit_name_keys() {
+  local raw=$1
+  local normalized
+
+  normalized=$(superclean_normalize_app_key "$raw")
+  [[ -n "$normalized" ]] && printf '%s\n' "$normalized"
+
+  printf '%s' "$raw" | awk '
+    {
+      text = tolower($0)
+      gsub(/[^[:alnum:]]+/, " ", text)
+      split(text, parts, /[[:space:]]+/)
+      for (i in parts) {
+        if (length(parts[i]) >= 3) {
+          print parts[i]
+        }
+      }
+    }
+  ' | awk 'NF && !seen[$0]++ { print $0 }'
+}
+
+superclean_installed_app_dirs() {
+  local root
+
+  for root in "/Applications" "$HOME/Applications"; do
+    [[ -d "$root" ]] || continue
+    find "$root" -mindepth 1 -maxdepth 1 -type d -name '*.app' -print 2>/dev/null || true
+  done
+}
+
+superclean_app_support_roots() {
+  local root
+
+  for root in "$HOME/Library/Application Support" "/Library/Application Support"; do
+    [[ -d "$root" ]] && printf '%s\n' "$root"
+  done
+}
+
+superclean_collect_installed_app_keys() {
+  local app_path app_name bundle_id
+
+  while IFS= read -r app_path; do
+    [[ -n "$app_path" ]] || continue
+    app_name=$(basename "$app_path")
+    app_name=${app_name%.app}
+    superclean_emit_name_keys "$app_name"
+
+    if command -v mdls >/dev/null 2>&1; then
+      bundle_id=$(mdls -name kMDItemCFBundleIdentifier -raw "$app_path" 2>/dev/null || true)
+      if [[ -n "$bundle_id" && "$bundle_id" != "(null)" ]]; then
+        superclean_emit_name_keys "$bundle_id"
+      fi
+    fi
+  done < <(superclean_installed_app_dirs)
+}
+
+superclean_cached_installed_app_keys() {
+  if (( ! SUPER_CLEAN_INSTALLED_APP_KEYS_CACHED )); then
+    SUPER_CLEAN_INSTALLED_APP_KEYS=$(superclean_collect_installed_app_keys | awk 'NF && !seen[$0]++ { print $0 }')
+    SUPER_CLEAN_INSTALLED_APP_KEYS_CACHED=1
+  fi
+
+  [[ -n "$SUPER_CLEAN_INSTALLED_APP_KEYS" ]] || return 0
+  printf '%s\n' "$SUPER_CLEAN_INSTALLED_APP_KEYS"
+}
+
+superclean_key_list_contains() {
+  local needle=$1
+  local haystack=$2
+
+  case "
+$haystack
+" in
+    *"
+$needle
+"*) return 0 ;;
+  esac
+
+  return 1
+}
+
+superclean_classify_library_dir() {
+  local path=$1
+  local name
+
+  name=$(basename "$path")
+
+  case "$name" in
+    Application\ Support|Caches|Developer|Logs|WebKit)
+      printf '%s' 'apps'
+      ;;
+    Containers|Group\ Containers|Mail|Messages|Safari|Photos|Calendars|Reminders|Cookies|Mobile\ Documents|IdentityServices)
+      printf '%s' 'system'
+      ;;
+    *)
+      printf '%s' 'review'
+      ;;
+  esac
+}
+
+superclean_classify_app_support_dir() {
+  local path=$1
+  local installed_keys=$2
+  local name key
+
+  name=$(basename "$path")
+
+  case "$name" in
+    com.apple.*|CloudKit|AddressBook|Assistant|Calendars|CallHistoryDB|CallHistoryTransactions|FamilyCircle|HomeKit|Knowledge|Mail|Messages|MobileSync|Photos|Safari)
+      printf '%s' 'system'
+      return 0
+      ;;
+  esac
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    if superclean_key_list_contains "$key" "$installed_keys"; then
+      printf '%s' 'installed'
+      return 0
+    fi
+  done < <(superclean_emit_name_keys "$name")
+
+  printf '%s' 'orphan-review'
+}
+
+superclean_classify_container_dir() {
+  local path=$1
+  local installed_keys=$2
+  local name key
+
+  name=$(basename "$path")
+
+  case "$name" in
+    com.apple.*|group.com.apple.*)
+      printf '%s' 'system'
+      return 0
+      ;;
+  esac
+
+  while IFS= read -r key; do
+    [[ -n "$key" ]] || continue
+    if superclean_key_list_contains "$key" "$installed_keys"; then
+      printf '%s' 'installed'
+      return 0
+    fi
+  done < <(superclean_emit_name_keys "$name")
+
+  printf '%s' 'review'
+}
+
+superclean_emit_app_support_rows() {
+  local app_support_root
+  local installed_keys size_kb path status
+
+  installed_keys=$(superclean_cached_installed_app_keys)
+
+  while IFS= read -r app_support_root; do
+    while IFS=$'\t' read -r size_kb path; do
+      [[ -n "$path" ]] || continue
+      status=$(superclean_classify_app_support_dir "$path" "$installed_keys")
+      printf '%s\t%s\t%s\n' "$size_kb" "$status" "$path"
+    done < <(superclean_emit_ranked_child_dirs "$app_support_root")
+  done < <(superclean_app_support_roots)
+}
+
+superclean_orphan_app_support_rows() {
+  local size_kb status path
+
+  while IFS=$'\t' read -r size_kb status path; do
+    [[ "$status" == 'orphan-review' ]] || continue
+    printf '%s\t%s\t%s\n' "$size_kb" "$status" "$path"
+  done < <(superclean_emit_app_support_rows)
+}
+
+superclean_emit_orphan_app_support_selector_rows() {
+  local sort_mode=${1:-size}
+  local size_kb status path mtime_epoch
+
+  while IFS=$'\t' read -r size_kb status path; do
+    [[ -n "$path" ]] || continue
+    mtime_epoch=$(superclean_path_mtime_epoch "$path")
+    printf '%012d\t%012d\t%s\t%s\t%s\t%s\n' \
+      "$((10#$size_kb))" \
+      "$mtime_epoch" \
+      "$(superclean_format_kb "$((10#$size_kb))")" \
+      "$(superclean_format_mtime_epoch "$mtime_epoch")" \
+      "$(basename "$path")" \
+      "$path"
+  done < <(superclean_orphan_app_support_rows) | {
+    if [[ "$sort_mode" == 'mtime' ]]; then
+      sort -t $'\t' -k2,2nr -k1,1nr
+    else
+      sort -t $'\t' -k1,1nr -k2,2nr
+    fi
+  }
+}
+
+superclean_emit_app_support_cache_rows() {
+  local size_kb status app_path child_path child_name
+
+  while IFS=$'\t' read -r size_kb status app_path; do
+    [[ "$status" == 'installed' ]] || continue
+    [[ -d "$app_path" ]] || continue
+
+    for child_name in "${SUPER_CLEAN_APP_SUPPORT_CACHE_NAMES[@]}"; do
+      child_path="$app_path/$child_name"
+      [[ -e "$child_path" ]] || continue
+      printf '%012d\t%s\t%s\t%s\n' "$(superclean_path_size_kb "$child_path")" "$size_kb" "$app_path" "$child_path"
+    done
+  done < <(superclean_emit_app_support_rows)
+}
+
+superclean_emit_container_rows() {
+  local containers_root="$HOME/Library/Containers"
+  local installed_keys size_kb path status
+
+  [[ -d "$containers_root" ]] || return 0
+  installed_keys=$(superclean_cached_installed_app_keys)
+
+  while IFS=$'\t' read -r size_kb path; do
+    [[ -n "$path" ]] || continue
+    status=$(superclean_classify_container_dir "$path" "$installed_keys")
+    printf '%s\t%s\t%s\n' "$size_kb" "$status" "$path"
+  done < <(superclean_emit_ranked_child_dirs "$containers_root" | sort -rn)
+}
+
+superclean_emit_ranked_child_dirs() {
+  local root=$1
+  local child size_kb
+
+  [[ -d "$root" ]] || return 0
+
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    size_kb=$(superclean_path_size_kb "$child")
+    printf '%012d\t%s\n' "$size_kb" "$child"
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)
+}
+
+superclean_emit_ranked_child_entries() {
+  local root=$1
+  local child size_kb
+
+  [[ -d "$root" ]] || return 0
+
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    size_kb=$(superclean_path_size_kb "$child")
+    printf '%012d\t%s\n' "$size_kb" "$child"
+  done < <(find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+}
+
+superclean_emit_container_cache_rows() {
+  local container_root=$1
+  local path size_kb
+  local -a candidates=()
+
+  [[ -d "$container_root" ]] || return 0
+
+  for path in \
+    "$container_root/Data/Library/Caches" \
+    "$container_root/Data/Library/Logs" \
+    "$container_root/Data/Library/WebKit" \
+    "$container_root/Data/tmp"; do
+    [[ -e "$path" ]] && candidates+=("$path")
+  done
+
+  if [[ -d "$container_root/Data/Library/Application Support" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && candidates+=("$path")
+    done < <(find "$container_root/Data/Library/Application Support" -mindepth 1 -maxdepth 3 \( \
+      -type d \( -name 'Cache' -o -name 'Caches' -o -name 'Code Cache' -o -name 'GPUCache' -o -name 'Service Worker' -o -name 'logs' \) -o \
+      -type f -name '*.log' \
+    \) -print 2>/dev/null | sort)
+  fi
+
+  for path in "${candidates[@]}"; do
+    size_kb=$(superclean_path_size_kb "$path")
+    printf '%012d\t%s\n' "$size_kb" "$path"
+  done
+}
+
+superclean_plan_app_support_breakdown() {
+  local parent_path=$1
+  local parent_status=$2
+  local parent_size_kb=$3
+  local child_size_kb child_path child_name shown=0
+  local parent_size_num
+
+  [[ -d "$parent_path" ]] || return 0
+  parent_size_num=$((10#$parent_size_kb))
+  (( parent_size_num >= SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_MIN_KB )) || return 0
+
+  superclean_info "[+] Breakdown: $(basename "$parent_path") ($parent_status, $(superclean_format_kb "$parent_size_kb"))"
+  while IFS=$'\t' read -r child_size_kb child_path; do
+    [[ -n "$child_path" ]] || continue
+    child_name=$(basename "$child_path")
+    printf '    %10s  %s\n' "$(superclean_format_kb "$child_size_kb")" "$child_name"
+    shown=$(( shown + 1 ))
+    if (( shown >= SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_CHILDREN )); then
+      break
+    fi
+  done < <(superclean_emit_ranked_child_entries "$parent_path" | sort -rn)
+
+  if (( shown == 0 )); then
+    superclean_log '    no immediate child entries found'
+  fi
+}
+
+superclean_plan_container_breakdown() {
+  local container_path=$1
+  local status=$2
+  local size_kb=$3
+  local child_size_kb child_path shown=0
+
+  superclean_info "[+] Container caches: $(basename "$container_path") ($status, $(superclean_format_kb "$size_kb"))"
+  while IFS=$'\t' read -r child_size_kb child_path; do
+    [[ -n "$child_path" ]] || continue
+    printf '    %10s  %s\n' "$(superclean_format_kb "$child_size_kb")" "$child_path"
+    shown=$(( shown + 1 ))
+    if (( shown >= SUPER_CLEAN_CONTAINER_BREAKDOWN_CHILDREN )); then
+      break
+    fi
+  done < <(superclean_emit_container_cache_rows "$container_path" | sort -rn)
+
+  if (( shown == 0 )); then
+    superclean_log '    no common cache-like subpaths found'
+  fi
+}
+
+superclean_format_app_support_cache_selector_row() {
+  local size_kb=$1
+  local app_path=$3
+  local cache_path=$4
+  local size_num
+
+  size_num=$((10#$size_kb))
+
+  printf '%012d\t%s\t%s\t%s\t%s\n' \
+    "$size_num" \
+    "$(superclean_format_kb "$size_num")" \
+    "$(basename "$app_path")" \
+    "$(basename "$cache_path")" \
+    "$cache_path"
+}
+
+superclean_interactive_select_orphan_app_support_paths() {
+  local selected
+  local script_path
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    script_path=${BASH_SOURCE[0]}
+    export SUPERCLEAN_SCRIPT_PATH="$script_path"
+    selected=$(superclean_emit_orphan_app_support_selector_rows size | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=3,4,5 \
+      "${fzf_args[@]}" \
+      --prompt="Select orphaned app support to remove > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  ctrl-s: sort by size  ctrl-t: sort by updated  enter: continue  ctrl-c: abort" \
+      --bind="ctrl-s:reload(bash -lc 'source \"$SUPERCLEAN_SCRIPT_PATH\" source >/dev/null 2>&1; superclean_emit_orphan_app_support_selector_rows size')+change-prompt(Orphaned app support by size > )" \
+      --bind="ctrl-t:reload(bash -lc 'source \"$SUPERCLEAN_SCRIPT_PATH\" source >/dev/null 2>&1; superclean_emit_orphan_app_support_selector_rows mtime')+change-prompt(Orphaned app support by updated > )" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $6}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  while IFS=$'\t' read -r _size_sort_key _mtime_sort_key size_human mtime_human name path; do
+    [[ -n "$path" ]] || continue
+    if superclean_prompt_yes_no "Remove orphaned app support $name ($size_human, updated $mtime_human)?"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(superclean_emit_orphan_app_support_selector_rows size)
+}
+
+superclean_interactive_select_app_support_cache_paths() {
+  local selected
+  local size_kb app_size_kb app_path cache_path
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(while IFS=$'\t' read -r size_kb app_size_kb app_path cache_path; do
+      [[ -n "$cache_path" ]] || continue
+      superclean_format_app_support_cache_selector_row "$size_kb" "$app_size_kb" "$app_path" "$cache_path"
+    done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT") | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=2,3,4 \
+      "${fzf_args[@]}" \
+      --prompt="Select installed-app cache paths to remove > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $5}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  while IFS=$'\t' read -r size_kb app_size_kb app_path cache_path; do
+    [[ -n "$cache_path" ]] || continue
+    if superclean_prompt_yes_no "Remove installed-app cache $(basename "$app_path")/$(basename "$cache_path") ($(superclean_format_kb "$((10#$size_kb))"))?"; then
+      printf '%s\n' "$cache_path"
+    fi
+  done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
+}
+
+superclean_apply_orphan_app_support_cleanup() {
+  local path has_candidates=0
+  local -a paths=()
+
+  superclean_group_enabled apps || return 0
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    has_candidates=1
+    break
+  done < <(superclean_orphan_app_support_rows)
+
+  (( has_candidates )) || return 0
+
+  if (( ! SUPER_CLEAN_INTERACTIVE )); then
+    if (( ! SUPER_CLEAN_DRY_RUN && ! SUPER_CLEAN_AGGRESSIVE )); then
+      superclean_verbose "Skipping orphaned Application Support cleanup unless --interactive or --aggressive is enabled"
+    fi
+    return 0
+  fi
+
+  if (( ! SUPER_CLEAN_DRY_RUN && ! SUPER_CLEAN_AGGRESSIVE )); then
+    superclean_warn_orange "Orphaned Application Support cleanup requires --aggressive when not using --dry-run."
+    return 0
+  fi
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    superclean_info "[+] Interactive review: orphaned ~/Library/Application Support entries (dry-run)"
+  else
+    superclean_warn_orange "AGGRESSIVE interactive review for orphaned ~/Library/Application Support entries"
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] && paths+=("$path")
+  done < <(superclean_interactive_select_orphan_app_support_paths)
+
+  for path in "${paths[@]}"; do
+    superclean_remove_path "$path"
+  done
+}
+
+superclean_apply_installed_app_support_cache_cleanup() {
+  local path has_candidates=0
+  local -a paths=()
+
+  superclean_group_enabled apps || return 0
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    has_candidates=1
+    break
+  done < <(superclean_emit_app_support_cache_rows)
+
+  (( has_candidates )) || return 0
+
+  if (( ! SUPER_CLEAN_INTERACTIVE )); then
+    if (( ! SUPER_CLEAN_DRY_RUN && ! SUPER_CLEAN_AGGRESSIVE )); then
+      superclean_verbose "Skipping installed app-support cache cleanup unless --interactive or --aggressive is enabled"
+    fi
+    return 0
+  fi
+
+  if (( ! SUPER_CLEAN_DRY_RUN && ! SUPER_CLEAN_AGGRESSIVE )); then
+    superclean_warn_orange "Installed app-support cache cleanup requires --aggressive when not using --dry-run."
+    return 0
+  fi
+
+  if (( SUPER_CLEAN_DRY_RUN )); then
+    superclean_info "[+] Interactive review: cache-like subpaths inside installed app support dirs (dry-run)"
+  else
+    superclean_warn_orange "AGGRESSIVE interactive review for cache-like subpaths inside installed app support dirs"
+  fi
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] && paths+=("$path")
+  done < <(superclean_interactive_select_app_support_cache_paths)
+
+  for path in "${paths[@]}"; do
+    superclean_remove_path "$path"
+  done
+}
+
+superclean_plan_library_inventory() {
+  local library_root="$HOME/Library"
+  local system_library_root="/Library"
+  local app_support_root="$HOME/Library/Application Support"
+  local containers_root="$HOME/Library/Containers"
+  local core_simulator_root="$HOME/Library/Developer/CoreSimulator/Devices"
+  local bird_cache_root="$HOME/Library/Caches/com.apple.bird"
+  local size_kb path category status matches_found=0
+  local cache_review_found=0
+  local breakdown_count=0
+  local container_breakdown_count=0
+  local -a top_app_support_rows=()
+  local -a top_container_rows=()
+
+  (( SUPER_CLEAN_DRY_RUN )) || return 0
+  superclean_group_enabled apps || return 0
+  [[ -d "$library_root" ]] || return 0
+
+  superclean_info "[+] Inventory: largest ~/Library directories (dry-run)"
+  while IFS=$'\t' read -r size_kb path; do
+    [[ -n "$path" ]] || continue
+    category=$(superclean_classify_library_dir "$path")
+    superclean_print_size_label_path_line "$size_kb" "$category" "$path" 8
+  done < <(superclean_emit_ranked_child_dirs "$library_root" | sort -rn | head -n "$SUPER_CLEAN_LIBRARY_INVENTORY_LIMIT")
+
+  if [[ -d "$bird_cache_root" ]]; then
+    superclean_info "[+] Inventory: iCloud sync cache (dry-run)"
+    superclean_print_size_label_path_line "$(superclean_path_size_kb "$bird_cache_root")" 'review' "$bird_cache_root" 8
+    superclean_log '  - tip: removing this cache can force iCloud Drive to rebuild local sync state after restart'
+    superclean_log '  - keep this in aggressive review; it is expected to re-index and re-download what is still needed'
+  fi
+
+  if ! superclean_app_support_roots >/dev/null; then
+    return 0
+  fi
+
+  superclean_info "[+] Inventory: largest Application Support entries under ~/Library and /Library (dry-run)"
+  while IFS=$'\t' read -r size_kb status path; do
+    [[ -n "$path" ]] || continue
+    top_app_support_rows+=("$size_kb	$status	$path")
+    superclean_print_size_label_path_line "$size_kb" "$status" "$path" 13
+  done < <(superclean_emit_app_support_rows | head -n "$SUPER_CLEAN_APP_SUPPORT_INVENTORY_LIMIT")
+
+  for row in "${top_app_support_rows[@]}"; do
+    IFS=$'\t' read -r size_kb status path <<< "$row"
+    [[ -n "$path" ]] || continue
+    superclean_plan_app_support_breakdown "$path" "$status" "$size_kb"
+    breakdown_count=$(( breakdown_count + 1 ))
+    if (( breakdown_count >= SUPER_CLEAN_APP_SUPPORT_BREAKDOWN_PARENTS )); then
+      break
+    fi
+  done
+
+  superclean_info "[+] Review: likely orphaned Application Support entries under ~/Library and /Library (dry-run)"
+  for row in "${top_app_support_rows[@]}"; do
+    IFS=$'\t' read -r size_kb status path <<< "$row"
+    [[ "$status" == 'orphan-review' ]] || continue
+    matches_found=1
+    superclean_print_size_date_label_path_line "$size_kb" "$(superclean_path_mtime_epoch "$path")" "$status" "$path" 13
+  done
+
+  if (( ! matches_found )); then
+    superclean_log '  - none found in the top Application Support entries'
+  fi
+
+  superclean_info "[+] Review: cache-like subpaths inside installed app support dirs under ~/Library and /Library (dry-run)"
+  while IFS=$'\t' read -r size_kb _app_size_kb app_path cache_path; do
+    [[ -n "$cache_path" ]] || continue
+    cache_review_found=1
+    superclean_print_size_label_path_line "$size_kb" "$(basename "$app_path")" "$cache_path" 14
+  done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
+
+  if (( ! cache_review_found )); then
+    superclean_log '  - none found in the top installed app-support entries'
+  fi
+
+  if [[ -d "$containers_root" ]]; then
+    superclean_info "[+] Inventory: largest ~/Library/Containers entries (dry-run)"
+    while IFS=$'\t' read -r size_kb status path; do
+      [[ -n "$path" ]] || continue
+      top_container_rows+=("$size_kb	$status	$path")
+      superclean_print_size_label_path_line "$size_kb" "$status" "$path" 8
+    done < <(superclean_emit_container_rows | head -n "$SUPER_CLEAN_CONTAINER_INVENTORY_LIMIT")
+
+    for row in "${top_container_rows[@]}"; do
+      IFS=$'\t' read -r size_kb status path <<< "$row"
+      [[ -n "$path" ]] || continue
+      superclean_plan_container_breakdown "$path" "$status" "$size_kb"
+      container_breakdown_count=$(( container_breakdown_count + 1 ))
+      if (( container_breakdown_count >= SUPER_CLEAN_CONTAINER_BREAKDOWN_PARENTS )); then
+        break
+      fi
+    done
+
+    superclean_log '  - whole container deletion is not automatic; these sandboxes may contain app state, sign-ins, and user data'
+  fi
+
+  if [[ -d "$core_simulator_root" ]]; then
+    superclean_info "[+] Inventory: ~/Library/Developer/CoreSimulator/Devices (dry-run)"
+    superclean_print_size_label_path_line "$(superclean_path_size_kb "$core_simulator_root")" 'total' "$core_simulator_root" 8
+    while IFS=$'\t' read -r size_kb path; do
+      [[ -n "$path" ]] || continue
+      superclean_print_size_label_path_line "$size_kb" 'device' "$path" 8
+    done < <(superclean_emit_ranked_child_dirs "$core_simulator_root" | sort -rn | head -n "$SUPER_CLEAN_CORESIMULATOR_INVENTORY_LIMIT")
+    if command -v xcrun >/dev/null 2>&1; then
+      superclean_log '  - safer cleanup command: xcrun simctl delete unavailable'
+      superclean_log '  - unavailable simulator devices can be recreated if you reinstall the matching runtime later'
+      superclean_log '  - do not raw-delete active device directories here; that wipes simulator state and app data'
+    fi
+  fi
+
+  if [[ -d "$system_library_root" ]]; then
+    superclean_info "[+] Inventory: largest /Library directories (dry-run)"
+    while IFS=$'\t' read -r size_kb path; do
+      [[ -n "$path" ]] || continue
+      superclean_print_size_label_path_line "$size_kb" 'system' "$path" 8
+    done < <(superclean_emit_ranked_child_dirs "$system_library_root" | sort -rn | head -n "$SUPER_CLEAN_SYSTEM_LIBRARY_INVENTORY_LIMIT")
+    superclean_log '  - /Library is system-wide; keep this read-only by default and require explicit review before cleanup'
   fi
 }
 
@@ -1842,6 +2567,9 @@ superclean_main() {
   superclean_apply_runtime_caches
 
   superclean_plan_system_paths
+  superclean_plan_library_inventory
+  superclean_apply_orphan_app_support_cleanup
+  superclean_apply_installed_app_support_cache_cleanup
   superclean_apply_system_paths
 
   superclean_plan_hooks
