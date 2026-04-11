@@ -22,31 +22,6 @@ alias vpnconnect_regionh='vpn connect lev-vpn-fw.regionh.dk -s < ~/.ssh/.credent
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 
-# oracle instantclient via homebrew
-
-# env var needed for Ruby OCI or it will fallback
-# "Warning: NLS_LANG is not set. fallback to US7ASCII."
-export NLS_LANG=AMERICAN_AMERICA.UTF8
-# Alternative formats for local countries:
-# $ cat config/oracle_locale.rb
-# case Site.current.language
-# when :da
-#   ENV["NLS_LANG"] = "DANISH_DENMARK.WE8ISO8859P1"
-#   ENV["NLS_SORT"] = "XDANISH"
-#   ENV["ORA_SDTZ"] = "Europe/Copenhagen"
-# when :sv
-#   ENV["NLS_LANG"] = "SWEDISH_SWEDEN.WE8ISO8859P1"
-#   ENV["NLS_SORT"] = "SWEDISH"
-#   ENV["ORA_SDTZ"] = "Europe/Stockholm"
-# end
-
-
-export OCI_DIR="$(brew --prefix)/lib"
-# see http://www.rubydoc.info/github/kubo/ruby-oci8/master/file/docs/install-on-osx.md
-# AND when downloading manually the zip files into `~/Downloads`:
-# `export HOMEBREW_CACHE=$HOME/Downloads/``
-
-
 # for homebrew upgrade, always remove old versions:
 # If --cleanup is specified or HOMEBREW_INSTALL_CLEANUP is set then remove
 #     previously installed version(s) of upgraded formulae.
