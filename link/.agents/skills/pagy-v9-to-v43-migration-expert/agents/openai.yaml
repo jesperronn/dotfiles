@@ -1,0 +1,3 @@
+interface:
+  display_name: "Skill-Pagy v9 to v43 Migration Expert"
+  default_prompt: "Use $pagy-v9-to-v43-migration-expert to upgrade this project from Pagy v9 to v43."

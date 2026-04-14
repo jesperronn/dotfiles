@@ -6,7 +6,7 @@ user-invocable: true
 disable-model-invocation: false
 ---
 
-# Summarizer
+# Skill-Summarizer
 
 ## When to Use
 - Summarize the current conversation, work session, or debugging thread.
