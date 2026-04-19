@@ -3,6 +3,20 @@
 # Where the magic happens.
 export DOTFILES=~/.dotfiles
 
+if [[ -n "$HOME" && ( "$CODEX_SANDBOX" == "true" || "$TERM" == "dumb" ) ]]; then
+  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/$(whoami)_cache}"
+  export BUNDLE_USER_HOME="${BUNDLE_USER_HOME:-/tmp/$(whoami)_bundle}"
+  export PATH="$HOME/.rvm/bin:$PATH"
+  export rvm_shell_arity="${rvm_shell_arity:-1}"
+  export rvm_tar_command="${rvm_tar_command:-tar}"
+
+  source "$DOTFILES/source/00_dotfiles.sh"
+  source "$DOTFILES/source/90_env_variables.sh"
+  source "$DOTFILES/source/01_path.sh"
+  source "$DOTFILES/source/60_ruby.sh"
+  return
+fi
+
 # Source all files in "source"
 function src() {
   local file
