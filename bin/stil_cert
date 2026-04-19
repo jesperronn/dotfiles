@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+# Decode the certificate currently in the macOS clipboard.
+pbpaste | normalize_cert | openssl x509 -text -noout
