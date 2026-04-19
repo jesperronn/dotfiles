@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+COLOR_ENABLED=1
+
+C_BOLD=$'\033[1m'
+C_AQUA=$'\033[36m'
+C_0=$'\033[0m'
+
+runner_header() {
+  if (( COLOR_ENABLED )); then
+    printf '%s%srunning ==> %s%s\n' "$C_BOLD" "$C_AQUA" "${1#$ROOT/}" "$C_0"
+  else
+    printf 'running ==> %s\n' "${1#$ROOT/}"
+  fi
+}
+
+mapfile -t shell_files < <(
+  find "$ROOT" -type f \( -path '*/bin/*' -o -name '*.sh' -o -name '*.test.sh' \) | sort
+)
+
+if (( ${#shell_files[@]} == 0 )); then
+  exit 0
+fi
+
+for shell_file in "${shell_files[@]}"; do
+  runner_header "$shell_file"
+  shellcheck "$shell_file"
+done
