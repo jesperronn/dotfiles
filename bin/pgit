@@ -1,45 +1,144 @@
 #!/usr/bin/env bash
-#
-# Run a git command in multiple repositories.
-#
-# Usage examples:
-#   pgit fetch
-#   pgit branch --show-current
-#   pgit repo-a repo-b -- status -sb
+# shellcheck shell=bash
 
 set -euo pipefail
 
-C_0="\e[0m"
-C_BOLD="\e[1m"
-C_MAGENTA="\e[35m"
+if [[ "${1-}" == "source" ]]; then
+  PGIT_SOURCE_ONLY=1
+  shift || true
+else
+  PGIT_SOURCE_ONLY=0
+fi
 
-usage() {
-  cat <<'HELP'
-pgit
+PGIT_COLOR_ENABLED=0
+PGIT_VERBOSE=0
+PGIT_SHOW_HELP=0
+PGIT_MODE="run"
+PGIT_PARALLEL_TMP_DIR=""
 
-Usage:
-  pgit [dirs --] <git-command> [git-args...]
+PGIT_DIRS=()
+PGIT_GIT_ARGS=()
+PGIT_REPO_DIRS=()
+PGIT_NO_OUTPUT_DIRS=()
+PGIT_FAILED_REPOS=()
 
-Examples:
-  pgit fetch
-  pgit branch --show-current
-  pgit repo-a repo-b -- status -sb
+PGIT_C_RESET=$'\033[0m'
+PGIT_C_DIM=$'\033[2m'
+PGIT_C_BOLD=$'\033[1m'
+PGIT_C_RED=$'\033[31m'
+PGIT_C_GREEN=$'\033[32m'
+PGIT_C_SECTION=$'\033[33m'
+PGIT_C_ACCENT=$'\033[35m'
+PGIT_C_PLACEHOLDER=$'\033[95m'
 
-Notes:
-  - Without dirs, all immediate subdirectories are considered.
-  - A directory is included only if it is a git repository (work tree or bare).
-HELP
+pgit_reset_state() {
+  PGIT_COLOR_ENABLED=0
+  PGIT_VERBOSE=0
+  PGIT_SHOW_HELP=0
+  PGIT_MODE="run"
+  PGIT_PARALLEL_TMP_DIR=""
+
+  PGIT_DIRS=()
+  PGIT_GIT_ARGS=()
+  PGIT_REPO_DIRS=()
+  PGIT_NO_OUTPUT_DIRS=()
+  PGIT_FAILED_REPOS=()
 }
 
-parse_args() {
-  if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
-    usage
-    return 2
+pgit_usage() {
+  local section_style="" tool_style="" command_style="" placeholder_style="" flag_style="" reset_style=""
+
+  if (( PGIT_COLOR_ENABLED )); then
+    section_style="${PGIT_C_BOLD}${PGIT_C_SECTION}"
+    tool_style="${PGIT_C_BOLD}${PGIT_C_ACCENT}"
+    command_style="$PGIT_C_GREEN"
+    placeholder_style="$PGIT_C_PLACEHOLDER"
+    flag_style="$PGIT_C_GREEN"
+    reset_style="$PGIT_C_RESET"
+  fi
+
+  printf 'Run one git command across multiple repositories.\n\n'
+  printf '%sUsage:%s %spgit%s %s[dirs --]%s %s<git-command>%s %s[git-args...]%s\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$command_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sExamples:%s\n' "$section_style" "$reset_style"
+  printf '  %sfetch%s\n' "$command_style" "$reset_style"
+  printf '  %sbranch%s --show-current\n' "$command_style" "$reset_style"
+  printf '  %srepo-a repo-b%s -- %sstatus%s -sb\n\n' \
+    "$placeholder_style" "$reset_style" "$command_style" "$reset_style"
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s-h, --help%s  Show this help.\n\n' "$flag_style" "$reset_style"
+  printf '%sNotes:%s\n' "$section_style" "$reset_style"
+  printf '  - Without dirs, all immediate subdirectories are considered.\n'
+  printf '  - A directory is included only if it is a git repository.\n'
+}
+
+pgit_color_print() {
+  local color="$1"
+  shift
+
+  if (( PGIT_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$PGIT_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+pgit_info() {
+  pgit_color_print "${PGIT_C_BOLD}${PGIT_C_ACCENT}" "$*"
+}
+
+pgit_success() {
+  pgit_color_print "$PGIT_C_GREEN" "$*"
+}
+
+pgit_warn() {
+  pgit_color_print "$PGIT_C_RED" "Warning: $*" >&2
+}
+
+pgit_error() {
+  pgit_color_print "$PGIT_C_RED" "$*" >&2
+}
+
+pgit_verbose() {
+  if (( PGIT_VERBOSE )); then
+    pgit_color_print "$PGIT_C_DIM" "$*"
+  fi
+}
+
+parse_opts() {
+  if [[ "${1-}" == "--pgit-worker" ]]; then
+    PGIT_MODE="worker"
+    shift || true
+    PGIT_DIRS=("${1-}")
+    shift || true
+    PGIT_GIT_ARGS=("$@")
+    return 0
   fi
 
   if [[ $# -eq 0 ]]; then
-    usage
+    pgit_usage
     return 1
+  fi
+
+  case "${1-}" in
+    -h|--help)
+      PGIT_SHOW_HELP=1
+      return 0
+      ;;
+  esac
+
+  return 0
+}
+
+parse_prereqs() {
+  if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    PGIT_COLOR_ENABLED=1
+  else
+    PGIT_COLOR_ENABLED=0
   fi
 }
 
@@ -49,68 +148,93 @@ is_git_repo_dir() {
     || git -C "$dir" rev-parse --is-bare-repository >/dev/null 2>&1
 }
 
-pgit_collect_inputs() {
-  P_GIT_DIRS=()
-  P_GIT_GIT_ARGS=()
+pgit_plan_inputs() {
+  PGIT_DIRS=()
+  PGIT_GIT_ARGS=()
 
   local separator_found=0
   local arg
+
   for arg in "$@"; do
     if [[ "$arg" == "--" ]]; then
       separator_found=1
       continue
     fi
 
-    if [[ $separator_found -eq 0 ]]; then
-      P_GIT_DIRS=("${P_GIT_DIRS[@]}" "$arg")
+    if (( separator_found )); then
+      PGIT_GIT_ARGS+=("$arg")
     else
-      P_GIT_GIT_ARGS=("${P_GIT_GIT_ARGS[@]}" "$arg")
+      PGIT_DIRS+=("$arg")
     fi
   done
 
-  if [[ $separator_found -eq 0 ]]; then
-    P_GIT_DIRS=(*/)
-    P_GIT_GIT_ARGS=("$@")
+  if (( ! separator_found )); then
+    PGIT_DIRS=(*/)
+    PGIT_GIT_ARGS=("$@")
   fi
 }
 
-pgit_init_colors() {
-  P_GIT_H1=""
-  P_GIT_H2=""
+pgit_plan_repo_dirs() {
+  PGIT_REPO_DIRS=()
 
-  if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
-    P_GIT_H1="$(tput setaf 5; tput smul; tput bold)"
-    P_GIT_H2="$(tput sgr0)"
-  fi
-}
+  local dir=""
+  for dir in "${PGIT_DIRS[@]}"; do
+    [[ -d "$dir" ]] || continue
+    [[ "$dir" != "/" ]] && dir="${dir%/}"
 
-pgit_collect_repo_dirs() {
-  P_GIT_REPO_DIRS=()
-
-  local d
-
-  for d in "${P_GIT_DIRS[@]}"; do
-    [[ -d "$d" ]] || continue
-    [[ "$d" != "/" ]] && d="${d%/}"
-
-    if is_git_repo_dir "$d"; then
-      P_GIT_REPO_DIRS=("${P_GIT_REPO_DIRS[@]}" "$d")
+    if is_git_repo_dir "$dir"; then
+      PGIT_REPO_DIRS+=("$dir")
     fi
   done
 }
 
-pgit_init_runtime_state() {
-  P_GIT_NO_OUTPUT_DIRS=()
-  P_GIT_FAILED_REPOS=()
+pgit_format_heading() {
+  local label="$1"
+
+  if (( PGIT_COLOR_ENABLED )); then
+    printf '%b%s%b' "${PGIT_C_BOLD}${PGIT_C_ACCENT}" "$label" "$PGIT_C_RESET"
+  else
+    printf '%s' "$label"
+  fi
+}
+
+pgit_report_no_repos() {
+  pgit_error "No git repositories found in selected directories."
+}
+
+pgit_report_no_output() {
+  if [[ ${#PGIT_NO_OUTPUT_DIRS[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "$(pgit_format_heading "no output from")"
+  printf '%s\n' "${PGIT_NO_OUTPUT_DIRS[@]}"
+}
+
+pgit_report_errors() {
+  local failed_repo=""
+  local dir=""
+  local exit_code=""
+
+  if [[ ${#PGIT_FAILED_REPOS[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "$(pgit_format_heading "errors")"
+
+  for failed_repo in "${PGIT_FAILED_REPOS[@]}"; do
+    dir="${failed_repo%%$'\t'*}"
+    exit_code="${failed_repo##*$'\t'}"
+    printf '%s (exit %s)\n' "$dir" "$exit_code"
+  done
 }
 
 pgit_worker() {
   local dir="$1"
   local result_file="$2"
-  shift
-  shift
+  shift 2
 
-  local output
+  local output=""
   local exit_code=0
   local had_output=0
 
@@ -118,33 +242,34 @@ pgit_worker() {
 
   if [[ -n "$output" ]]; then
     had_output=1
-    echo -e "${P_GIT_H1}${dir}${P_GIT_H2}\n${output}"
+    printf '%s\n%s\n' "$(pgit_format_heading "$dir")" "$output"
   fi
 
   printf '%s\n%s\n%s\n' "$exit_code" "$had_output" "$dir" > "$result_file"
-
-  return $exit_code
+  return "$exit_code"
 }
 
 pgit_init_parallel_state() {
-  P_GIT_PARALLEL_TMP_DIR="$(mktemp -d)"
+  PGIT_PARALLEL_TMP_DIR="$(mktemp -d)"
 }
 
 pgit_cleanup_parallel_state() {
-  if [[ -n "${P_GIT_PARALLEL_TMP_DIR:-}" && -d "${P_GIT_PARALLEL_TMP_DIR}" ]]; then
-    rm -rf "${P_GIT_PARALLEL_TMP_DIR}"
+  if [[ -n "$PGIT_PARALLEL_TMP_DIR" && -d "$PGIT_PARALLEL_TMP_DIR" ]]; then
+    rm -rf "$PGIT_PARALLEL_TMP_DIR"
   fi
+
+  PGIT_PARALLEL_TMP_DIR=""
 }
 
 pgit_collect_parallel_results() {
-  local result_file
+  local result_file=""
   local result_lines=()
-  local exit_code
-  local had_output
-  local dir
+  local exit_code=""
+  local had_output=""
+  local dir=""
 
-  P_GIT_NO_OUTPUT_DIRS=()
-  P_GIT_FAILED_REPOS=()
+  PGIT_NO_OUTPUT_DIRS=()
+  PGIT_FAILED_REPOS=()
 
   for result_file in "$@"; do
     [[ -f "$result_file" ]] || continue
@@ -155,33 +280,34 @@ pgit_collect_parallel_results() {
     dir="${result_lines[2]:-}"
 
     if [[ "$had_output" == "0" ]]; then
-      P_GIT_NO_OUTPUT_DIRS=("${P_GIT_NO_OUTPUT_DIRS[@]}" "$dir")
+      PGIT_NO_OUTPUT_DIRS+=("$dir")
     fi
 
     if [[ "$exit_code" != "0" ]]; then
-      P_GIT_FAILED_REPOS=("${P_GIT_FAILED_REPOS[@]}" "${dir}"$'\t'"${exit_code}")
+      PGIT_FAILED_REPOS+=("${dir}"$'\t'"${exit_code}")
     fi
   done
 }
 
-pgit_run_repos_parallel() {
-  local dir
-  local worker_pid
-  local output_file
-  local result_file
+pgit_apply_parallel_runs() {
+  local dir=""
+  local worker_pid=""
+  local output_file=""
+  local result_file=""
   local run_status=0
   local worker_pids=()
   local output_files=()
   local result_files=()
 
-  for dir in "${P_GIT_REPO_DIRS[@]}"; do
-    output_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/output.XXXXXX")"
-    result_file="$(mktemp "${P_GIT_PARALLEL_TMP_DIR}/result.XXXXXX")"
+  for dir in "${PGIT_REPO_DIRS[@]}"; do
+    output_file="$(mktemp "${PGIT_PARALLEL_TMP_DIR}/output.XXXXXX")"
+    result_file="$(mktemp "${PGIT_PARALLEL_TMP_DIR}/result.XXXXXX")"
 
-    pgit_worker "$dir" "$result_file" "${P_GIT_GIT_ARGS[@]}" > "$output_file" &
-    worker_pids=("${worker_pids[@]}" "$!")
-    output_files=("${output_files[@]}" "$output_file")
-    result_files=("${result_files[@]}" "$result_file")
+    pgit_worker "$dir" "$result_file" "${PGIT_GIT_ARGS[@]}" > "$output_file" &
+    worker_pid="$!"
+    worker_pids+=("$worker_pid")
+    output_files+=("$output_file")
+    result_files+=("$result_file")
   done
 
   for worker_pid in "${worker_pids[@]}"; do
@@ -198,83 +324,55 @@ pgit_run_repos_parallel() {
 
   pgit_collect_parallel_results "${result_files[@]}"
 
-  if [[ ${#P_GIT_FAILED_REPOS[@]} -gt 0 ]]; then
-    run_status="${P_GIT_FAILED_REPOS[0]##*$'\t'}"
+  if [[ ${#PGIT_FAILED_REPOS[@]} -gt 0 ]]; then
+    run_status="${PGIT_FAILED_REPOS[0]##*$'\t'}"
   fi
 
   return "$run_status"
 }
 
-pgit_run_repos() {
-  pgit_init_parallel_state
+pgit_apply_repo_commands() {
   local run_status=0
-  pgit_run_repos_parallel || run_status=$?
+
+  pgit_init_parallel_state
+  pgit_apply_parallel_runs || run_status=$?
   pgit_cleanup_parallel_state
-  return $run_status
-}
 
-pgit_report_no_repos() {
-  echo -e "${C_BOLD}${C_MAGENTA}No git repositories found in selected directories.${C_0}" >&2
-}
-
-pgit_report_no_output() {
-  if [[ ${#P_GIT_NO_OUTPUT_DIRS[@]} -gt 0 ]]; then
-    echo -e "${P_GIT_H1}no output from${P_GIT_H2}"
-    printf '%s\n' "${P_GIT_NO_OUTPUT_DIRS[@]}"
-  fi
-}
-
-pgit_report_errors() {
-  local failed_repo
-  local dir
-  local exit_code
-
-  if [[ ${#P_GIT_FAILED_REPOS[@]} -eq 0 ]]; then
-    return
-  fi
-
-  echo -e "${P_GIT_H1}errors${P_GIT_H2}"
-
-  for failed_repo in "${P_GIT_FAILED_REPOS[@]}"; do
-    dir="${failed_repo%%$'\t'*}"
-    exit_code="${failed_repo##*$'\t'}"
-    printf '%s (exit %s)\n' "$dir" "$exit_code"
-  done
+  return "$run_status"
 }
 
 run_main() {
-  if [[ "${1:-}" == "--pgit-worker" ]]; then
-    shift
-    pgit_worker "$@"
+  local main_status=0
+
+  pgit_reset_state
+  parse_opts "$@" || return $?
+  parse_prereqs
+
+  if (( PGIT_SHOW_HELP )); then
+    pgit_usage
+    return 0
+  fi
+
+  if [[ "$PGIT_MODE" == "worker" ]]; then
+    pgit_worker "${PGIT_DIRS[0]}" "${PGIT_GIT_ARGS[0]}" "${PGIT_GIT_ARGS[@]:1}"
     return $?
   fi
 
-  local parse_status=0
-  parse_args "$@" || parse_status=$?
-  case $parse_status in
-    0) ;;
-    1) return 1 ;;
-    2) return 0 ;;
-  esac
+  pgit_plan_inputs "$@"
+  pgit_plan_repo_dirs
 
-  pgit_collect_inputs "$@"
-  pgit_init_colors
-  pgit_init_runtime_state
-  pgit_collect_repo_dirs
-
-  if [[ ${#P_GIT_REPO_DIRS[@]} -eq 0 ]]; then
+  if [[ ${#PGIT_REPO_DIRS[@]} -eq 0 ]]; then
     pgit_report_no_repos
     return 1
   fi
 
-  local run_status=0
-  pgit_run_repos || run_status=$?
+  pgit_apply_repo_commands || main_status=$?
   pgit_report_errors
   pgit_report_no_output
 
-  return $run_status
+  return "$main_status"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+if (( ! PGIT_SOURCE_ONLY )); then
   run_main "$@"
 fi
