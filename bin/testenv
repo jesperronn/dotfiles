@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly BASHRC_PATH="${HOME}/.bashrc"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+prefix_homebrew_bash() {
+  local original_path result part
+  original_path="${1:-${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}}"
+  result="/opt/homebrew/bin"
+
+  local old_ifs="$IFS"
+  IFS=':'
+  for part in $original_path; do
+    [[ -n "$part" && "$part" != "/opt/homebrew/bin" ]] || continue
+    result="${result}:$part"
+  done
+  IFS="$old_ifs"
+
+  printf '%s\n' "$result"
+}
+
+write_probe_scripts() {
+  cat >"$TMP_DIR/child-shebang" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'child script      : bash=%s version=%s ruby=%s bundle=%s\n' \
+  "${BASH:-missing}" \
+  "${BASH_VERSION:-missing}" \
+  "$(command -v ruby 2>/dev/null || printf 'missing')" \
+  "$(command -v bundle 2>/dev/null || printf 'missing')"
+EOF
+
+  cat >"$TMP_DIR/probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+child_script="$1"
+
+printf 'entry shell       : bash=%s version=%s\n' "${BASH:-missing}" "${BASH_VERSION:-missing}"
+printf 'command -v bash   : %s\n' "$(command -v bash 2>/dev/null || printf 'missing')"
+printf 'command -v ruby   : %s\n' "$(command -v ruby 2>/dev/null || printf 'missing')"
+printf 'command -v bundle : %s\n' "$(command -v bundle 2>/dev/null || printf 'missing')"
+printf 'BASH_ENV          : %s\n' "${BASH_ENV:-unset}"
+printf 'CODEX_SANDBOX     : %s\n' "${CODEX_SANDBOX:-unset}"
+printf 'TERM              : %s\n' "${TERM:-unset}"
+printf 'PATH head         : %s\n' "${PATH%%:*}"
+
+printf 'bash -c child     : '
+bash -c 'printf "bash=%s version=%s ruby=%s bundle=%s\n" \
+  "${BASH:-missing}" \
+  "${BASH_VERSION:-missing}" \
+  "$(command -v ruby 2>/dev/null || printf missing)" \
+  "$(command -v bundle 2>/dev/null || printf missing)"'
+
+printf 'env bash child    : '
+/usr/bin/env bash -c 'printf "bash=%s version=%s ruby=%s bundle=%s\n" \
+  "${BASH:-missing}" \
+  "${BASH_VERSION:-missing}" \
+  "$(command -v ruby 2>/dev/null || printf missing)" \
+  "$(command -v bundle 2>/dev/null || printf missing)"'
+
+"$child_script"
+EOF
+
+  chmod +x "$TMP_DIR/child-shebang" "$TMP_DIR/probe"
+}
+
+run_case() {
+  local label output status expected_status
+  label="$1"
+  shift
+  expected_status="${1:-0}"
+  shift
+
+  printf '\n== %s ==\n' "$label"
+
+  set +e
+  output="$("$@" "$TMP_DIR/probe" "$TMP_DIR/child-shebang" 2>&1)"
+  status=$?
+  set -e
+
+  printf '%s\n' "$output"
+  printf 'exit status       : %s\n' "$status"
+
+  if [[ "$status" -ne "$expected_status" ]]; then
+    printf '%s\n' "next steps        : expected exit status $expected_status, got $status" >&2
+    printf '%s\n' 'next steps        : inspect the stderr above for the first failing command' >&2
+    printf '%s\n' "next steps        : rerun just this case locally by invoking $SCRIPT_NAME and reviewing the matching section" >&2
+  fi
+
+  CASE_OUTPUT="$output"
+  CASE_STATUS="$status"
+}
+
+assert_recommended_case() {
+  local output
+  output="$1"
+
+  [[ "$output" == *"entry shell       : bash=/opt/homebrew/bin/bash version=5."* ]] || return 1
+  [[ "$output" == *"command -v bash   : /opt/homebrew/bin/bash"* ]] || return 1
+  [[ "$output" == *"command -v ruby   : /Users/jesper/.rvm/"* ]] || return 1
+  [[ "$output" == *"command -v bundle : /Users/jesper/.rvm/"* ]] || return 1
+  [[ "$output" == *"bash -c child"*"/opt/homebrew/bin/bash version=5."* ]] || return 1
+  [[ "$output" == *"env bash child"*"/opt/homebrew/bin/bash version=5."* ]] || return 1
+  [[ "$output" == *"child script      : bash=/opt/homebrew/bin/bash version=5."* ]] || return 1
+}
+
+main() {
+  local recommended_path
+
+  write_probe_scripts
+  recommended_path="$(prefix_homebrew_bash)"
+
+  printf '%s\n' "Minimal Codex shell wrapper probe"
+  printf '%s\n' "Project root       : $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  printf '%s\n' "Ambient SHELL      : ${SHELL:-unset}"
+  printf '%s\n' "Ambient PATH head  : ${PATH%%:*}"
+  printf '%s\n' "Recommended PATH   : ${recommended_path%%:*}"
+  printf '%s\n' "Recommended BASH_ENV: $BASHRC_PATH"
+  printf '%s\n' "Recommended flags  : CODEX_SANDBOX=true TERM=dumb"
+
+  run_case "ambient execution" 0 env
+  run_case "codex-compatible wrapper" \
+    0 \
+    env \
+    "PATH=$recommended_path" \
+    "BASH_ENV=$BASHRC_PATH" \
+    "CODEX_SANDBOX=true" \
+    "TERM=dumb"
+
+  if ! assert_recommended_case "$CASE_OUTPUT"; then
+    printf '\nrecommended wrapper did not stabilize nested shells.\n' >&2
+    printf '%s\n' 'Codex should export these before launching commands:' >&2
+    printf '%s\n' "  PATH=$recommended_path" >&2
+    printf '%s\n' "  BASH_ENV=$BASHRC_PATH" >&2
+    printf '%s\n' '  CODEX_SANDBOX=true' >&2
+    printf '%s\n' '  TERM=dumb' >&2
+    printf '%s\n' 'next steps        : verify that /opt/homebrew/bin/bash exists and is first on PATH' >&2
+    printf '%s\n' "next steps        : verify that $BASHRC_PATH is readable in non-interactive shells" >&2
+    printf '%s\n' 'next steps        : rerun this script after updating the wrapper environment' >&2
+    exit 1
+  fi
+
+  printf '\nsummary            : nested shells work when Codex exports PATH with /opt/homebrew/bin first and sets BASH_ENV=%s.\n' "$BASHRC_PATH"
+}
+
+main "$@"
