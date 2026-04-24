@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -n "${NO_COLOR:-}" ]]; then
+  C_RESET=""
+  C_BOLD=""
+  C_CYAN=""
+  C_GREEN=""
+  C_RED=""
+else
+  C_RESET=$'\033[0m'
+  C_BOLD=$'\033[1m'
+  C_CYAN=$'\033[36m'
+  C_GREEN=$'\033[32m'
+  C_RED=$'\033[31m'
+fi
+
+usage() {
+  cat <<'EOF'
+Usage: bin/test [--verbose] [test-file ...]
+
+Run executable shell test files.
+With no arguments, all `*.test.sh` files under `bin/` are run.
+Use `--verbose` to show per-test `RUN` lines from the shared test helper.
+EOF
+}
+
+color_print() {
+  local color="$1"
+  shift
+  printf '%b%s%b\n' "$color" "$*" "$C_RESET"
+}
+
+collect_test_files() {
+  if [[ $# -gt 0 ]]; then
+    printf '%s\n' "$@"
+    return 0
+  fi
+
+  find "$ROOT_DIR/bin" -type f -name '*.test.sh' | sort
+}
+
+run_test_file() {
+  local test_file="$1"
+  local verbose="${2:-0}"
+
+  color_print "${C_BOLD}${C_CYAN}" "==> ${test_file#$ROOT_DIR/}"
+
+  if [[ ! -e "$test_file" ]]; then
+    color_print "$C_RED" "Test file not found: ${test_file#$ROOT_DIR/}" >&2
+    return 1
+  fi
+
+  if [[ ! -x "$test_file" ]]; then
+    color_print "$C_RED" "Test file is not executable: ${test_file#$ROOT_DIR/}" >&2
+    return 1
+  fi
+
+  BASH_TEST_VERBOSE="$verbose" "$test_file"
+}
+
+run_main() {
+  local verbose=0
+  local -a requested_files=()
+  local -a test_files=()
+  local test_file=""
+  local failures=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --verbose)
+        verbose=1
+        ;;
+      *)
+        requested_files+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  mapfile -t test_files < <(collect_test_files "${requested_files[@]}")
+
+  if [[ ${#test_files[@]} -eq 0 ]]; then
+    printf 'No test files found.\n' >&2
+    return 1
+  fi
+
+  for test_file in "${test_files[@]}"; do
+    if ! run_test_file "$test_file" "$verbose"; then
+      failures=$((failures + 1))
+    fi
+  done
+
+  if [[ $failures -eq 0 ]]; then
+    color_print "${C_BOLD}${C_GREEN}" "TEST SUMMARY: all test files passed"
+    return 0
+  fi
+
+  color_print "${C_BOLD}${C_RED}" "TEST SUMMARY: ${failures} test file(s) failed" >&2
+  return 2
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi
