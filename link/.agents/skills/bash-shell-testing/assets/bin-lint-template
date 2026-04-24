@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pushd "$(dirname "$0")/.." > /dev/null || exit 1
+
+LINT_VERBOSE=0
+
+usage() {
+  cat <<'EOF'
+Usage: bin/lint [--verbose] [file ...]
+
+Run syntax checks for one or more shell scripts.
+If no files are supplied, lint all shell scripts in this repository.
+If `shellcheck` is available, run it too.
+EOF
+}
+
+collect_shell_files() {
+  if [[ $# -gt 0 ]]; then
+    printf '%s\n' "$@"
+    return 0
+  fi
+
+  find bin config -type f \( -name '*.sh' -o -path 'bin/*' \) | sort
+}
+
+lint_debug() {
+  if [[ "${LINT_VERBOSE:-0}" -eq 1 ]]; then
+    printf '[lint] %s\n' "$*" >&2
+  fi
+}
+
+run_bash_syntax_check() {
+  local file="${1}"
+  printf 'syntax  %s\n' "${file}"
+  bash -n "${file}"
+}
+
+run_shellcheck_if_available() {
+  local -a files=("$@")
+
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    printf 'shellcheck not installed; skipping.\n'
+    return 0
+  fi
+
+  printf 'shellcheck %s files\n' "${#files[@]}"
+  lint_debug "run: shellcheck -x ${files[*]}"
+  shellcheck -x "${files[@]}"
+}
+
+run_main() {
+  local -a requested_files=()
+
+  while [[ $# -gt 0 ]]; do
+    case "${1}" in
+      -h|--help)
+        usage
+        return 0
+        ;;
+      --verbose)
+        LINT_VERBOSE=1
+        shift
+        ;;
+      *)
+        requested_files+=("${1}")
+        shift
+        ;;
+    esac
+  done
+
+  local -a files=()
+  mapfile -t files < <(collect_shell_files "${requested_files[@]}")
+
+  if [[ ${#files[@]} -eq 0 ]]; then
+    printf 'No shell files found.\n' >&2
+    return 1
+  fi
+
+  local file
+  for file in "${files[@]}"; do
+    run_bash_syntax_check "${file}"
+  done
+
+  run_shellcheck_if_available "${files[@]}"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  run_main "$@"
+fi
