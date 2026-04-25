@@ -3,36 +3,98 @@
 
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-if [[ -n "${NO_COLOR:-}" ]]; then
-  C_RESET=""
-  C_BOLD=""
-  C_CYAN=""
-  C_GREEN=""
-  C_RED=""
+if [[ "${1-}" == "source" ]]; then
+  TEST_SOURCE_ONLY=1
+  shift || true
 else
-  C_RESET=$'\033[0m'
-  C_BOLD=$'\033[1m'
-  C_CYAN=$'\033[36m'
-  C_GREEN=$'\033[32m'
-  C_RED=$'\033[31m'
+  TEST_SOURCE_ONLY=0
 fi
 
-usage() {
-  cat <<'EOF'
-Usage: bin/test [--verbose] [test-file ...]
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-Run executable shell test files.
-With no arguments, all `*.test.sh` files under `bin/` are run.
-Use `--verbose` to show per-test `RUN` lines from the shared test helper.
-EOF
+TEST_COLOR_ENABLED=0
+TEST_COLOR_MODE="auto"
+TEST_VERBOSE=0
+TEST_REQUESTED_FILES=()
+TEST_FILES=()
+
+TEST_C_RESET=$'\033[0m'
+TEST_C_BOLD=$'\033[1m'
+TEST_C_CYAN=$'\033[36m'
+TEST_C_GREEN=$'\033[32m'
+TEST_C_RED=$'\033[31m'
+TEST_C_SECTION=$'\033[33m'
+TEST_C_ACCENT=$'\033[35m'
+TEST_C_PLACEHOLDER=$'\033[95m'
+
+test_reset_state() {
+  TEST_COLOR_ENABLED=0
+  TEST_COLOR_MODE="auto"
+  TEST_VERBOSE=0
+  TEST_REQUESTED_FILES=()
+  TEST_FILES=()
 }
 
 color_print() {
   local color="$1"
   shift
-  printf '%b%s%b\n' "$color" "$*" "$C_RESET"
+
+  if (( TEST_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$TEST_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+test_usage() {
+  local section_style="" tool_style="" flag_style="" placeholder_style="" reset_style=""
+
+  if (( TEST_COLOR_ENABLED )); then
+    section_style="${TEST_C_BOLD}${TEST_C_SECTION}"
+    tool_style="${TEST_C_BOLD}${TEST_C_ACCENT}"
+    flag_style="$TEST_C_GREEN"
+    placeholder_style="$TEST_C_PLACEHOLDER"
+    reset_style="$TEST_C_RESET"
+  fi
+
+  printf 'Run executable shell test files.\n'
+  printf "With no arguments, all \`*.test.sh\` files under \`bin/\` are run.\n"
+  printf "Use \`--verbose\` to show per-test \`RUN\` lines from the shared test helper.\n\n"
+  printf '%sUsage:%s %sbin/test%s [%s--verbose%s] [%s--color%s|%s--no-color%s] [%stest-file ...%s]\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf "  %s--verbose%s          Show per-test \`RUN\` lines from the shared test helper.\n" "$flag_style" "$reset_style"
+  printf '  %s--color%s            Force colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s--no-color%s         Disable colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s-h, --help%s         Show this help.\n\n' "$flag_style" "$reset_style"
+  printf '%sNotes:%s\n' "$section_style" "$reset_style"
+  printf "  - Test files are executed directly, not through \`bash <file>\`.\n"
+  printf "  - File headings use the same cyan runner palette as \`bin/lint\`.\n"
+}
+
+test_parse_prereqs() {
+  case "$TEST_COLOR_MODE" in
+    always)
+      TEST_COLOR_ENABLED=1
+      ;;
+    never)
+      TEST_COLOR_ENABLED=0
+      ;;
+    auto)
+      if [[ -n "${NO_COLOR:-}" ]]; then
+        TEST_COLOR_ENABLED=0
+      elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+        TEST_COLOR_ENABLED=1
+      else
+        TEST_COLOR_ENABLED=0
+      fi
+      ;;
+  esac
 }
 
 collect_test_files() {
@@ -48,66 +110,84 @@ run_test_file() {
   local test_file="$1"
   local verbose="${2:-0}"
 
-  color_print "${C_BOLD}${C_CYAN}" "==> ${test_file#$ROOT_DIR/}"
+  color_print "${TEST_C_BOLD}${TEST_C_CYAN}" "==> ${test_file#"$ROOT_DIR"/}"
 
   if [[ ! -e "$test_file" ]]; then
-    color_print "$C_RED" "Test file not found: ${test_file#$ROOT_DIR/}" >&2
+    color_print "$TEST_C_RED" "Test file not found: ${test_file#"$ROOT_DIR"/}" >&2
     return 1
   fi
 
   if [[ ! -x "$test_file" ]]; then
-    color_print "$C_RED" "Test file is not executable: ${test_file#$ROOT_DIR/}" >&2
+    color_print "$TEST_C_RED" "Test file is not executable: ${test_file#"$ROOT_DIR"/}" >&2
     return 1
   fi
 
   BASH_TEST_VERBOSE="$verbose" "$test_file"
 }
 
-run_main() {
-  local verbose=0
-  local -a requested_files=()
-  local -a test_files=()
-  local test_file=""
-  local failures=0
+test_parse_opts() {
+  local show_help=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)
-        usage
-        return 0
+        show_help=1
         ;;
       --verbose)
-        verbose=1
+        TEST_VERBOSE=1
+        ;;
+      --color)
+        TEST_COLOR_MODE="always"
+        ;;
+      --no-color)
+        TEST_COLOR_MODE="never"
         ;;
       *)
-        requested_files+=("$1")
+        TEST_REQUESTED_FILES+=("$1")
         ;;
     esac
     shift
   done
 
-  mapfile -t test_files < <(collect_test_files "${requested_files[@]}")
+  if (( show_help )); then
+    test_parse_prereqs
+    test_usage
+    return 1
+  fi
 
-  if [[ ${#test_files[@]} -eq 0 ]]; then
+  return 0
+}
+
+run_main() {
+  local test_file=""
+  local failures=0
+
+  test_reset_state
+  test_parse_opts "$@" || return $?
+  test_parse_prereqs
+
+  mapfile -t TEST_FILES < <(collect_test_files "${TEST_REQUESTED_FILES[@]}")
+
+  if [[ ${#TEST_FILES[@]} -eq 0 ]]; then
     printf 'No test files found.\n' >&2
     return 1
   fi
 
-  for test_file in "${test_files[@]}"; do
-    if ! run_test_file "$test_file" "$verbose"; then
+  for test_file in "${TEST_FILES[@]}"; do
+    if ! run_test_file "$test_file" "$TEST_VERBOSE"; then
       failures=$((failures + 1))
     fi
   done
 
   if [[ $failures -eq 0 ]]; then
-    color_print "${C_BOLD}${C_GREEN}" "TEST SUMMARY: all test files passed"
+    color_print "${TEST_C_BOLD}${TEST_C_GREEN}" "TEST SUMMARY: all test files passed"
     return 0
   fi
 
-  color_print "${C_BOLD}${C_RED}" "TEST SUMMARY: ${failures} test file(s) failed" >&2
+  color_print "${TEST_C_BOLD}${TEST_C_RED}" "TEST SUMMARY: ${failures} test file(s) failed" >&2
   return 2
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if (( ! TEST_SOURCE_ONLY )); then
   run_main "$@"
 fi

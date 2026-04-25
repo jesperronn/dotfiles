@@ -1,0 +1,437 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+if [[ "${1-}" == "source" ]]; then
+  LINT_SOURCE_ONLY=1
+  shift || true
+else
+  LINT_SOURCE_ONLY=0
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+LINT_COLOR_ENABLED=0
+LINT_COLOR_MODE="auto"
+LINT_VERBOSE=0
+LINT_AUTOCORRECT=0
+LINT_FORMAT="default"
+
+LINT_REQUESTED_FILES=()
+LINT_FILES=()
+
+LINT_SHELLCHECK_OUTPUT=""
+LINT_SHELLCHECK_STATUS=0
+
+LINT_C_RESET=$'\033[0m'
+LINT_C_BOLD=$'\033[1m'
+LINT_C_GREEN=$'\033[32m'
+LINT_C_SECTION=$'\033[33m'
+LINT_C_ACCENT=$'\033[35m'
+LINT_C_PLACEHOLDER=$'\033[95m'
+LINT_C_CYAN=$'\033[36m'
+
+lint_reset_state() {
+  LINT_COLOR_ENABLED=0
+  LINT_COLOR_MODE="auto"
+  LINT_VERBOSE=0
+  LINT_AUTOCORRECT=0
+  LINT_FORMAT="default"
+  LINT_REQUESTED_FILES=()
+  LINT_FILES=()
+  LINT_SHELLCHECK_OUTPUT=""
+  LINT_SHELLCHECK_STATUS=0
+}
+
+color_print() {
+  local color="$1"
+  shift
+
+  if (( LINT_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$LINT_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+lint_usage() {
+  local section_style="" tool_style="" flag_style="" placeholder_style="" reset_style=""
+
+  if (( LINT_COLOR_ENABLED )); then
+    section_style="${LINT_C_BOLD}${LINT_C_SECTION}"
+    tool_style="${LINT_C_BOLD}${LINT_C_ACCENT}"
+    flag_style="$LINT_C_GREEN"
+    placeholder_style="$LINT_C_PLACEHOLDER"
+    reset_style="$LINT_C_RESET"
+  fi
+
+  printf 'Run syntax checks for one or more shell files.\n'
+  printf "If no files are supplied, lint shell files under \`bin/\`.\n\n"
+  printf '%sUsage:%s %sbin/lint%s [%s--verbose%s] [%s--format%s %sFORMAT%s|%s-f%s %sFORMAT%s] [%s--autocorrect%s] [%sfile ...%s]\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf "  %s-f, --format%s %sFORMAT%s  Select output format: \`default\`, \`offenses\` (\`o\`), or \`worst\` (\`w\`).\n" \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf "  %s--autocorrect%s      Apply ShellCheck \`-f diff\` fixes with \`patch\` before the final lint pass.\n" \
+    "$flag_style" "$reset_style"
+  printf '  %s--color%s            Force colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s--no-color%s         Disable colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s--verbose%s          Print debug commands to stderr.\n' "$flag_style" "$reset_style"
+  printf '  %s-h, --help%s         Show this help.\n\n' "$flag_style" "$reset_style"
+  printf '%sNotes:%s\n' "$section_style" "$reset_style"
+  printf "  - ShellCheck runs with \`-x\` when available.\n"
+  printf "  - \`offenses\` and \`worst\` are inspired by \`rubocop --format offenses\` and \`rubocop --format worst\`.\n"
+  printf "  - \`--autocorrect\` only applies ShellCheck rules that provide a patch.\n"
+  printf '  - Review patches or use a git-controlled worktree before applying autocorrections.\n'
+}
+
+lint_debug() {
+  if (( LINT_VERBOSE )); then
+    printf '[lint] %s\n' "$*" >&2
+  fi
+}
+
+lint_parse_prereqs() {
+  case "$LINT_COLOR_MODE" in
+    always)
+      LINT_COLOR_ENABLED=1
+      ;;
+    never)
+      LINT_COLOR_ENABLED=0
+      ;;
+    auto)
+      if [[ -n "${NO_COLOR:-}" ]]; then
+        LINT_COLOR_ENABLED=0
+      elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+        LINT_COLOR_ENABLED=1
+      else
+        LINT_COLOR_ENABLED=0
+      fi
+      ;;
+  esac
+}
+
+relative_path() {
+  local path="$1"
+
+  if [[ "$path" == "$ROOT_DIR/"* ]]; then
+    printf '%s\n' "${path#"$ROOT_DIR"/}"
+    return 0
+  fi
+
+  printf '%s\n' "$path"
+}
+
+is_shell_file() {
+  local file="$1"
+  local first_line=""
+
+  [[ -f "$file" ]] || return 1
+
+  case "$file" in
+    *.sh) return 0 ;;
+  esac
+
+  first_line="$(head -n 1 "$file" 2>/dev/null || true)"
+  [[ "$first_line" == '#!'*sh* ]]
+}
+
+collect_shell_files() {
+  local file=""
+
+  if [[ $# -gt 0 ]]; then
+    printf '%s\n' "$@"
+    return 0
+  fi
+
+  while IFS= read -r file; do
+    if is_shell_file "$file"; then
+      printf '%s\n' "$file"
+    fi
+  done < <(find "$ROOT_DIR/bin" -type f | sort)
+}
+
+run_bash_syntax_check() {
+  local file="$1"
+  color_print "${LINT_C_BOLD}${LINT_C_CYAN}" "syntax  $(relative_path "$file")"
+  bash -n "$file"
+}
+
+ensure_shellcheck_available() {
+  if command -v shellcheck >/dev/null 2>&1; then
+    return 0
+  fi
+
+  printf 'shellcheck not installed; skipping.\n'
+  return 1
+}
+
+ensure_patch_available() {
+  if command -v patch >/dev/null 2>&1; then
+    return 0
+  fi
+
+  printf 'patch not installed; cannot apply --autocorrect.\n' >&2
+  return 1
+}
+
+run_shellcheck_capture() {
+  local formatter="$1"
+  shift
+
+  local output_file=""
+
+  output_file="$(mktemp)"
+  lint_debug "run: shellcheck -x -f ${formatter} $*"
+
+  set +e
+  shellcheck -x -f "$formatter" "$@" >"$output_file" 2>&1
+  LINT_SHELLCHECK_STATUS=$?
+  set -e
+
+  LINT_SHELLCHECK_OUTPUT="$(cat "$output_file")"
+  rm -f "$output_file"
+}
+
+print_shellcheck_summary_by_rule() {
+  local summary=""
+
+  summary="$(printf '%s\n' "$LINT_SHELLCHECK_OUTPUT" | awk '
+    {
+      parts_count = split($0, parts, ": ")
+      if (parts_count < 3) {
+        next
+      }
+
+      severity = parts[2]
+      raw_message = parts[3]
+      if (parts_count > 3) {
+        for (i = 4; i <= parts_count; i++) {
+          raw_message = raw_message ": " parts[i]
+        }
+      }
+
+      code = raw_message
+      sub(/^.*\[/, "", code)
+      sub(/\]$/, "", code)
+      if (code !~ /^SC[0-9]+$/) {
+        next
+      }
+
+      message_text = raw_message
+      sub(/ \[SC[0-9]+\]$/, "", message_text)
+
+      count[code]++
+      if (!(code in level)) {
+        level[code] = severity
+        message[code] = message_text
+      }
+    }
+    END {
+      for (code in count) {
+        printf "%7d\t%s\t%s\t%s\n", count[code], code, level[code], message[code]
+      }
+    }
+  ' | sort -nr -k1,1 | awk -F "$(printf '\t')" '{ printf "%7d %s (%s): %s\n", $1, $2, $3, $4 }' || true)"
+
+  color_print "${LINT_C_BOLD}${LINT_C_GREEN}" "shellcheck offenses by rule"
+  if [[ -z "$summary" ]]; then
+    printf 'No offenses found.\n'
+    return 0
+  fi
+
+  printf '%s\n' "$summary"
+}
+
+print_shellcheck_summary_by_file() {
+  local summary=""
+  local count=""
+  local file=""
+
+  summary="$(printf '%s\n' "$LINT_SHELLCHECK_OUTPUT" | awk -F: 'NF >= 4 {count[$1]++} END {for (file in count) printf "%7d\t%s\n", count[file], file}' | sort -nr -k1,1 || true)"
+
+  color_print "${LINT_C_BOLD}${LINT_C_GREEN}" "shellcheck offenses by file"
+  if [[ -z "$summary" ]]; then
+    printf 'No offenses found.\n'
+    return 0
+  fi
+
+  while IFS=$'\t' read -r count file; do
+    [[ -n "$count" ]] || continue
+    printf '%7d %s\n' "$count" "$(relative_path "$file")"
+  done <<<"$summary"
+}
+
+normalize_format() {
+  local format="$1"
+
+  case "$format" in
+    default)
+      printf 'default\n'
+      ;;
+    offenses|o)
+      printf 'offenses\n'
+      ;;
+    worst|w)
+      printf 'worst\n'
+      ;;
+    *)
+      printf 'Unsupported format: %s\n' "$format" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_shellcheck_with_format() {
+  local format="$1"
+  shift
+  local -a files=("$@")
+
+  if ! ensure_shellcheck_available; then
+    return 0
+  fi
+
+  case "$format" in
+    default)
+      lint_debug "run: shellcheck -x ${files[*]}"
+      color_print "${LINT_C_BOLD}${LINT_C_GREEN}" "shellcheck ${#files[@]} file(s)"
+      shellcheck -x "${files[@]}"
+      ;;
+    offenses|worst)
+      run_shellcheck_capture gcc "${files[@]}"
+
+      if [[ "$LINT_SHELLCHECK_STATUS" -gt 1 ]]; then
+        printf '%s\n' "$LINT_SHELLCHECK_OUTPUT" >&2
+        return "$LINT_SHELLCHECK_STATUS"
+      fi
+
+      if [[ "$format" == "offenses" ]]; then
+        print_shellcheck_summary_by_rule
+      else
+        print_shellcheck_summary_by_file
+      fi
+
+      return "$LINT_SHELLCHECK_STATUS"
+      ;;
+  esac
+}
+
+apply_shellcheck_autocorrect() {
+  local file="$1"
+
+  color_print "${LINT_C_BOLD}${LINT_C_CYAN}" "autocorrect $(relative_path "$file")"
+  run_shellcheck_capture diff "$file"
+
+  if [[ "$LINT_SHELLCHECK_STATUS" -gt 1 ]]; then
+    printf '%s\n' "$LINT_SHELLCHECK_OUTPUT" >&2
+    return "$LINT_SHELLCHECK_STATUS"
+  fi
+
+  if [[ -z "$LINT_SHELLCHECK_OUTPUT" ]]; then
+    printf 'No autocorrections available.\n'
+    return 0
+  fi
+
+  printf '%s\n' "$LINT_SHELLCHECK_OUTPUT" | patch "$file"
+}
+
+run_autocorrect_if_requested() {
+  local enabled="$1"
+  shift
+  local -a files=("$@")
+  local file=""
+
+  if [[ "$enabled" != "1" ]]; then
+    return 0
+  fi
+
+  ensure_shellcheck_available || return 1
+  ensure_patch_available
+
+  for file in "${files[@]}"; do
+    apply_shellcheck_autocorrect "$file"
+  done
+}
+
+lint_parse_opts() {
+  local show_help=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        show_help=1
+        ;;
+      --verbose)
+        LINT_VERBOSE=1
+        ;;
+      --autocorrect)
+        LINT_AUTOCORRECT=1
+        ;;
+      --color)
+        LINT_COLOR_MODE="always"
+        ;;
+      --no-color)
+        LINT_COLOR_MODE="never"
+        ;;
+      --format|-f)
+        if [[ $# -lt 2 ]]; then
+          printf 'Missing value for --format.\n' >&2
+          return 1
+        fi
+        LINT_FORMAT="$2"
+        shift
+        ;;
+      --format=*)
+        LINT_FORMAT="${1#*=}"
+        ;;
+      *)
+        LINT_REQUESTED_FILES+=("$1")
+        ;;
+    esac
+    shift
+  done
+
+  LINT_FORMAT="$(normalize_format "$LINT_FORMAT")" || return 1
+
+  if (( show_help )); then
+    lint_parse_prereqs
+    lint_usage
+    return 1
+  fi
+
+  return 0
+}
+
+run_main() {
+  lint_reset_state
+  lint_parse_opts "$@" || return $?
+  lint_parse_prereqs
+
+  mapfile -t LINT_FILES < <(collect_shell_files "${LINT_REQUESTED_FILES[@]}")
+
+  if [[ ${#LINT_FILES[@]} -eq 0 ]]; then
+    printf 'No shell files found.\n' >&2
+    return 1
+  fi
+
+  local file=""
+  for file in "${LINT_FILES[@]}"; do
+    run_bash_syntax_check "$file"
+  done
+
+  run_autocorrect_if_requested "$LINT_AUTOCORRECT" "${LINT_FILES[@]}"
+  run_shellcheck_with_format "$LINT_FORMAT" "${LINT_FILES[@]}"
+}
+
+if (( ! LINT_SOURCE_ONLY )); then
+  run_main "$@"
+fi

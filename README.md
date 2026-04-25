@@ -142,6 +142,7 @@ In addition to the aforementioned [dotfiles][dotfiles] script, there are a few o
 
 * [dotfiles][dotfiles] - (re)initialize dotfiles. It might ask for your password (for `sudo`).
 * [src](link/.bashrc#L8-18) - (re)source all files in `/source` directory
+* `bin/lint` - lint shell scripts with `bash -n` and `shellcheck`, including `--format offenses`, `--format worst`, and `--autocorrect` support for ShellCheck diff patches.
 * Look through the [bin](bin) subdirectory for a few more.
 
 ## Prompt

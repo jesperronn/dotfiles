@@ -58,7 +58,7 @@ function is_dotfiles_running() {
 
 # Test if this script was run via the "dotfiles" bin script (vs. via curl/wget)
 function is_dotfiles_bin() {
-  [[ "$(basename $0 2>/dev/null)" == dotfiles ]] || return 1
+  [[ "$(basename "$0" 2>/dev/null)" == dotfiles ]] || return 1
 }
 
 # OS detection
@@ -73,7 +73,7 @@ function is_ubuntu_desktop() {
 }
 function get_os() {
   for os in osx ubuntu ubuntu_desktop; do
-    is_$os; [[ $? == ${1:-0} ]] && echo $os
+    is_"$os"; [[ $? == ${1:-0} ]] && echo "$os"
   done
 }
 
@@ -95,14 +95,14 @@ function prompt_menu() {
   exitcode=0
   if [[ "$2" ]]; then
     _prompt_menu_draws "$1"
-    read -t $2 -n 1 -sp "Press ENTER or wait $2 seconds to continue, or press any other key to edit."
+    read -t "$2" -n 1 -sp "Press ENTER or wait $2 seconds to continue, or press any other key to edit."
     exitcode=$?
     echo ""
   fi 1>&2
   if [[ "$exitcode" == 0 && "$REPLY" ]]; then
     prompt="Toggle options (Separate options with spaces, ENTER when done): "
     while _prompt_menu_draws "$1" 1 && read -rp "$prompt" nums && [[ "$nums" ]]; do
-      _prompt_menu_adds $nums
+      _prompt_menu_adds "$nums"
     done
   fi 1>&2
   _prompt_menu_adds
@@ -116,7 +116,7 @@ function _prompt_menu_iter() {
     for sel in "${menu_selects[@]}"; do
       [[ "$sel" == "${menu_options[i]}" ]] && state=1 && break
     done
-    $fn $state $i "$@"
+    $fn $state "$i" "$@"
   done
 }
 
@@ -128,9 +128,9 @@ function _prompt_menu_draws() {
 function _prompt_menu_draw() {
   local modes=(error success)
   if [[ "$3" ]]; then
-    e_${modes[$1]} "$(printf "%2d) %s\n" $(($2+1)) "${menu_options[$2]}")"
+    e_"${modes[$1]}" "$(printf "%2d) %s\n" $(($2+1)) "${menu_options[$2]}")"
   else
-    e_${modes[$1]} "${menu_options[$2]}"
+    e_"${modes[$1]}" "${menu_options[$2]}"
   fi
 }
 
@@ -162,7 +162,7 @@ function array_map() {
   for __i__ in $(eval echo "\${!$__arr__[@]}"); do
     __val__="$(eval echo "\"\${$__arr__[__i__]}\"")"
     if [[ "$1" ]]; then
-      "$@" "$__val__" $__i__
+      "$@" "$__val__" "$__i__"
     else
       echo "$__val__"
     fi
@@ -170,7 +170,7 @@ function array_map() {
 }
 
 # Print bash array in the format "i <val>" (one per line) for debugging.
-function array_print() { array_map $1 __array_print; }
+function array_print() { array_map "$1" __array_print; }
 function __array_print() { echo "$2 <$1>"; }
 
 # Array filter. Calls filter_fn for each item ($1) and index ($2) in array_name
@@ -189,7 +189,7 @@ function __array_filter() {
   for __i__ in $(eval echo "\${!$__arr__[@]}"); do
     __val__="$(eval echo "\${$__arr__[__i__]}")"
     if [[ "$1" ]]; then
-      "$@" "$__val__" $__i__ >/dev/null
+      "$@" "$__val__" "$__i__" >/dev/null
     else
       [[ "$__val__" ]]
     fi
@@ -197,7 +197,7 @@ function __array_filter() {
       if [[ $__mode__ == 1 ]]; then
         eval echo "\"\${$__arr__[__i__]}\""
       else
-        echo $__i__
+        echo "$__i__"
       fi
     fi
   done
@@ -295,7 +295,7 @@ function init_files() {
       [[ "$remove" ]] || menu_selects=("${menu_selects[@]}" "$opt")
     done
   fi
-  prompt_menu "Run the following init scripts?" $prompt_delay
+  prompt_menu "Run the following init scripts?" "$prompt_delay"
   # Write out cache file for future reading.
   rm "$init_file" 2>/dev/null
   for i in "${!menu_selects[@]}"; do
@@ -329,7 +329,7 @@ function link_test() {
 }
 function link_do() {
   e_success "Linking ~/$1."
-  ln -sf ${2#$HOME/} ~/
+  ln -sf "${2#"$HOME"/}" ~/
 }
 
 # Link config files.
@@ -342,21 +342,21 @@ function config_test() {
 }
 function config_do() {
   e_success "Linking ~/.config/$1."
-  ln -sf ../${2#$HOME/} ~/.config/
+  ln -sf ../"${2#"$HOME"/}" ~/.config/
 }
 
 # Copy, link, init, etc.
 function do_stuff() {
   local base dest skip
   local files=($DOTFILES/$1/*)
-  [[ $(declare -f "$1_files") ]] && files=($($1_files "${files[@]}"))
+  [[ $(declare -f "$1_files") ]] && files=($("$1"_files "${files[@]}"))
   # No files? abort.
   if (( ${#files[@]} == 0 )); then return; fi
   # Run _header function only if declared.
   [[ $(declare -f "$1_header") ]] && "$1_header"
   # Iterate over files.
   for file in "${files[@]}"; do
-    base="$(basename $file)"
+    base="$(basename "$file")"
     # Get dest path.
     if [[ $(declare -f "$1_dest") ]]; then
       dest="$("$1_dest" "$base")"
@@ -475,11 +475,11 @@ if [[ ! -d $DOTFILES ]]; then
   # Dotfiles directory doesn't exist? Clone it!
   e_header "Downloading dotfiles"
   git clone --recursive git://github.com/${github_user:-cowboy}/${github_project:-dotfiles}.git $DOTFILES
-  cd $DOTFILES
+  cd $DOTFILES || exit
 elif [[ "$1" != "restart" ]]; then
   # Make sure we have the latest files.
   e_header "Updating dotfiles"
-  cd $DOTFILES
+  cd $DOTFILES || exit
   prev_head="$(git rev-parse HEAD)"
   git pull
   git submodule update --init --recursive --quiet
@@ -516,7 +516,7 @@ do_stuff init
 
 # Alert if backups were made.
 if [[ "$backup" ]]; then
-  echo -e "\nBackups were moved to ~/${backup_dir#$HOME/}"
+  echo -e "\nBackups were moved to ~/${backup_dir#"$HOME"/}"
 fi
 
 # All done!

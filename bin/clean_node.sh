@@ -12,17 +12,17 @@ echo
 echo "node_modules remover v1.1"
 echo
 
-pushd $1
+pushd "$1" || exit
 
 for i in $(find . -name node_modules -d 3 -type d); do
   if [ $(grep -o "node_modules" <<<"$i" | wc -l) == 1 ]
   then
-    echo "$(du -sh $i)"
+    echo "$(du -sh "$i")"
     read -p "Delete Y/N ? " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]
     then
-      rm -r $i
+      rm -r "$i"
       echo "deleted"
     fi
   fi

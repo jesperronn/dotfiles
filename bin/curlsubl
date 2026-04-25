@@ -44,5 +44,5 @@ file="$dir/$(basename "$path")"
 mv "$tmp" "$file"
 
 # Open file in editor!
-echo -e "\nOpening ~${file#$HOME}"
+echo -e "\nOpening ~${file#"$HOME"}"
 "$bin" "$file"
