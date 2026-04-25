@@ -122,11 +122,8 @@
 [diff "tar-xz"]
   textconv = tar -O -xJf
   binary = true
-
 [diff "odf"]
   textconv = odt2txt
-
-
 [diff "bin"]
   textconv = hexdump -v -C
 
@@ -134,8 +131,6 @@
 [diff "image"]
   textconv = exiftool
 [pull]
-	ff = only
-[blame]
-    # ignoreRevsFile = .git-blame-ignore-revs
+  ff = only
 [init]
-        defaultBranch = main
+  defaultBranch = main
