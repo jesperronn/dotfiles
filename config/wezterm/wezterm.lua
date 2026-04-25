@@ -321,13 +321,27 @@ local function compute_cwd_title(pane)
     end
 
     local function cwd_path(pane_obj)
-        local cwd_uri = nil
-        if pane_obj and pane_obj.get_current_working_dir then
-            cwd_uri = pane_obj:get_current_working_dir()
-        elseif pane_obj and pane_obj.current_working_dir then
-            cwd_uri = pane_obj.current_working_dir
+        if not pane_obj then
+            return nil
         end
-        return uri_to_path(cwd_uri)
+
+        local ok_field, current_working_dir = pcall(function()
+            return pane_obj.current_working_dir
+        end)
+
+        if ok_field and current_working_dir ~= nil then
+            return uri_to_path(current_working_dir)
+        end
+
+        local ok, cwd_uri = pcall(function()
+            return pane_obj:get_current_working_dir()
+        end)
+
+        if ok then
+            return uri_to_path(cwd_uri)
+        end
+
+        return nil
     end
 
     local function git_root(path)
