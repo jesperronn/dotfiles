@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+
+set -u
+# shellcheck shell=bash
+
+SCRIPT_NAME="$(basename "$0")"
+IMAGE_NAME="${1:-}"
+FAILURES=0
+
+if [[ -n "${NO_COLOR:-}" ]]; then
+  C_RESET=""
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+  C_CYAN=""
+else
+  C_RESET=$'\033[0m'
+  C_GREEN=$'\033[32m'
+  C_YELLOW=$'\033[33m'
+  C_RED=$'\033[31m'
+  C_CYAN=$'\033[36m'
+fi
+
+log_section() {
+  printf '\n%b== %s ==%b\n' "$C_CYAN" "$1" "$C_RESET"
+}
+
+status_line() {
+  local color="$1"
+  local marker="$2"
+  local message="$3"
+  printf '%b%s%b %s\n' "$color" "$marker" "$C_RESET" "$message"
+}
+
+log_ok() {
+  status_line "$C_GREEN" "[OK]" "$1"
+}
+
+log_action() {
+  status_line "$C_YELLOW" "[ACTION]" "$1"
+}
+
+log_troubleshoot() {
+  status_line "$C_RED" "[TROUBLESHOOT]" "$1"
+}
+
+show_detail() {
+  local detail="$1"
+  [[ -n "$detail" ]] || return 0
+  while IFS= read -r line; do
+    printf '    %s\n' "$line"
+  done <<<"$detail"
+}
+
+capture_command() {
+  local output_var="$1"
+  local status_var="$2"
+  shift 2
+
+  local output_file
+  local status=0
+  output_file="$(mktemp)"
+
+  "$@" >"$output_file" 2>&1
+  status=$?
+
+  printf -v "$output_var" '%s' "$(<"$output_file")"
+  rm -f "$output_file"
+  printf -v "$status_var" '%s' "$status"
+}
+
+run_check() {
+  local ok_message="$1"
+  local fail_marker="$2"
+  local fail_message="$3"
+  local next_step="$4"
+  shift 4
+
+  local output=""
+  local status=0
+  capture_command output status "$@"
+
+  if [[ $status -eq 0 ]]; then
+    log_ok "$ok_message"
+    return 0
+  fi
+
+  FAILURES=$((FAILURES + 1))
+  if [[ "$fail_marker" == "action" ]]; then
+    log_action "$fail_message"
+  else
+    log_troubleshoot "$fail_message"
+  fi
+  [[ -n "$next_step" ]] && printf '    next: %s\n' "$next_step"
+  show_detail "$output"
+  return 0
+}
+
+print_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [image_name]
+
+Examples:
+  $SCRIPT_NAME
+  $SCRIPT_NAME postgres:18.3-alpine
+  $SCRIPT_NAME quay.io/libpod/alpine:latest
+
+Notes:
+  - If no image is provided, only system and registry checks are run.
+  - Image pull checks run only when an image name is provided.
+  - Edit run_main() to comment checks in or out as needed.
+EOF
+}
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+require_podman() {
+  if ! have_command podman; then
+    log_action "podman is not installed or not on PATH"
+    printf '    next: install Podman and re-run %s\n' "$SCRIPT_NAME"
+    exit 1
+  fi
+}
+
+have_image_name() {
+  [[ -n "$IMAGE_NAME" ]]
+}
+
+check_local_client_versions() {
+  log_section "Local Client Versions"
+
+  if have_command docker; then
+    run_check \
+      "docker client is available" \
+      "troubleshoot" \
+      "docker is installed but docker version failed" \
+      "run: docker version" \
+      docker version --format 'Client {{.Client.Version}}'
+  else
+    log_ok "docker command not installed; skipping Docker comparison"
+  fi
+
+  run_check \
+    "podman client is available" \
+    "action" \
+    "podman is installed but podman version failed" \
+    "run: podman version" \
+    podman version --format 'Client {{.Client.Version}}'
+}
+
+check_podman_machine_list() {
+  log_section "Podman Machine List"
+  run_check \
+    "podman machine list is readable" \
+    "action" \
+    "podman machine list failed" \
+    "run: podman machine init && podman machine start" \
+    podman machine list
+}
+
+check_podman_machine_inspect() {
+  log_section "Podman Machine Inspect"
+  run_check \
+    "podman machine inspect is readable" \
+    "troubleshoot" \
+    "podman machine inspect failed" \
+    "run: podman machine list, then inspect the active machine name manually" \
+    podman machine inspect
+}
+
+check_engine_info() {
+  log_section "Container Engine Info"
+
+  if have_command docker; then
+    run_check \
+      "docker engine responded" \
+      "troubleshoot" \
+      "docker info failed" \
+      "run: docker context ls && docker info" \
+      docker info
+  fi
+
+  run_check \
+    "podman engine responded" \
+    "troubleshoot" \
+    "podman info failed" \
+    "run: podman machine start && podman info" \
+    podman info
+}
+
+check_system_connections() {
+  log_section "System Connections"
+
+  if have_command docker; then
+    run_check \
+      "docker system connection list is readable" \
+      "troubleshoot" \
+      "docker system connection list failed" \
+      "run: docker context ls" \
+      docker system connection list
+  fi
+
+  run_check \
+    "podman system connection list is readable" \
+    "troubleshoot" \
+    "podman system connection list failed" \
+    "run: podman system connection list --format json" \
+    podman system connection list
+}
+
+check_host_registry_connectivity() {
+  log_section "Host Registry Connectivity"
+
+  if ! have_command curl; then
+    log_action "curl is not installed; host registry checks were skipped"
+    printf '    next: install curl and re-run %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  run_check \
+    "host can reach registry-1.docker.io" \
+    "troubleshoot" \
+    "host could not reach registry-1.docker.io" \
+    "check VPN, proxy, firewall, or DNS on the host; rerun: curl -I --max-time 15 https://registry-1.docker.io/v2/" \
+    curl -I --max-time 15 https://registry-1.docker.io/v2/
+
+  run_check \
+    "host can reach auth.docker.io" \
+    "troubleshoot" \
+    "host could not reach auth.docker.io token endpoint" \
+    "rerun: curl -I --max-time 15 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull'" \
+    curl -I --max-time 15 "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull"
+}
+
+check_vm_dns_and_registry() {
+  log_section "VM DNS And Registry Connectivity"
+
+  run_check \
+    "VM can resolve registry-1.docker.io" \
+    "troubleshoot" \
+    "VM DNS lookup failed for registry-1.docker.io" \
+    "run: podman machine ssh 'getent hosts registry-1.docker.io'" \
+    podman machine ssh 'getent hosts registry-1.docker.io'
+
+  run_check \
+    "VM can reach registry-1.docker.io" \
+    "troubleshoot" \
+    "VM could not reach registry-1.docker.io" \
+    "run: podman machine ssh 'curl -I --max-time 15 https://registry-1.docker.io/v2/'" \
+    podman machine ssh 'curl -I --max-time 15 https://registry-1.docker.io/v2/'
+}
+
+check_vm_registry_ips() {
+  log_section "VM Registry IP Probes"
+
+  run_check \
+    "VM IP-level probes to registry-1.docker.io completed" \
+    "troubleshoot" \
+    "VM IP-level probes to registry-1.docker.io failed" \
+    "run: podman machine ssh 'getent hosts registry-1.docker.io'" \
+    podman machine ssh 'for ip in $(getent hosts registry-1.docker.io | awk "{print \$1}"); do echo "== ${ip} =="; curl -I --connect-timeout 8 --max-time 12 --resolve registry-1.docker.io:443:${ip} https://registry-1.docker.io/v2/ || true; echo; done'
+}
+
+check_vm_runtime_state() {
+  log_section "VM Runtime State"
+
+  run_check \
+    "VM boot ID is readable" \
+    "troubleshoot" \
+    "could not read VM boot ID" \
+    "run: podman machine ssh 'cat /proc/sys/kernel/random/boot_id'" \
+    podman machine ssh 'printf "boot_id=%s\n" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"'
+
+  run_check \
+    "VM runtime directories are readable" \
+    "troubleshoot" \
+    "could not inspect /run/containers/storage or /run/libpod in the VM" \
+    "run: podman machine ssh 'ls -ld /run/containers/storage /run/libpod'" \
+    podman machine ssh 'ls -ld /run/containers/storage /run/libpod'
+}
+
+check_registry_auth_state() {
+  log_section "Registry Auth State"
+
+  if [[ -f "$HOME/.docker/config.json" ]]; then
+    run_check \
+      "docker auth config is readable" \
+      "troubleshoot" \
+      "docker auth config exists but could not be read" \
+      "run: grep -n 'docker.io\\|registry-1.docker.io\\|auths\\|credsStore\\|credHelpers' ~/.docker/config.json" \
+      grep -n 'docker.io\|registry-1.docker.io\|auths\|credsStore\|credHelpers' "$HOME/.docker/config.json"
+  else
+    log_ok "~/.docker/config.json not found; no Docker auth override to inspect"
+  fi
+}
+
+check_pull_target_image() {
+  log_section "Target Image Pull"
+
+  if ! have_image_name; then
+    log_ok "no image provided; skipping target image pull"
+    return 0
+  fi
+
+  if have_command docker; then
+    run_check \
+      "docker pulled $IMAGE_NAME" \
+      "troubleshoot" \
+      "docker failed to pull $IMAGE_NAME" \
+      "run: docker --log-level=debug pull $IMAGE_NAME" \
+      docker --log-level=debug pull "$IMAGE_NAME"
+  fi
+
+  run_check \
+    "podman pulled $IMAGE_NAME" \
+    "troubleshoot" \
+    "podman failed to pull $IMAGE_NAME" \
+    "run: podman --log-level=debug pull $IMAGE_NAME" \
+    podman --log-level=debug pull "$IMAGE_NAME"
+}
+
+check_control_pull() {
+  log_section "Control Pull From Quay"
+
+  if ! have_image_name; then
+    log_ok "no image provided; skipping control pull"
+    return 0
+  fi
+
+  run_check \
+    "VM control pull from quay.io succeeded" \
+    "troubleshoot" \
+    "VM control pull from quay.io failed" \
+    "run: podman machine ssh 'podman --log-level=debug pull quay.io/libpod/alpine:latest'" \
+    podman machine ssh 'podman --log-level=debug pull quay.io/libpod/alpine:latest'
+}
+
+print_recovery_hints() {
+  log_section "Recovery Hints"
+  if [[ $FAILURES -eq 0 ]]; then
+    log_ok "all checks passed"
+    printf '    next: if pulls still fail intermittently, rerun with an image name for an end-to-end pull test\n'
+    return 0
+  fi
+
+  log_action "$FAILURES check(s) need attention"
+  cat <<'EOF'
+    common next steps:
+      1. Restart the Podman machine:
+         podman machine stop
+         podman machine start
+      2. Retry the failing command shown above.
+      3. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
+      4. If Podman client and VM feel out of sync, update Podman and restart the machine.
+      5. If you see "current system boot ID differs from cached boot ID", clear stale runtime state in the VM or rebuild the machine after preserving anything important.
+EOF
+}
+
+run_main() {
+  require_podman
+
+  case "${1:-}" in
+    -h|--help)
+      print_usage
+      exit 0
+      ;;
+  esac
+
+  check_local_client_versions
+  check_podman_machine_list
+  check_podman_machine_inspect
+  check_engine_info
+  check_system_connections
+  check_host_registry_connectivity
+  check_vm_dns_and_registry
+  check_vm_registry_ips
+  check_vm_runtime_state
+  check_registry_auth_state
+  check_pull_target_image
+  check_control_pull
+  print_recovery_hints
+}
+
+run_main "$@"
