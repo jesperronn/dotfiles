@@ -17,6 +17,8 @@ if [[ -n "$HOME" && ( "$CODEX_SANDBOX" == "true" || "$TERM" == "dumb" ) ]]; then
   return
 fi
 
+eval "$(/opt/workbrew/bin/brew shellenv)"
+
 # Source all files in "source"
 function src() {
   local file
@@ -42,16 +44,12 @@ function dotfiles() {
   $DOTFILES/bin/dotfiles "$@" && src
 }
 
-
-eval "$(/opt/workbrew/bin/brew shellenv)"
-
-
 src
 
 # pnpm
 export PNPM_HOME="$HOME/Library/pnpm"
 case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
-  *) export PATH="$PNPM_HOME:$PATH" ;;
+  *) export PATH="$PATH:$PNPM_HOME" ;;
 esac
 # pnpm end
