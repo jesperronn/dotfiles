@@ -79,9 +79,31 @@ Font
 ============================
 ]] --
 
-config.font =
-    wezterm.font_with_fallback { 'Hack Nerd Font', "Maple Mono NF", "JetBrains Mono NL" }
+local base_font_fallback = { 'Hack Nerd Font', "Maple Mono NF", "JetBrains Mono NL" }
+
+config.font = wezterm.font_with_fallback(base_font_fallback)
 config.font_size = 13
+
+config.font_rules = {
+    {
+        intensity = "Half",
+        italic = false,
+        font = wezterm.font_with_fallback(base_font_fallback, {
+            foreground = "#aeb8dd",
+        }),
+    },
+    {
+        intensity = "Half",
+        italic = true,
+        font = wezterm.font_with_fallback({
+            { family = "Hack Nerd Font", italic = true },
+            { family = "Maple Mono NF", italic = true },
+            { family = "JetBrains Mono NL", italic = true },
+        }, {
+            foreground = "#aeb8dd",
+        }),
+    },
+}
 
 config.window_decorations = "RESIZE"
 
@@ -125,12 +147,20 @@ local scheme_colors = {
 }
 
 local colors = {
+    foreground = "#f2f4ff",
+    dim_text = "#aeb8dd",
+    background = "#1f2233",
     border = scheme_colors.catppuccin.macchiato.lavender,
     tab_bar_active_tab_fg = scheme_colors.catppuccin.macchiato.mauve,
     tab_bar_active_tab_bg = scheme_colors.catppuccin.macchiato.crust,
     tab_bar_text = scheme_colors.catppuccin.macchiato.crust,
     arrow_foreground_leader = scheme_colors.catppuccin.macchiato.lavender,
     arrow_background_leader = scheme_colors.catppuccin.macchiato.crust,
+}
+
+config.colors = {
+    foreground = colors.foreground,
+    background = colors.background,
 }
 
 config.enable_scroll_bar = true
