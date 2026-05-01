@@ -40,13 +40,6 @@ Prefer this structure:
 
 set -euo pipefail
 
-if [[ "${1-}" == "source" ]]; then
-  MY_SCRIPT_SOURCE_ONLY=1
-  shift || true
-else
-  MY_SCRIPT_SOURCE_ONLY=0
-fi
-
 # Global flags and cached state
 
 # Colors
@@ -82,7 +75,7 @@ run_main() {
   report_summary
 }
 
-if (( ! MY_SCRIPT_SOURCE_ONLY )); then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run_main "$@"
 fi
 ```
@@ -92,7 +85,7 @@ fi
 - Keep `run_main` as a readable sequence of function calls.
 - Do not hide orchestration inside one giant helper.
 - Separate planning/reporting from mutation when practical.
-- Make most helpers callable independently after `source script source`.
+- Make most helpers callable independently after `source script`.
 - Prefer small functions with single responsibility over local cleverness.
 - Keep state in explicit globals with a clear prefix, not anonymous shell variables.
 - Run `shellcheck` during development and before considering the script finished.
@@ -303,7 +296,7 @@ Failure output should explain the recovery path, not just the error.
 Write the script so functions can be tested in isolation.
 
 Preferred patterns:
-- source-only mode via `script source`
+- direct sourcing via `source script`, guarded with `[[ "${BASH_SOURCE[0]}" == "$0" ]]`
 - explicit reset helper in tests for all globals
 - helper functions return data via stdout when practical
 - orchestration functions call helpers that can be overridden in tests
@@ -361,7 +354,7 @@ Extract and reuse these methods:
 - interactive selectors as separate functions
 - progress helpers separate from business logic
 - failure handlers that include next steps
-- a source-only entry mode for tests
+- a direct-source entry guard for tests using `BASH_SOURCE`
 - tests that override helpers to isolate units
 
 ## What To Ignore

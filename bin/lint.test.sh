@@ -7,7 +7,7 @@ DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LINT_BIN="$DOTFILES_ROOT/bin/lint"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
-source "$LINT_BIN" source
+source "$LINT_BIN"
 
 TEST_TMP_DIR=""
 BASH_BIN="$(command -v bash)"

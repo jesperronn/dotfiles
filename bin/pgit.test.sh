@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090,SC1091
 
 set -euo pipefail
 
@@ -7,7 +7,7 @@ DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PGIT_BIN="$DOTFILES_ROOT/bin/pgit"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
-source "$PGIT_BIN" source
+source "$PGIT_BIN"
 
 TEST_TMP_DIR=""
 
@@ -83,6 +83,7 @@ test_help_palette() {
   local status=0
 
   reset_state
+  # shellcheck disable=SC2034
   PGIT_COLOR_ENABLED=1
   capture_command output status pgit_usage
   assert_status "0" "$status" "pgit_usage renders when color is enabled"

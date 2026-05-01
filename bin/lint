@@ -3,13 +3,6 @@
 
 set -euo pipefail
 
-if [[ "${1-}" == "source" ]]; then
-  LINT_SOURCE_ONLY=1
-  shift || true
-else
-  LINT_SOURCE_ONLY=0
-fi
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 LINT_COLOR_ENABLED=0
@@ -432,6 +425,6 @@ run_main() {
   run_shellcheck_with_format "$LINT_FORMAT" "${LINT_FILES[@]}"
 }
 
-if (( ! LINT_SOURCE_ONLY )); then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run_main "$@"
 fi

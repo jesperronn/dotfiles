@@ -3,13 +3,6 @@
 
 set -euo pipefail
 
-if [[ "${1-}" == "source" ]]; then
-  SUPERCLEAN_SOURCE_ONLY=1
-  shift || true
-else
-  SUPERCLEAN_SOURCE_ONLY=0
-fi
-
 SUPER_CLEAN_DRY_RUN=0
 SUPER_CLEAN_VERBOSE=0
 SUPER_CLEAN_INTERACTIVE=0
@@ -2583,6 +2576,6 @@ superclean_main() {
   superclean_report_reclaimed
 }
 
-if (( ! SUPERCLEAN_SOURCE_ONLY )); then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   superclean_main "$@"
 fi

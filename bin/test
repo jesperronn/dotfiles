@@ -3,13 +3,6 @@
 
 set -euo pipefail
 
-if [[ "${1-}" == "source" ]]; then
-  TEST_SOURCE_ONLY=1
-  shift || true
-else
-  TEST_SOURCE_ONLY=0
-fi
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TEST_COLOR_ENABLED=0
@@ -188,6 +181,6 @@ run_main() {
   return 2
 }
 
-if (( ! TEST_SOURCE_ONLY )); then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   run_main "$@"
 fi

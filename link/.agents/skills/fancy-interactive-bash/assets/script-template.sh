@@ -3,13 +3,6 @@
 
 set -euo pipefail
 
-if [[ "${1-}" == "source" ]]; then
-  TEMPLATE_SOURCE_ONLY=1
-  shift || true
-else
-  TEMPLATE_SOURCE_ONLY=0
-fi
-
 TEMPLATE_VERBOSE=0
 TEMPLATE_COLOR_ENABLED=1
 TEMPLATE_INTERACTIVE=0
@@ -130,6 +123,6 @@ template_run_main() {
   template_success "Done"
 }
 
-if (( ! TEMPLATE_SOURCE_ONLY )); then
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   template_run_main "$@"
 fi

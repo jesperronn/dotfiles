@@ -56,7 +56,7 @@ Rules:
 - use `#!/usr/bin/env bash`
 - use `set -euo pipefail`
 - source shared test helpers
-- source the script under test when practical
+- source the script under test when practical; prefer scripts that gate execution with `[[ "${BASH_SOURCE[0]}" == "$0" ]]`
 - end with `run_tests "$@"`
 - start from `assets/script-template.test.sh` when creating a new sibling test file
 

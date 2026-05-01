@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+RETURNER_COLOR_ENABLED=0
+RETURNER_SHOW_HELP=0
+RETURNER_EXIT_CODE=""
+RETURNER_MESSAGE=""
+
+RETURNER_C_RESET=$'\033[0m'
+RETURNER_C_BOLD=$'\033[1m'
+RETURNER_C_RED=$'\033[31m'
+RETURNER_C_SECTION=$'\033[33m'
+RETURNER_C_ACCENT=$'\033[35m'
+RETURNER_C_PLACEHOLDER=$'\033[95m'
+RETURNER_C_GREEN=$'\033[32m'
+
+returner_reset_state() {
+  RETURNER_COLOR_ENABLED=0
+  RETURNER_SHOW_HELP=0
+  RETURNER_EXIT_CODE=""
+  RETURNER_MESSAGE=""
+}
+
+returner_color_print() {
+  local color="$1"
+  shift
+
+  if (( RETURNER_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$RETURNER_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+returner_usage() {
+  local section_style="" tool_style="" placeholder_style="" flag_style="" reset_style=""
+
+  if (( RETURNER_COLOR_ENABLED )); then
+    section_style="${RETURNER_C_BOLD}${RETURNER_C_SECTION}"
+    tool_style="${RETURNER_C_BOLD}${RETURNER_C_ACCENT}"
+    placeholder_style="$RETURNER_C_PLACEHOLDER"
+    flag_style="$RETURNER_C_GREEN"
+    reset_style="$RETURNER_C_RESET"
+  fi
+
+  printf 'Exit with a specific shell status code.\n\n'
+  printf '%sUsage:%s %sbin/returner%s %s<exit-code>%s [%s-m%s=%sMESSAGE%s|%s--message%s=%sMESSAGE%s]\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s-h, --help%s             Show this help.\n' "$flag_style" "$reset_style"
+  printf '  %s-m%s=%sMESSAGE%s           Print a message before returning.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %s--message%s=%sMESSAGE%s    Print a message before returning.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
+}
+
+returner_error() {
+  returner_color_print "$RETURNER_C_RED" "$*" >&2
+}
+
+returner_is_uint() {
+  local value="$1"
+  [[ "$value" =~ ^[0-9]+$ ]]
+}
+
+parse_opts() {
+  local raw_exit_code=""
+
+  if [[ $# -eq 0 ]]; then
+    returner_usage >&2
+    return 99
+  fi
+
+  case "$1" in
+    -h|--help)
+      RETURNER_SHOW_HELP=1
+      return 0
+      ;;
+  esac
+
+  raw_exit_code="$1"
+  shift
+
+  while (($#)); do
+    case "$1" in
+      -m=*)
+        RETURNER_MESSAGE="${1#-m=}"
+        ;;
+      --message=*)
+        RETURNER_MESSAGE="${1#--message=}"
+        ;;
+      -h|--help)
+        RETURNER_SHOW_HELP=1
+        ;;
+      *)
+        returner_error "Unknown option: $1"
+        returner_usage >&2
+        return 99
+        ;;
+    esac
+    shift
+  done
+
+  if ! returner_is_uint "$raw_exit_code"; then
+    returner_error "Exit code must be an integer in the range 0..255."
+    return 99
+  fi
+
+  if (( raw_exit_code < 0 || raw_exit_code > 255 )); then
+    returner_error "Exit code must be an integer in the range 0..255."
+    return 99
+  fi
+
+  RETURNER_EXIT_CODE="$raw_exit_code"
+  return 0
+}
+
+parse_prereqs() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    RETURNER_COLOR_ENABLED=0
+  elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    RETURNER_COLOR_ENABLED=1
+  else
+    RETURNER_COLOR_ENABLED=0
+  fi
+}
+
+returner_print_message() {
+  if [[ -n "$RETURNER_MESSAGE" ]]; then
+    printf '%s\n' "$RETURNER_MESSAGE"
+  fi
+}
+
+returner_apply_exit() {
+  returner_print_message
+  return "$RETURNER_EXIT_CODE"
+}
+
+run_main() {
+  returner_reset_state
+  parse_opts "$@" || return $?
+
+  parse_prereqs
+
+  if (( RETURNER_SHOW_HELP )); then
+    returner_usage
+    return 0
+  fi
+
+  returner_apply_exit
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi

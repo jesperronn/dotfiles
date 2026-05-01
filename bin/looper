@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+LOOPER_COLOR_ENABLED=0
+LOOPER_SHOW_HELP=0
+LOOPER_COUNT=""
+LOOPER_COMMAND=()
+LOOPER_STOP_REQUESTED=0
+
+LOOPER_C_RESET=$'\033[0m'
+LOOPER_C_BOLD=$'\033[1m'
+LOOPER_C_RED=$'\033[31m'
+LOOPER_C_GREEN=$'\033[32m'
+LOOPER_C_SECTION=$'\033[33m'
+LOOPER_C_ACCENT=$'\033[35m'
+LOOPER_C_PLACEHOLDER=$'\033[95m'
+
+looper_reset_state() {
+  LOOPER_COLOR_ENABLED=0
+  LOOPER_SHOW_HELP=0
+  LOOPER_COUNT=""
+  LOOPER_COMMAND=()
+  LOOPER_STOP_REQUESTED=0
+}
+
+looper_color_print() {
+  local color="$1"
+  shift
+
+  if (( LOOPER_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$LOOPER_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+looper_usage() {
+  local section_style="" tool_style="" placeholder_style="" flag_style="" reset_style=""
+
+  if (( LOOPER_COLOR_ENABLED )); then
+    section_style="${LOOPER_C_BOLD}${LOOPER_C_SECTION}"
+    tool_style="${LOOPER_C_BOLD}${LOOPER_C_ACCENT}"
+    placeholder_style="$LOOPER_C_PLACEHOLDER"
+    flag_style="$LOOPER_C_GREEN"
+    reset_style="$LOOPER_C_RESET"
+  fi
+
+  printf 'Run a command repeatedly until it fails, is stopped, or reaches the requested count.\n\n'
+  printf '%sUsage:%s %sbin/looper%s [%s-n | --count%s %sCOUNT%s] [%s--%s] %s<command> [args...]%s\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s-h, --help%s             Show this help.\n' "$flag_style" "$reset_style"
+  printf '  %s-n | --count%s %sCOUNT%s   Number of runs to attempt. Defaults to infinite. Also accepts %s=%sCOUNT%s.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style" \
+    "$flag_style" "$placeholder_style" "$reset_style"
+  printf '  %sCTRL-C%s                 Stop after the current iteration.\n' \
+    "$flag_style" "$reset_style"
+}
+
+looper_error() {
+  looper_color_print "$LOOPER_C_RED" "$*" >&2
+}
+
+looper_is_positive_integer() {
+  local value="$1"
+
+  [[ "$value" =~ ^[1-9][0-9]*$ ]]
+}
+
+looper_set_count() {
+  local value="$1"
+
+  if ! looper_is_positive_integer "$value"; then
+    looper_error "Count must be a positive integer."
+    return 99
+  fi
+
+  LOOPER_COUNT="$value"
+  return 0
+}
+
+parse_opts() {
+  local count_value=""
+
+  if [[ $# -eq 0 ]]; then
+    looper_usage >&2
+    return 99
+  fi
+
+  while (($#)); do
+    case "$1" in
+      -h|--help)
+        LOOPER_SHOW_HELP=1
+        shift
+        ;;
+      -n=*)
+        looper_set_count "${1#-n=}" || return $?
+        shift
+        ;;
+      -n)
+        if [[ $# -lt 2 ]]; then
+          looper_error "Option -n requires a count."
+          looper_usage >&2
+          return 99
+        fi
+        count_value="$2"
+        looper_set_count "$count_value" || return $?
+        shift 2
+        ;;
+      --count=*)
+        looper_set_count "${1#--count=}" || return $?
+        shift
+        ;;
+      --count)
+        if [[ $# -lt 2 ]]; then
+          looper_error "Option --count requires a count."
+          looper_usage >&2
+          return 99
+        fi
+        count_value="$2"
+        looper_set_count "$count_value" || return $?
+        shift 2
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        looper_error "Unknown option: $1"
+        looper_usage >&2
+        return 99
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  if (( LOOPER_SHOW_HELP )); then
+    return 0
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    looper_error "A command is required."
+    looper_usage >&2
+    return 99
+  fi
+
+  LOOPER_COMMAND=("$@")
+  return 0
+}
+
+parse_prereqs() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    LOOPER_COLOR_ENABLED=0
+  elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    LOOPER_COLOR_ENABLED=1
+  else
+    LOOPER_COLOR_ENABLED=0
+  fi
+}
+
+looper_format_command() {
+  local formatted=""
+  local token=""
+
+  for token in "$@"; do
+    printf -v formatted '%s%q ' "$formatted" "$token"
+  done
+
+  printf '%s\n' "${formatted% }"
+}
+
+looper_print_iteration() {
+  local iteration="$1"
+  local prefix=""
+
+  if [[ -n "$LOOPER_COUNT" ]]; then
+    prefix="OK looper done run ${iteration}/${LOOPER_COUNT}:"
+  else
+    prefix="OK looper done run ${iteration}:"
+  fi
+
+  if (( LOOPER_COLOR_ENABLED )); then
+    printf '%b%s%b %s\n' "$LOOPER_C_GREEN" "$prefix" "$LOOPER_C_RESET" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+    return 0
+  fi
+
+  printf '%s %s\n' "$prefix" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+}
+
+looper_print_fatal_iteration() {
+  local iteration="$1"
+  local prefix=""
+
+  if [[ -n "$LOOPER_COUNT" ]]; then
+    prefix="FATAL run ${iteration}/${LOOPER_COUNT}:"
+  else
+    prefix="FATAL run ${iteration}:"
+  fi
+
+  if (( LOOPER_COLOR_ENABLED )); then
+    printf '%b%s%b %s\n' "$LOOPER_C_RED" "$prefix" "$LOOPER_C_RESET" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+    return 0
+  fi
+
+  printf '%s %s\n' "$prefix" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+}
+
+looper_handle_interrupt() {
+  LOOPER_STOP_REQUESTED=1
+}
+
+looper_print_interrupted_iteration() {
+  local iteration="$1"
+  local prefix=""
+
+  if [[ -n "$LOOPER_COUNT" ]]; then
+    prefix="INTERRUPTED run ${iteration}/${LOOPER_COUNT}:"
+  else
+    prefix="INTERRUPTED run ${iteration}:"
+  fi
+
+  if (( LOOPER_COLOR_ENABLED )); then
+    printf '\n%b%s%b %s\n' "$LOOPER_C_RED" "$prefix" "$LOOPER_C_RESET" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+    return 0
+  fi
+
+  printf '\n%s %s\n' "$prefix" "$(looper_format_command "${LOOPER_COMMAND[@]}")"
+}
+
+looper_run_iterations() {
+  local iteration=0
+  local status=0
+
+  trap looper_handle_interrupt INT
+
+  for (( iteration = 1; ; iteration += 1 )); do
+    if [[ -n "$LOOPER_COUNT" && "$iteration" -gt "$LOOPER_COUNT" ]]; then
+      break
+    fi
+
+    set +e
+    "${LOOPER_COMMAND[@]}"
+    status=$?
+    set -e
+
+    if (( LOOPER_STOP_REQUESTED )); then
+      looper_print_interrupted_iteration "$iteration"
+      trap - INT
+      return 130
+    fi
+
+    if (( status != 0 )); then
+      looper_print_fatal_iteration "$iteration"
+      trap - INT
+      return "$status"
+    fi
+
+    looper_print_iteration "$iteration"
+  done
+
+  trap - INT
+  return 0
+}
+
+run_main() {
+  looper_reset_state
+  parse_opts "$@" || return $?
+
+  parse_prereqs
+
+  if (( LOOPER_SHOW_HELP )); then
+    looper_usage
+    return 0
+  fi
+
+  looper_run_iterations
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi
