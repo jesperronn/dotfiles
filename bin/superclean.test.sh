@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090,SC1091,SC2034,SC2329
 
 set -euo pipefail
 
@@ -36,6 +36,10 @@ superclean_reset_state() {
   SUPER_CLEAN_GROUP_LOGS=1
   SUPER_CLEAN_GROUP_HOOKS=1
   SUPER_CLEAN_GROUP_CONTAINERS=1
+  SUPER_CLEAN_GROUP_DOWNLOADS=0
+  SUPER_CLEAN_GROUP_DESKTOP=0
+  SUPER_CLEAN_GROUP_DOCUMENTS=0
+  SUPER_CLEAN_GROUP_OLLAMA=0
   SUPER_CLEAN_POSITIVE_GROUP_FLAGS=0
   SUPER_CLEAN_TOTAL_RECLAIMED_KB=0
   SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=0
@@ -46,6 +50,7 @@ superclean_reset_state() {
   SUPER_CLEAN_DISCOVERED_HOOKS=""
   SUPER_CLEAN_INSTALLED_APP_KEYS=""
   SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
+  SUPER_CLEAN_USER_FILE_REVIEW_LIMIT=30
   SUPER_CLEAN_ROOTS=(
     "$HOME/src"
     "$HOME/projects"
@@ -88,6 +93,7 @@ test_basic_flags_and_formatting() {
   assert_eq "0" "$SUPER_CLEAN_GROUP_GO" "go group disabled by positive selection"
   assert_eq "0" "$SUPER_CLEAN_GROUP_BREW" "brew group disabled by positive selection"
   assert_eq "0" "$SUPER_CLEAN_GROUP_APPS" "apps group disabled by positive selection"
+  assert_eq "0" "$SUPER_CLEAN_GROUP_DOWNLOADS" "downloads group disabled by positive selection"
 
   superclean_reset_state
   superclean_parse_args --no-java --no-hooks --no-brew
@@ -102,6 +108,13 @@ test_basic_flags_and_formatting() {
   assert_eq "0" "$SUPER_CLEAN_GROUP_NODE" "node group disabled by apps only mode"
   assert_eq "0" "$SUPER_CLEAN_GROUP_JAVA" "java group disabled by apps only mode"
   assert_eq "0" "$SUPER_CLEAN_GROUP_HOOKS" "hooks group disabled by apps only mode"
+
+  superclean_reset_state
+  superclean_parse_args --downloads --desktop
+  assert_eq "1" "$SUPER_CLEAN_GROUP_DOWNLOADS" "downloads group enabled"
+  assert_eq "1" "$SUPER_CLEAN_GROUP_DESKTOP" "desktop group enabled"
+  assert_eq "0" "$SUPER_CLEAN_GROUP_NODE" "downloads positive selection disables node"
+  assert_eq "0" "$SUPER_CLEAN_GROUP_OLLAMA" "ollama remains disabled by default"
 
   assert_eq "10.0 KB" "$(superclean_format_kb 10)" "format small kb"
   assert_eq "2.0 MB" "$(superclean_format_kb 2048)" "format mb"
@@ -283,9 +296,11 @@ test_interactive_main_flow() {
   superclean_apply_runtime_caches() { printf 'apply_runtime_caches\n' >>"$order_log"; }
   superclean_plan_system_paths() { printf 'plan_system_paths\n' >>"$order_log"; }
   superclean_plan_library_inventory() { printf 'plan_library_inventory\n' >>"$order_log"; }
+  superclean_plan_review_paths() { printf 'plan_review_paths\n' >>"$order_log"; }
   superclean_apply_orphan_app_support_cleanup() { printf 'apply_orphan_app_support_cleanup\n' >>"$order_log"; }
   superclean_apply_installed_app_support_cache_cleanup() { printf 'apply_installed_app_support_cache_cleanup\n' >>"$order_log"; }
   superclean_apply_system_paths() { printf 'apply_system_paths\n' >>"$order_log"; }
+  superclean_apply_review_paths() { printf 'apply_review_paths\n' >>"$order_log"; }
   superclean_plan_hooks() { printf 'plan_hooks\n' >>"$order_log"; }
   superclean_apply_hooks() { printf 'apply_hooks\n' >>"$order_log"; }
   superclean_plan_deep_scan() { printf 'plan_deep_scan\n' >>"$order_log"; }
@@ -304,9 +319,11 @@ test_interactive_main_flow() {
     apply_runtime_caches \
     plan_system_paths \
     plan_library_inventory \
+    plan_review_paths \
     apply_orphan_app_support_cleanup \
     apply_installed_app_support_cache_cleanup \
     apply_system_paths \
+    apply_review_paths \
     plan_hooks \
     apply_hooks \
     plan_deep_scan \
@@ -324,9 +341,11 @@ test_interactive_main_flow() {
   unset -f superclean_apply_runtime_caches
   unset -f superclean_plan_system_paths
   unset -f superclean_plan_library_inventory
+  unset -f superclean_plan_review_paths
   unset -f superclean_apply_orphan_app_support_cleanup
   unset -f superclean_apply_installed_app_support_cache_cleanup
   unset -f superclean_apply_system_paths
+  unset -f superclean_apply_review_paths
   unset -f superclean_plan_hooks
   unset -f superclean_apply_hooks
   unset -f superclean_plan_deep_scan
@@ -348,9 +367,11 @@ test_interactive_main_flow() {
     superclean_apply_runtime_caches() { :; } && \
     superclean_plan_system_paths() { kill -INT \$\$; } && \
     superclean_plan_library_inventory() { printf FAIL >&2; } && \
+    superclean_plan_review_paths() { printf FAIL >&2; } && \
     superclean_apply_orphan_app_support_cleanup() { printf FAIL >&2; } && \
     superclean_apply_installed_app_support_cache_cleanup() { printf FAIL >&2; } && \
     superclean_apply_system_paths() { printf FAIL >&2; } && \
+    superclean_apply_review_paths() { printf FAIL >&2; } && \
     superclean_plan_hooks() { printf FAIL >&2; } && \
     superclean_apply_hooks() { printf FAIL >&2; } && \
     superclean_plan_deep_scan() { printf FAIL >&2; } && \
@@ -740,6 +761,115 @@ test_selector_and_apply_flows() {
   assert_contains "$status_output" $'\nCurrent: ' "live scan status prints current path on second line"
   unset -f tput
   reload_superclean_functions
+}
+
+test_review_path_helpers() {
+  local tmp_root="" review_rows="" ollama_root_rows="" ollama_plan_output="" apply_output="" status=0
+
+  assert_eq "$HOME/Downloads" "$(superclean_review_root_for_group downloads)" "downloads review root"
+  assert_eq "$HOME/Desktop" "$(superclean_review_root_for_group desktop)" "desktop review root"
+  assert_eq "$HOME/Documents" "$(superclean_review_root_for_group documents)" "documents review root"
+
+  tmp_root="$(mktemp -d)"
+  mkdir -p "$tmp_root/root"
+  printf 'abc' >"$tmp_root/root/a.txt"
+  printf 'abcdefghij' >"$tmp_root/root/b.txt"
+  review_rows="$(superclean_emit_size_file_selector_rows "$tmp_root/root")"
+  assert_contains "$review_rows" "$tmp_root/root/a.txt" "review rows include smaller file"
+  assert_contains "$review_rows" "$tmp_root/root/b.txt" "review rows include larger file"
+  rm -rf "$tmp_root"
+
+  tmp_root="$(mktemp -d)"
+  mkdir -p "$tmp_root/home/.ollama/models/blobs" "$tmp_root/workbrew/.ollama/models/blobs"
+  printf 'abc' >"$tmp_root/home/.ollama/models/blobs/a.bin"
+  printf 'abcdef' >"$tmp_root/workbrew/.ollama/models/blobs/b.bin"
+  HOME="$tmp_root/home"
+  superclean_emit_ollama_blob_root_candidates() {
+    printf '%s\n%s\n%s\n' \
+      "$tmp_root/home-link/.ollama/models/blobs" \
+      "$tmp_root/home/.ollama/models/blobs" \
+      "$tmp_root/workbrew/.ollama/models/blobs"
+  }
+  mkdir -p "$tmp_root/home-link/.ollama/models"
+  ln -s "$tmp_root/home/.ollama/models/blobs" "$tmp_root/home-link/.ollama/models/blobs"
+  ollama_root_rows="$(superclean_emit_ollama_blob_root_report_rows)"
+  assert_contains "$ollama_root_rows" "$tmp_root/home-link/.ollama/models/blobs" "ollama root rows keep preferred candidate path"
+  assert_contains "$ollama_root_rows" "$tmp_root/home/.ollama/models/blobs" "ollama root rows include resolved real path"
+  if [[ "$(superclean_ollama_root_count)" -lt 2 ]]; then
+    test_fail "ollama root count" "Expected multiple ollama roots"
+  fi
+  capture_command ollama_plan_output status superclean_plan_ollama_review
+  assert_status "0" "$status" "ollama plan review succeeds"
+  assert_contains "$ollama_plan_output" "same store also visible at:" "ollama plan reports alias roots"
+  assert_contains "$ollama_plan_output" "resolves to:" "ollama plan reports resolved root path"
+  assert_contains "$ollama_plan_output" "Multiple distinct Ollama stores found" "ollama plan warns only for distinct stores"
+  assert_contains "$ollama_plan_output" "next: ollama list" "ollama plan suggests ollama list"
+  assert_contains "$ollama_plan_output" "next: rm -rf <store-folder> manually" "ollama plan suggests manual folder removal"
+  unset -f superclean_emit_ollama_blob_root_candidates
+  rm -rf "$tmp_root"
+  HOME="/Users/jesper"
+
+  apply_output="$(TMP_ROOT="$(mktemp -d)" DOTFILES="$DOTFILES" bash -lc '
+    set -euo pipefail
+    cd "$DOTFILES"
+    source bin/superclean source
+    SUPER_CLEAN_GROUP_DOWNLOADS=1
+    SUPER_CLEAN_DRY_RUN=1
+    SUPER_CLEAN_INTERACTIVE=1
+    mkdir -p "$TMP_ROOT/Downloads"
+    printf "demo" > "$TMP_ROOT/Downloads/demo.txt"
+    superclean_review_root_for_group() {
+      printf "%s\n" "$TMP_ROOT/Downloads"
+    }
+    superclean_interactive_select_review_files() {
+      printf "%s\n" "$TMP_ROOT/Downloads/demo.txt"
+    }
+    superclean_remove_path() {
+      printf "%s\n" "$1"
+    }
+    superclean_apply_review_paths
+  ')"
+  assert_contains "$apply_output" "/Downloads/demo.txt" "interactive dry-run review cleanup applies selected file"
+}
+
+test_macos_access_preflight() {
+  local output="" status=0
+
+  superclean_reset_state
+  SUPER_CLEAN_GROUP_DOWNLOADS=1
+  superclean_running_on_macos() { return 0; }
+  superclean_has_macos_protected_access() { return 1; }
+
+  capture_command output status superclean_require_macos_protected_access
+  assert_status "1" "$status" "preflight fails without protected access"
+  assert_contains "$output" "Grant Full Disk Access" "preflight explains full disk access"
+
+  unset -f superclean_running_on_macos
+  unset -f superclean_has_macos_protected_access
+
+  superclean_reset_state
+  SUPER_CLEAN_GROUP_DOWNLOADS=0
+  SUPER_CLEAN_GROUP_DESKTOP=0
+  SUPER_CLEAN_GROUP_DOCUMENTS=0
+  superclean_running_on_macos() { return 0; }
+  superclean_has_macos_protected_access() { return 1; }
+
+  capture_command output status superclean_require_macos_protected_access
+  assert_status "0" "$status" "preflight skips when protected groups are disabled"
+
+  unset -f superclean_running_on_macos
+  unset -f superclean_has_macos_protected_access
+}
+
+test_access_helpers() {
+  local host=""
+
+  assert_eq "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" "$(superclean_full_disk_access_url)" "full disk access url"
+
+  TERM_PROGRAM="Ghostty"
+  host="$(superclean_detect_host_app)"
+  assert_eq "Ghostty" "$host" "host app prefers TERM_PROGRAM"
+  unset TERM_PROGRAM
 }
 
 run_tests "$@"

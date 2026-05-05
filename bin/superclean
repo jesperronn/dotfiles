@@ -24,6 +24,10 @@ SUPER_CLEAN_GROUP_APPS=1
 SUPER_CLEAN_GROUP_LOGS=1
 SUPER_CLEAN_GROUP_HOOKS=1
 SUPER_CLEAN_GROUP_CONTAINERS=1
+SUPER_CLEAN_GROUP_DOWNLOADS=0
+SUPER_CLEAN_GROUP_DESKTOP=0
+SUPER_CLEAN_GROUP_DOCUMENTS=0
+SUPER_CLEAN_GROUP_OLLAMA=0
 SUPER_CLEAN_POSITIVE_GROUP_FLAGS=0
 SUPER_CLEAN_TOTAL_RECLAIMED_KB=0
 SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=0
@@ -35,6 +39,7 @@ SUPER_CLEAN_DISCOVERED_HOOKS=""
 SUPER_CLEAN_INSTALLED_APP_KEYS=""
 SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
 SUPER_CLEAN_LIVE_SCAN_LINES_PRINTED=0
+SUPER_CLEAN_USER_FILE_REVIEW_LIMIT=30
 
 C_DIM=$'\033[2m'
 C_BOLD=$'\033[1m'
@@ -168,6 +173,14 @@ superclean_usage() {
   printf '          Include or exclude project cleanup hooks.\n'
   printf '  %s%s%s\n' "$flag_style" '--containers, --no-containers' "$reset_style"
   printf '          Include or exclude aggressive container prune commands.\n'
+  printf '  %s%s%s\n' "$flag_style" '--downloads, --no-downloads' "$reset_style"
+  printf '          Include or exclude interactive cleanup review for ~/Downloads.\n'
+  printf '  %s%s%s\n' "$flag_style" '--desktop, --no-desktop' "$reset_style"
+  printf '          Include or exclude interactive cleanup review for ~/Desktop.\n'
+  printf '  %s%s%s\n' "$flag_style" '--documents, --no-documents' "$reset_style"
+  printf '          Include or exclude interactive cleanup review for ~/Documents.\n'
+  printf '  %s%s%s\n' "$flag_style" '--ollama, --no-ollama' "$reset_style"
+  printf '          Include or exclude read-only review for Ollama model store folders.\n'
 }
 
 superclean_log() {
@@ -359,6 +372,7 @@ superclean_hook_progress_finish() {
 }
 
 superclean_restore_terminal() {
+  [[ -t 1 ]] || return 0
   printf '\r\033[2K%s\033[?25h\n' "$C_0" >/dev/tty 2>/dev/null || true
 }
 
@@ -387,6 +401,10 @@ superclean_enable_only_mode() {
   SUPER_CLEAN_GROUP_LOGS=0
   SUPER_CLEAN_GROUP_HOOKS=0
   SUPER_CLEAN_GROUP_CONTAINERS=0
+  SUPER_CLEAN_GROUP_DOWNLOADS=0
+  SUPER_CLEAN_GROUP_DESKTOP=0
+  SUPER_CLEAN_GROUP_DOCUMENTS=0
+  SUPER_CLEAN_GROUP_OLLAMA=0
 }
 
 superclean_set_group() {
@@ -403,6 +421,10 @@ superclean_set_group() {
     logs) SUPER_CLEAN_GROUP_LOGS=$value ;;
     hooks) SUPER_CLEAN_GROUP_HOOKS=$value ;;
     containers) SUPER_CLEAN_GROUP_CONTAINERS=$value ;;
+    downloads) SUPER_CLEAN_GROUP_DOWNLOADS=$value ;;
+    desktop) SUPER_CLEAN_GROUP_DESKTOP=$value ;;
+    documents) SUPER_CLEAN_GROUP_DOCUMENTS=$value ;;
+    ollama) SUPER_CLEAN_GROUP_OLLAMA=$value ;;
   esac
 }
 
@@ -419,6 +441,10 @@ superclean_group_enabled() {
     logs) (( SUPER_CLEAN_GROUP_LOGS )) ;;
     hooks) (( SUPER_CLEAN_GROUP_HOOKS )) ;;
     containers) (( SUPER_CLEAN_GROUP_CONTAINERS )) ;;
+    downloads) (( SUPER_CLEAN_GROUP_DOWNLOADS )) ;;
+    desktop) (( SUPER_CLEAN_GROUP_DESKTOP )) ;;
+    documents) (( SUPER_CLEAN_GROUP_DOCUMENTS )) ;;
+    ollama) (( SUPER_CLEAN_GROUP_OLLAMA )) ;;
     *) return 1 ;;
   esac
 }
@@ -436,6 +462,10 @@ superclean_group_description() {
     logs) printf '%s' 'Aggressive log cleanup' ;;
     hooks) printf '%s' 'Project cleanup hooks' ;;
     containers) printf '%s' 'Container prune commands' ;;
+    downloads) printf '%s' 'Downloads cleanup review' ;;
+    desktop) printf '%s' 'Desktop cleanup review' ;;
+    documents) printf '%s' 'Documents cleanup review' ;;
+    ollama) printf '%s' 'Ollama store review' ;;
     *) return 1 ;;
   esac
 }
@@ -464,7 +494,7 @@ superclean_interactive_select_cleanup_groups() {
     fzf_args+=("$arg")
   done < <(superclean_fzf_multiselect_args)
 
-  for group in node java ruby go brew apps logs hooks containers; do
+  for group in node java ruby go brew apps logs hooks containers downloads desktop documents ollama; do
     superclean_group_enabled "$group" || continue
     rows+=("$(superclean_format_group_selector_row "$group")")
   done
@@ -491,6 +521,10 @@ superclean_interactive_select_cleanup_groups() {
       superclean_set_group logs 0
       superclean_set_group hooks 0
       superclean_set_group containers 0
+      superclean_set_group downloads 0
+      superclean_set_group desktop 0
+      superclean_set_group documents 0
+      superclean_set_group ollama 0
       return 0
     fi
 
@@ -504,6 +538,10 @@ superclean_interactive_select_cleanup_groups() {
     superclean_set_group logs 0
     superclean_set_group hooks 0
     superclean_set_group containers 0
+    superclean_set_group downloads 0
+    superclean_set_group desktop 0
+    superclean_set_group documents 0
+    superclean_set_group ollama 0
 
     while IFS=$'\t' read -r group _description; do
       [[ -n "$group" ]] || continue
@@ -514,7 +552,7 @@ superclean_interactive_select_cleanup_groups() {
   fi
 
   superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
-  for group in node java ruby go brew apps logs hooks containers; do
+  for group in node java ruby go brew apps logs hooks containers downloads desktop documents ollama; do
     superclean_group_enabled "$group" || continue
     if superclean_prompt_yes_no "Enable $(superclean_group_description "$group")?"; then
       continue
@@ -568,6 +606,94 @@ superclean_detect_tools() {
   fi
 }
 
+superclean_running_on_macos() {
+  [[ "$OSTYPE" == darwin* ]]
+}
+
+superclean_any_protected_group_enabled() {
+  superclean_group_enabled downloads || \
+    superclean_group_enabled desktop || \
+    superclean_group_enabled documents
+}
+
+superclean_full_disk_access_probe_path() {
+  printf '%s\n' "$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+}
+
+superclean_full_disk_access_url() {
+  printf '%s\n' 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
+}
+
+superclean_detect_host_app() {
+  local term_program="${TERM_PROGRAM:-}"
+  local shell_name parent_name
+
+  if [[ -n "$term_program" ]]; then
+    printf '%s\n' "$term_program"
+    return 0
+  fi
+
+  shell_name=$(ps -p $$ -o comm= 2>/dev/null | awk -F/ 'NR==1 {print $NF}')
+  parent_name=$(ps -p "$PPID" -o comm= 2>/dev/null | awk -F/ 'NR==1 {print $NF}')
+
+  if [[ -n "$parent_name" && "$parent_name" != "$shell_name" ]]; then
+    printf '%s\n' "$parent_name"
+    return 0
+  fi
+
+  if [[ -n "$shell_name" ]]; then
+    printf '%s\n' "$shell_name"
+    return 0
+  fi
+
+  printf '%s\n' 'your terminal app'
+}
+
+superclean_offer_open_full_disk_access() {
+  local reply=""
+
+  [[ -t 0 && -t 1 ]] || return 0
+
+  printf 'Open System Settings to Full Disk Access? [yN] '
+  if read -r -t 5 -n 1 reply; then
+    printf '\n'
+    if [[ "$reply" =~ ^[Yy]$ ]]; then
+      open "$(superclean_full_disk_access_url)" >/dev/null 2>&1 || superclean_warn_orange "Could not open System Settings automatically."
+    fi
+    return 0
+  fi
+
+  printf '\n'
+}
+
+superclean_has_macos_protected_access() {
+  local probe_path
+
+  probe_path=$(superclean_full_disk_access_probe_path)
+  [[ -r "$probe_path" ]]
+}
+
+superclean_require_macos_protected_access() {
+  if ! superclean_running_on_macos; then
+    return 0
+  fi
+
+  if ! superclean_any_protected_group_enabled; then
+    return 0
+  fi
+
+  if superclean_has_macos_protected_access; then
+    return 0
+  fi
+
+  superclean_warn_orange "macOS privacy preflight failed."
+  superclean_log "Grant Full Disk Access to $(superclean_detect_host_app) once, then rerun."
+  superclean_log 'Suggested path: System Settings -> Privacy & Security -> Full Disk Access.'
+  superclean_log 'This avoids repeated Desktop/Documents/Downloads access prompts during cleanup review.'
+  superclean_offer_open_full_disk_access
+  return 1
+}
+
 superclean_parse_args() {
   while (($#)); do
     case "$1" in
@@ -595,11 +721,11 @@ superclean_parse_args() {
       --no-sudo)
         SUPER_CLEAN_SUDO_ENABLED=0
         ;;
-      --node|--java|--ruby|--go|--brew|--apps|--logs|--hooks|--containers)
+      --node|--java|--ruby|--go|--brew|--apps|--logs|--hooks|--containers|--downloads|--desktop|--documents|--ollama)
         superclean_enable_only_mode
         superclean_set_group "${1#--}" 1
         ;;
-      --no-node|--no-java|--no-ruby|--no-go|--no-brew|--no-apps|--no-logs|--no-hooks|--no-containers)
+      --no-node|--no-java|--no-ruby|--no-go|--no-brew|--no-apps|--no-logs|--no-hooks|--no-containers|--no-downloads|--no-desktop|--no-documents|--no-ollama)
         superclean_set_group "${1#--no-}" 0
         ;;
       -h|--help)
@@ -758,6 +884,111 @@ superclean_sum_paths_kb() {
   done
 
   echo "$total_kb"
+}
+
+superclean_emit_ranked_files_under_root() {
+  local root=$1
+  local file size_kb
+
+  [[ -d "$root" ]] || return 0
+
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    size_kb=$(superclean_path_size_kb "$file")
+    printf '%012d\t%s\n' "$size_kb" "$file"
+  done < <(find "$root" -type f -print 2>/dev/null | sort)
+}
+
+superclean_emit_size_file_selector_rows() {
+  local root=$1
+  local size_kb file
+
+  while IFS=$'\t' read -r size_kb file; do
+    [[ -n "$file" ]] || continue
+    printf '%012d\t%s\t%s\n' "$size_kb" "$(superclean_format_kb "$((10#$size_kb))")" "$file"
+  done < <(superclean_emit_ranked_files_under_root "$root" | sort -rn | head -n "$SUPER_CLEAN_USER_FILE_REVIEW_LIMIT")
+}
+
+superclean_review_root_for_group() {
+  case "$1" in
+    downloads) printf '%s\n' "$HOME/Downloads" ;;
+    desktop) printf '%s\n' "$HOME/Desktop" ;;
+    documents) printf '%s\n' "$HOME/Documents" ;;
+    *) return 1 ;;
+  esac
+}
+
+superclean_ollama_realpath() {
+  local path=$1
+  local resolved_parent
+
+  [[ -d "$path" ]] || return 1
+  if [[ -d "$path" ]]; then
+    (cd "$path" 2>/dev/null && pwd -P) || return 1
+    return 0
+  fi
+  resolved_parent=$(cd "$(dirname "$path")" 2>/dev/null && pwd -P) || return 1
+  printf '%s/%s\n' "$resolved_parent" "$(basename "$path")"
+}
+
+superclean_emit_ollama_blob_root_candidates() {
+  printf '%s\n' \
+    "$HOME/.ollama/models/blobs" \
+    "/Users/$USER/.ollama/models/blobs" \
+    "/System/Volumes/Data/Users/$USER/.ollama/models/blobs" \
+    "/Users/workbrew/.ollama/models/blobs" \
+    "/System/Volumes/Data/Users/workbrew/.ollama/models/blobs" | awk 'NF && !seen[$0]++ { print $0 }'
+}
+
+superclean_emit_ollama_blob_roots_raw() {
+  local path resolved size_kb
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    [[ -d "$path" ]] || continue
+    resolved=$(superclean_ollama_realpath "$path") || continue
+    size_kb=$(superclean_path_size_kb "$resolved")
+    printf '%s\t%s\t%012d\n' "$path" "$resolved" "$size_kb"
+  done < <(superclean_emit_ollama_blob_root_candidates)
+}
+
+superclean_emit_ollama_blob_roots() {
+  superclean_emit_ollama_blob_roots_raw | awk -F '\t' 'NF >= 2 && !seen[$2]++ { print $2 }'
+}
+
+superclean_emit_ollama_blob_root_report_rows() {
+  superclean_emit_ollama_blob_roots_raw | awk -F '\t' '
+    {
+      candidate = $1
+      resolved = $2
+      size = $3 + 0
+
+      if (!(resolved in seen)) {
+        seen[resolved] = 1
+        order[++count] = resolved
+        first_candidate[resolved] = candidate
+        size_kb[resolved] = size
+        aliases[resolved] = ""
+        alias_count[resolved] = 0
+      } else {
+        alias_count[resolved]++
+      }
+
+      if (candidate != first_candidate[resolved]) {
+        aliases[resolved] = aliases[resolved] (aliases[resolved] ? "|" : "") candidate
+      }
+    }
+    END {
+      for (i = 1; i <= count; i++) {
+        resolved = order[i]
+        printf "%012d\t%s\t%s\t%s\n", size_kb[resolved], first_candidate[resolved], resolved, aliases[resolved]
+      }
+    }
+  ' | sort -rn
+}
+
+superclean_ollama_root_count() {
+  superclean_emit_ollama_blob_roots | awk 'END { print NR + 0 }'
 }
 
 superclean_format_estimate_suffix() {
@@ -1477,6 +1708,62 @@ superclean_gem_cleanup_estimate_kb() {
   echo "$total_kb"
 }
 
+superclean_plan_user_file_review_group() {
+  local group=$1
+  local root size_kb file found=0
+
+  root=$(superclean_review_root_for_group "$group" 2>/dev/null || true)
+  [[ -d "$root" ]] || return 0
+
+  superclean_info "[+] Review: largest files in $root"
+  while IFS=$'\t' read -r size_kb file; do
+    [[ -n "$file" ]] || continue
+    found=1
+    superclean_print_size_label_path_line "$size_kb" "$group" "$file" 10
+  done < <(superclean_emit_ranked_files_under_root "$root" | sort -rn | head -n "$SUPER_CLEAN_USER_FILE_REVIEW_LIMIT")
+
+  if (( ! found )); then
+    superclean_log '  - no files found'
+  fi
+}
+
+superclean_plan_ollama_review() {
+  local root_count size_kb primary_root resolved_root aliases
+  local distinct_store_count=0
+
+  root_count=$(superclean_ollama_root_count)
+  (( root_count > 0 )) || return 0
+
+  superclean_info "[+] Review: Ollama model stores"
+  while IFS=$'\t' read -r size_kb primary_root resolved_root aliases; do
+    [[ -n "$primary_root" ]] || continue
+    distinct_store_count=$(( distinct_store_count + 1 ))
+    superclean_print_size_label_path_line "$size_kb" 'store' "$primary_root" 10
+    if [[ -n "$aliases" ]]; then
+      while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        superclean_log "      same store also visible at: $file"
+      done < <(printf '%s\n' "$aliases" | tr '|' '\n')
+    fi
+    if [[ "$primary_root" != "$resolved_root" ]]; then
+      superclean_log "      resolves to: $resolved_root"
+    fi
+  done < <(superclean_emit_ollama_blob_root_report_rows)
+
+  if (( distinct_store_count > 1 )); then
+    superclean_warn_orange "Multiple distinct Ollama stores found."
+    superclean_log '  - next: ollama list'
+    superclean_log '  - next: rm -rf <store-folder> manually'
+  fi
+}
+
+superclean_plan_review_paths() {
+  superclean_group_enabled downloads && superclean_plan_user_file_review_group downloads
+  superclean_group_enabled desktop && superclean_plan_user_file_review_group desktop
+  superclean_group_enabled documents && superclean_plan_user_file_review_group documents
+  superclean_group_enabled ollama && superclean_plan_ollama_review
+}
+
 superclean_prompt_yes_no() {
   local prompt=$1
   local reply
@@ -2151,6 +2438,65 @@ superclean_interactive_select_paths() {
   done < <(superclean_cached_target_dirs)
 }
 
+superclean_interactive_select_review_files() {
+  local root=$1
+  local prompt_label=$2
+  local selected
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(superclean_emit_size_file_selector_rows "$root" | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=2,3 \
+      "${fzf_args[@]}" \
+      --prompt="Select $prompt_label files to remove > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $3}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  local size_human file
+  while IFS=$'\t' read -r _size_kb size_human file; do
+    [[ -n "$file" ]] || continue
+    if superclean_prompt_yes_no "Remove $file ($size_human)?"; then
+      printf '%s\n' "$file"
+    fi
+  done < <(superclean_emit_size_file_selector_rows "$root")
+}
+
+superclean_apply_review_paths() {
+  local group root path
+  local -a paths=()
+
+  for group in downloads desktop documents; do
+    superclean_group_enabled "$group" || continue
+    root=$(superclean_review_root_for_group "$group" 2>/dev/null || true)
+    [[ -d "$root" ]] || continue
+
+    if (( ! SUPER_CLEAN_INTERACTIVE )); then
+      superclean_warn_orange "$(basename "$root") cleanup requires --interactive."
+      continue
+    fi
+
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(superclean_interactive_select_review_files "$root" "$group")
+  done
+
+  for path in "${paths[@]}"; do
+    superclean_remove_path "$path"
+  done
+}
+
 superclean_apply_deep_scan() {
   local paths=()
   local path
@@ -2551,6 +2897,7 @@ superclean_main() {
   if (( SUPER_CLEAN_INTERACTIVE )); then
     superclean_interactive_select_cleanup_groups
   fi
+  superclean_require_macos_protected_access || return 1
   superclean_protips
   superclean_capture_start_disk
   superclean_confirm_aggressive_steps
@@ -2561,9 +2908,11 @@ superclean_main() {
 
   superclean_plan_system_paths
   superclean_plan_library_inventory
+  superclean_plan_review_paths
   superclean_apply_orphan_app_support_cleanup
   superclean_apply_installed_app_support_cache_cleanup
   superclean_apply_system_paths
+  superclean_apply_review_paths
 
   superclean_plan_hooks
   superclean_apply_hooks
