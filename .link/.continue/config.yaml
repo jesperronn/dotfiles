@@ -1,0 +1,47 @@
+---
+# yaml-language-server: $schema=none
+name: M5 Max High-Precision AI Setup
+version: 1.1.0
+schema: v1
+
+models:
+  - name: "Qwen 3.6 (35B BF16)"
+    provider: ollama
+    model: "qwen3.6:35b-a3b-coding-bf16"
+    roles: [chat, edit]
+    capabilities: [tool_use]
+    # NEW logic: Use System Message Tools to bypass Ollama's native JSON parser
+    useSystemMessageTools: true
+    completionOptions:
+      temperature: 0.6
+    # NEW: Control reasoning behavior via official Ollama API params
+    modelOptions:
+      reasoning_effort: "medium" # Options: high, medium, low, none
+    requestOptions:
+      timeout: 300000
+    instructions: |
+      Always think step-by-step in <think> tags.
+      When editing, strictly follow the edit_existing_file schema.
+
+  - name: "Gemma 4 (26B)"
+    provider: ollama
+    model: "gemma4:26b"
+    roles: [chat]
+    useSystemMessageTools: true
+    completionOptions:
+      temperature: 0.1
+
+experimental:
+  readWritePermissions: true
+  modelAssistantTools: true
+  onlyUseSystemMessageTools: true # Force Continue's internal Regex parser
+
+tabAutocompleteModel:
+  title: "Autocomplete"
+  provider: ollama
+  model: "qwen3.5:9b"
+  roles: [autocomplete]
+
+embeddingsProvider:
+  provider: ollama
+  model: "nomic-embed-text:latest"
