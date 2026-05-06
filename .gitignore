@@ -2,16 +2,13 @@
 /caches/
 /backups/
 
-# Top secret stuff!
-/link/.ssh/authorized_keys
-/link/.ssh/id_*
-/link/.ssh/*.pem
-/link/.ssh/known_hosts*
+# Local-only files.
+/link-file/.gitconfig_maintenance
 
 # Don't commit Vim plugins, vim-plug will install them.
-/link/.vim/plugged
+/link-dir/.vim/plugged
 
 # Don't commit tmux plugins, tpm will install them.
-/link/.tmux/plugins
+/link-dir/.tmux/plugins
 
 bin/cloud_sql_proxy

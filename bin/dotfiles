@@ -5,9 +5,48 @@ github_project=cowboy-dotfiles
 
 echo 'Dotfiles - "Cowboy" Ben Alman - http://benalman.com/'
 
-if [[ "$1" == "-h" || "$1" == "--help" ]]; then cat <<HELP
+mode=full
+restart_requested=
+run_copy=
+run_link=
+run_config=
+run_init=
 
-Usage: $(basename "$0")
+while [[ "$1" ]]; do
+  case "$1" in
+    source)
+      break
+      ;;
+    restart)
+      restart_requested=1
+      ;;
+    --copy)
+      mode=targeted
+      run_copy=1
+      ;;
+    --link)
+      mode=targeted
+      run_link=1
+      ;;
+    --config)
+      mode=targeted
+      run_config=1
+      ;;
+    --init)
+      mode=targeted
+      run_init=1
+      ;;
+    -h|--help)
+      cat <<HELP
+
+Usage: $(basename "$0") [--copy] [--link] [--config] [--init]
+
+Options:
+  --copy    Run only the copy step.
+  --link    Run only the link steps for link-dir and link-file.
+  --config  Run only the ~/.config linking step.
+  --init    Run only the init step.
+  -h, --help
 
 See the README for documentation.
 https://github.com/jesperronn/cowboy-dotfiles
@@ -16,7 +55,15 @@ Copyright (c) 2014 "Cowboy" Ben Alman
 Licensed under the MIT license.
 http://benalman.com/about/license/
 HELP
-exit; fi
+      exit
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
 
 ###########################################
 # GENERAL PURPOSE EXPORTED VARS / FUNCTIONS
@@ -322,14 +369,38 @@ function copy_do() {
   cp "$2" ~/
 }
 
-# Link files.
-function link_header() { e_header "Linking files into home directory"; }
-function link_test() {
+# Link directories.
+function link_dir_header() { e_header "Linking directories into home directory"; }
+function link_dir_files() {
+  find "$DOTFILES/link-dir" -mindepth 1 -maxdepth 1 -type d | sort
+}
+function link_dir_base() {
+  echo "${1#"$DOTFILES/link-dir/"}"
+}
+function link_dir_test() {
   [[ "$1" -ef "$2" ]] && echo "same file"
 }
-function link_do() {
+function link_dir_do() {
   e_success "Linking ~/$1."
   ln -sf "${2#"$HOME"/}" ~/
+}
+
+# Link individual files, including nested files, without replacing parent directories.
+function link_file_header() { e_header "Linking nested files into home directory"; }
+function link_file_files() {
+  find "$DOTFILES/link-file" -type f | sort
+}
+function link_file_base() {
+  echo "${1#"$DOTFILES/link-file/"}"
+}
+function link_file_test() {
+  [[ "$1" -ef "$2" ]] && echo "same file"
+}
+function link_file_do() {
+  local dest="$HOME/$1"
+  e_success "Linking ~/$1."
+  mkdir -p "$(dirname "$dest")"
+  ln -sf "$2" "$dest"
 }
 
 # Link config files.
@@ -347,8 +418,9 @@ function config_do() {
 
 # Copy, link, init, etc.
 function do_stuff() {
-  local base dest skip
-  local files=($DOTFILES/$1/*)
+  local stage=$1 source_dir=${2:-$1}
+  local base dest skip backup_dest
+  local files=($DOTFILES/$source_dir/*)
   [[ $(declare -f "$1_files") ]] && files=($("$1"_files "${files[@]}"))
   # No files? abort.
   if (( ${#files[@]} == 0 )); then return; fi
@@ -356,7 +428,11 @@ function do_stuff() {
   [[ $(declare -f "$1_header") ]] && "$1_header"
   # Iterate over files.
   for file in "${files[@]}"; do
-    base="$(basename "$file")"
+    if [[ $(declare -f "$1_base") ]]; then
+      base="$("$1"_base "$file")"
+    else
+      base="$(basename "$file")"
+    fi
     # Get dest path.
     if [[ $(declare -f "$1_dest") ]]; then
       dest="$("$1_dest" "$base")"
@@ -379,7 +455,9 @@ function do_stuff() {
         # Create backup dir if it doesn't already exist.
         [[ -e "$backup_dir" ]] || mkdir -p "$backup_dir"
         # Backup file / link / whatever.
-        mv "$dest" "$backup_dir"
+        backup_dest="$backup_dir/$base"
+        mkdir -p "$(dirname "$backup_dest")"
+        mv "$dest" "$backup_dest"
       fi
     fi
     # Do stuff.
@@ -387,16 +465,22 @@ function do_stuff() {
   done
 }
 
+function should_run_full_setup() {
+  [[ "$mode" == full ]]
+}
+
 # Enough with the functions, let's do stuff.
 
 # Set the prompt delay to be longer for the very first run.
 export prompt_delay=5; is_dotfiles_bin || prompt_delay=15
 
-# Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
-# Note that this doesn't work with Homebrew, since brew explicitly invalidates
-# the sudo timestamp, which is probably wise.
-# See https://gist.github.com/cowboy/3118588
-while true; do sudo -n true; sleep 10; kill -0 "$$" || exit; done 2>/dev/null &
+if should_run_full_setup; then
+  # Keep-alive: update existing sudo time stamp if set, otherwise do nothing.
+  # Note that this doesn't work with Homebrew, since brew explicitly invalidates
+  # the sudo timestamp, which is probably wise.
+  # See https://gist.github.com/cowboy/3118588
+  while true; do sudo -n true; sleep 10; kill -0 "$$" || exit; done 2>/dev/null &
+fi
 
 # Install a custom sudoers file that allows "sudo apt-get" to be executed
 # without asking for a password.
@@ -430,7 +514,7 @@ fi
 EOF
 }
 # Offer to create the sudoers file if it doesn't exist.
-if is_ubuntu && [[ ! -e $sudoers_file ]]; then
+if should_run_full_setup && is_ubuntu && [[ ! -e $sudoers_file ]]; then
   cat <<EOF
 
 The sudoers file can be updated to allow "sudo apt-get" to be executed
@@ -452,31 +536,35 @@ EOF
 fi
 
 # Ensure that we can actually, like, compile anything.
-if [[ ! "$(type -P gcc)" ]] && is_osx; then
+if should_run_full_setup && [[ ! "$(type -P gcc)" ]] && is_osx; then
   e_error "XCode or the Command Line Tools for XCode must be installed first."
   exit 1
 fi
 
 # If Git is not installed, install it (Ubuntu only, since Git comes standard
 # with recent XCode or CLT)
-if [[ ! "$(type -P git)" ]] && is_ubuntu; then
+if should_run_full_setup && [[ ! "$(type -P git)" ]] && is_ubuntu; then
   e_header "Installing Git"
   sudo apt-get -qq install git-core
 fi
 
 # If Git isn't installed by now, something exploded. We gots to quit!
-if [[ ! "$(type -P git)" ]]; then
+if should_run_full_setup && [[ ! "$(type -P git)" ]]; then
   e_error "Git should be installed. It isn't. Aborting."
   exit 1
 fi
 
 # Initialize.
 if [[ ! -d $DOTFILES ]]; then
+  if ! should_run_full_setup; then
+    e_error "Targeted modes require an existing ~/.dotfiles checkout."
+    exit 1
+  fi
   # Dotfiles directory doesn't exist? Clone it!
   e_header "Downloading dotfiles"
   git clone --recursive git://github.com/${github_user:-cowboy}/${github_project:-dotfiles}.git $DOTFILES
   cd $DOTFILES || exit
-elif [[ "$1" != "restart" ]]; then
+elif [[ -z "$restart_requested" ]] && should_run_full_setup; then
   # Make sure we have the latest files.
   e_header "Updating dotfiles"
   cd $DOTFILES || exit
@@ -502,17 +590,33 @@ shopt -s dotglob
 shopt -s nullglob
 
 # Create caches dir and init subdir, if they don't already exist.
-mkdir -p "$DOTFILES/caches/init" "$HOME/.config"
+if should_run_full_setup || [[ "$run_init" ]]; then
+  mkdir -p "$DOTFILES/caches/init"
+fi
+if should_run_full_setup || [[ "$run_config" ]]; then
+  mkdir -p "$HOME/.config"
+fi
 
 # If backups are needed, this is where they'll go.
 backup_dir="$DOTFILES/backups/$(date "+%Y_%m_%d-%H_%M_%S")/"
 backup=
 
 # Execute code for each file in these subdirectories.
-do_stuff copy
-do_stuff link
-do_stuff config
-do_stuff init
+if should_run_full_setup; then
+  do_stuff copy
+  do_stuff link_dir link-dir
+  do_stuff link_file link-file
+  do_stuff config
+  do_stuff init
+else
+  [[ "$run_copy" ]] && do_stuff copy
+  if [[ "$run_link" ]]; then
+    do_stuff link_dir link-dir
+    do_stuff link_file link-file
+  fi
+  [[ "$run_config" ]] && do_stuff config
+  [[ "$run_init" ]] && do_stuff init
+fi
 
 # Alert if backups were made.
 if [[ "$backup" ]]; then
