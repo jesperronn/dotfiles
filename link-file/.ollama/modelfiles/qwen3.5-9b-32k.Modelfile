@@ -1,0 +1,7 @@
+# Baseline Ollama modelfile for `qwen3.5:9b`.
+# This pins the context window we want for local use in this workspace.
+# The file is intentionally small today, but it may gain future adjustments
+# such as tool-calling settings, agentic file-edit behavior, or other
+# prompt/runtime tuning as those needs become clearer.
+FROM qwen3.5:9b
+PARAMETER num_ctx 32768

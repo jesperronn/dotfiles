@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+OLLAMA_MODELFILES_DIR="${OLLAMA_MODELFILES_DIR:-$HOME/.ollama/modelfiles}"
+VERIFY_OLLAMA_MODELS_FIX=0
+
+verify_ollama_models_usage() {
+  cat <<EOF
+Usage: bin/verify_ollama_models [--fix]
+
+Options:
+  --fix      Create or refresh the repo-managed Ollama model aliases.
+  -h, --help Show this help.
+EOF
+}
+
+verify_ollama_models_fail() {
+  local message="$1"
+  local next_step="$2"
+
+  printf 'FATAL: %s\n' "$message" >&2
+  printf 'next step: %s\n' "$next_step" >&2
+  return 1
+}
+
+verify_ollama_models_parse_opts() {
+  VERIFY_OLLAMA_MODELS_FIX=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fix)
+        VERIFY_OLLAMA_MODELS_FIX=1
+        ;;
+      -h|--help)
+        verify_ollama_models_usage
+        return 0
+        ;;
+      *)
+        printf 'FATAL: Unknown option: %s\n' "$1" >&2
+        printf 'next step: run bin/verify_ollama_models --help\n' >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+
+  return 0
+}
+
+verify_ollama_models_collect_modelfiles() {
+  find "$OLLAMA_MODELFILES_DIR" -type f -name '*.Modelfile' | sort
+}
+
+verify_ollama_models_model_name() {
+  local modelfile_path="$1"
+
+  basename "$modelfile_path" .Modelfile
+}
+
+verify_ollama_models_base_model() {
+  local modelfile_path="$1"
+
+  awk '
+    /^[[:space:]]*FROM[[:space:]]+/ {
+      print $2
+      exit
+    }
+  ' "$modelfile_path"
+}
+
+verify_ollama_models_ensure_ollama_cli() {
+  if ! command -v ollama >/dev/null 2>&1; then
+    verify_ollama_models_fail \
+      "ollama is not installed or not on PATH." \
+      "brew install ollama"
+    return 1
+  fi
+
+  return 0
+}
+
+verify_ollama_models_ensure_ollama_running() {
+  if ! ollama list >/dev/null 2>&1; then
+    verify_ollama_models_fail \
+      "ollama is not responding." \
+      "brew services start ollama"
+    return 1
+  fi
+
+  return 0
+}
+
+verify_ollama_models_alias_exists() {
+  local model_name="$1"
+
+  ollama show "$model_name" >/dev/null 2>&1
+}
+
+verify_ollama_models_create_alias() {
+  local model_name="$1"
+  local modelfile_path="$2"
+
+  ollama create "$model_name" -f "$modelfile_path"
+}
+
+run_main() {
+  local modelfiles=()
+  local modelfile_path=""
+  local model_name=""
+  local base_model=""
+
+  verify_ollama_models_parse_opts "$@" || return $?
+  verify_ollama_models_ensure_ollama_cli || return $?
+  verify_ollama_models_ensure_ollama_running || return $?
+
+  mapfile -t modelfiles < <(verify_ollama_models_collect_modelfiles)
+  if [[ "${#modelfiles[@]}" -eq 0 ]]; then
+    verify_ollama_models_fail \
+      "No Modelfiles found in $OLLAMA_MODELFILES_DIR." \
+      "run dotfiles --link so ~/.ollama/modelfiles is linked from this repo"
+    return 1
+  fi
+
+  printf 'Modelfiles: %s\n' "$OLLAMA_MODELFILES_DIR"
+
+  for modelfile_path in "${modelfiles[@]}"; do
+    model_name="$(verify_ollama_models_model_name "$modelfile_path")"
+    base_model="$(verify_ollama_models_base_model "$modelfile_path")"
+
+    if [[ -z "$base_model" ]]; then
+      verify_ollama_models_fail \
+        "Modelfile $modelfile_path is missing a FROM line." \
+        "edit $modelfile_path so it starts with 'FROM <base-model>'"
+      return 1
+    fi
+
+    if (( VERIFY_OLLAMA_MODELS_FIX )); then
+      printf 'creating: %s from %s via %s\n' "$model_name" "$base_model" "$modelfile_path"
+      if verify_ollama_models_create_alias "$model_name" "$modelfile_path"; then
+        printf 'done: %s\n' "$model_name"
+      else
+        verify_ollama_models_fail \
+          "Failed to create $model_name from $modelfile_path." \
+          "ensure '$base_model' exists locally with 'ollama pull $base_model', then rerun 'bin/verify_ollama_models --fix'"
+        return 1
+      fi
+      continue
+    fi
+
+    if verify_ollama_models_alias_exists "$model_name"; then
+      printf 'verified: %s (%s)\n' "$model_name" "$modelfile_path"
+    else
+      verify_ollama_models_fail \
+        "Missing Ollama model alias '$model_name' for $modelfile_path." \
+        "run bin/verify_ollama_models --fix"
+      return 1
+    fi
+  done
+
+  if (( VERIFY_OLLAMA_MODELS_FIX )); then
+    printf 'next step: point your Ollama-backed IDEs at these alias names\n'
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi

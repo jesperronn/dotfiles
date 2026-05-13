@@ -122,6 +122,10 @@ In addition to the aforementioned [dotfiles][dotfiles] script, there are a few o
 * `bin/lint` - lint shell scripts with `bash -n` and `shellcheck`, including `--format offenses`, `--format worst`, and `--autocorrect` support for ShellCheck diff patches.
 * Look through the [bin](bin) subdirectory for a few more.
 
+## AI tooling
+
+See [docs/ai-tooling.md](docs/ai-tooling.md) for the Ollama persistence setup, the shared Modelfile aliases in `~/.ollama/modelfiles`, and how that fits with VS Code extensions such as Copilot Chat and local Ollama clients.
+
 ## Prompt
 I think [my bash prompt](source/50_prompt.sh) is awesome. It shows git and svn repo status, a timestamp, error exit codes, and even changes color depending on how you've logged in.
 
