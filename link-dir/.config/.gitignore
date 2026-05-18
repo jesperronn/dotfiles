@@ -1,0 +1,10 @@
+.DS_Store
+**/*.db
+**/*.mdb
+**/*.sock
+**/*.lock
+configstore/
+containers/podman-connections.json
+containers/podman/machine/
+mmctl/config
+#op/config

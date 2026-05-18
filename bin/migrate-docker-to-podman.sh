@@ -177,7 +177,7 @@ configure_registry_auth() {
 
     local CONTAINERS_DIR="${HOME}/.config/containers"
     local CONTAINERS_CONF="${CONTAINERS_DIR}/containers.conf"
-    local CONTAINERS_TEMPLATE="${DOTFILES_DIR}/config/containers/containers.conf"
+    local CONTAINERS_TEMPLATE="${DOTFILES_DIR}/link-dir/.config/containers/containers.conf"
     local PODMAN_RUNTIME_AUTH="${CONTAINERS_DIR}/auth.json"
     local DOCKER_DIR="${HOME}/.docker"
     local DOCKER_CONF="${DOCKER_DIR}/config.json"

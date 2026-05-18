@@ -22,7 +22,7 @@ When [dotfiles][dotfiles] is run for the first time, it does a few things:
 1. This repo is cloned into your user directory, under `~/.dotfiles`.
 1. Files in `/copy` are copied into `~/`. ([read more](#the-copy-step))
 1. Directories in `/link-dir` are symlinked into `~/`. ([read more](#the-link-dir-step))
-1. Files in `/link-file` are symlinked into `~/`, including nested files. ([read more](#the-link-file-step))
+1. Files in `/link-file` are symlinked into `~/`. The entire `link-dir/.config` tree is symlinked into `~/.config`. ([read more](#the-link-file-step))
 1. You are prompted to choose scripts in `/init` to be executed. The installer attempts to only select relevant scripts, based on the detected OS and the script filename.
 1. Your chosen init scripts are executed (in alphanumeric order, hence the funky names). ([read more](#the-init-step))
 
@@ -114,10 +114,12 @@ To keep things easy, the `~/.bashrc` and `~/.bash_profile` files are extremely s
 
 If you want to manage a nested home file without symlinking its whole parent directory, put it under `link-file/`. For example, `link-file/.continue/config.yaml` links only `~/.continue/config.yaml`, leaving `~/.continue/logs`, `~/.continue/sessions`, and other runtime data alone.
 
+The entire `~/.config` tree is symlinked from `link-dir/.config`.
+
 ## Scripts
 In addition to the aforementioned [dotfiles][dotfiles] script, there are a few other [bin scripts](bin). This includes [nave](https://github.com/isaacs/nave), which is a [git submodule](vendor).
 
-* [dotfiles][dotfiles] - (re)initialize dotfiles. It might ask for your password (for `sudo`). Use `--copy`, `--link`, `--config`, or `--init` to run a single phase.
+* [dotfiles][dotfiles] - (re)initialize dotfiles. It might ask for your password (for `sudo`). Use `--copy`, `--link`, or `--init` to run a single phase.
 * [src](link-file/.bashrc#L8-18) - (re)source all files in `/source` directory
 * `bin/lint` - lint shell scripts with `bash -n` and `shellcheck`, including `--format offenses`, `--format worst`, and `--autocorrect` support for ShellCheck diff patches.
 * Look through the [bin](bin) subdirectory for a few more.

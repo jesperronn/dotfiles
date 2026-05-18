@@ -1,0 +1,770 @@
+auth_type: bearer
+board:
+    id: 655
+    name: Unilogin - Team A
+    type: scrum
+epic:
+    name: customfield_10007
+    link: customfield_10006
+installation: Local
+issue:
+    fields:
+        custom:
+            - name: SupportFAQ OK
+              key: customfield_13100
+              schema:
+                datatype: option
+            - name: Produkt
+              key: customfield_10510
+              schema:
+                datatype: option
+            - name: Customer Request Type
+              key: customfield_10500
+              schema:
+                datatype: sd-customerrequesttype
+            - name: SAM Projekt
+              key: customfield_12800
+              schema:
+                datatype: option
+            - name: PostNr
+              key: customfield_11710
+              schema:
+                datatype: array
+                items: string
+            - name: Request participants
+              key: customfield_10501
+              schema:
+                datatype: array
+                items: user
+            - name: FakturaID
+              key: customfield_10502
+              schema:
+                datatype: string
+            - name: Institution
+              key: customfield_10503
+              schema:
+                datatype: option
+            - name: SAM Program
+              key: customfield_12801
+              schema:
+                datatype: array
+                items: option
+            - name: Time to resolution
+              key: customfield_10504
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Institution – øvrige
+              key: customfield_10508
+              schema:
+                datatype: string
+            - name: Løsning
+              key: customfield_10509
+              schema:
+                datatype: string
+            - name: Security Level Single Users
+              key: customfield_12000
+              schema:
+                datatype: array
+                items: user
+            - name: Approvers
+              key: customfield_11700
+              schema:
+                datatype: array
+                items: user
+            - name: Andre brugeroplysninger
+              key: customfield_11702
+              schema:
+                datatype: string
+            - name: UNI-Login
+              key: customfield_11701
+              schema:
+                datatype: string
+            - name: StartDato
+              key: customfield_11704
+              schema:
+                datatype: date
+            - name: STUK Forløb - SLA
+              key: customfield_11703
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Inst Hoved
+              key: customfield_11706
+              schema:
+                datatype: array
+                items: string
+            - name: SlutDato
+              key: customfield_11705
+              schema:
+                datatype: date
+            - name: Straksløst
+              key: customfield_11708
+              schema:
+                datatype: option
+            - name: ServiceNow Incident
+              key: customfield_11709
+              schema:
+                datatype: string
+            - name: Product Risk Class
+              key: customfield_13201
+              schema:
+                datatype: option
+            - name: DoR
+              key: customfield_13200
+              schema:
+                datatype: option
+            - name: Kanal
+              key: customfield_10600
+              schema:
+                datatype: option
+            - name: Politisk ophæng
+              key: customfield_12900
+              schema:
+                datatype: array
+                items: option
+            - name: Public URL
+              key: customfield_12100
+              schema:
+                datatype: string
+            - name: Ydelsestypen
+              key: customfield_10710
+              schema:
+                datatype: option
+            - name: Inst Leder
+              key: customfield_11116
+              schema:
+                datatype: array
+                items: string
+            - name: Inst Telefon
+              key: customfield_11117
+              schema:
+                datatype: array
+                items: string
+            - name: Inst Email
+              key: customfield_11118
+              schema:
+                datatype: array
+                items: string
+            - name: SUP Url
+              key: customfield_10700
+              schema:
+                datatype: string
+            - name: DKK Guestimat
+              key: customfield_10701
+              schema:
+                datatype: number
+            - name: InstitutionsNr
+              key: customfield_11119
+              schema:
+                datatype: array
+                items: string
+            - name: DKK Estimat
+              key: customfield_10702
+              schema:
+                datatype: number
+            - name: DKK Aftalt
+              key: customfield_10703
+              schema:
+                datatype: number
+            - name: DKK Faktureret
+              key: customfield_10704
+              schema:
+                datatype: number
+            - name: Timer Guestimat
+              key: customfield_10705
+              schema:
+                datatype: number
+            - name: Timer Estimat
+              key: customfield_10706
+              schema:
+                datatype: number
+            - name: Timer Aftalt
+              key: customfield_10707
+              schema:
+                datatype: number
+            - name: XTimer Optimistisk
+              key: customfield_10708
+              schema:
+                datatype: number
+            - name: XTimer Pessimistisk
+              key: customfield_10709
+              schema:
+                datatype: number
+            - name: Tid til beslutning
+              key: customfield_12200
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Inst Postnr
+              key: customfield_11111
+              schema:
+                datatype: array
+                items: string
+            - name: Inst Beliggenhedsregion
+              key: customfield_11112
+              schema:
+                datatype: array
+                items: string
+            - name: Inst Beliggenhedskommune
+              key: customfield_11113
+              schema:
+                datatype: array
+                items: string
+            - name: Inst Type
+              key: customfield_11115
+              schema:
+                datatype: array
+                items: string
+            - name: JIRA Capture Screen Resolution
+              key: customfield_10016
+              schema:
+                datatype: string
+            - name: JIRA Capture jQuery Version
+              key: customfield_10017
+              schema:
+                datatype: string
+            - name: JIRA Capture Document Mode
+              key: customfield_10018
+              schema:
+                datatype: string
+            - name: Smiley
+              key: customfield_11900
+              schema:
+                datatype: option
+            - name: Egen-vurdering
+              key: customfield_11108
+              schema:
+                datatype: option
+            - name: Testing Status
+              key: customfield_10019
+              schema:
+                datatype: any
+            - name: Egen-vurdering uddybning
+              key: customfield_11109
+              schema:
+                datatype: string
+            - name: Test Sessions
+              key: customfield_10010
+              schema:
+                datatype: string
+            - name: Aktivitetstype
+              key: customfield_11100
+              schema:
+                datatype: option
+            - name: Raised During
+              key: customfield_10011
+              schema:
+                datatype: string
+            - name: Anvisningsenheder
+              key: customfield_13401
+              schema:
+                datatype: array
+                items: string
+            - name: Deltagere
+              key: customfield_11101
+              schema:
+                datatype: number
+            - name: JIRA Capture User Agent
+              key: customfield_10012
+              schema:
+                datatype: string
+            - name: Daginstitutioner
+              key: customfield_13400
+              schema:
+                datatype: array
+                items: string
+            - name: JIRA Capture Browser
+              key: customfield_10013
+              schema:
+                datatype: string
+            - name: Navn
+              key: customfield_11102
+              schema:
+                datatype: string
+            - name: Funktion
+              key: customfield_11103
+              schema:
+                datatype: option
+            - name: JIRA Capture Operating System
+              key: customfield_10014
+              schema:
+                datatype: string
+            - name: Program
+              key: customfield_13403
+              schema:
+                datatype: number
+            - name: JIRA Capture URL
+              key: customfield_10015
+              schema:
+                datatype: string
+            - name: Program Increment
+              key: customfield_13402
+              schema:
+                datatype: number
+            - name: Sprint
+              key: customfield_10005
+              schema:
+                datatype: array
+                items: string
+            - name: Epic Status
+              key: customfield_10008
+              schema:
+                datatype: option
+            - name: Epic Color
+              key: customfield_10009
+              schema:
+                datatype: string
+            - name: RFC Type
+              key: customfield_10801
+              schema:
+                datatype: option
+            - name: RFC Purpose
+              key: customfield_10802
+              schema:
+                datatype: option
+            - name: Procedure
+              key: customfield_10803
+              schema:
+                datatype: string
+            - name: Tid i konsultation
+              key: customfield_10809
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Flagged
+              key: customfield_10000
+              schema:
+                datatype: array
+                items: option
+            - name: Epic/Theme
+              key: customfield_10001
+              schema:
+                datatype: array
+                items: string
+            - name: Story Points
+              key: customfield_10002
+              schema:
+                datatype: number
+            - name: Business Value
+              key: customfield_10003
+              schema:
+                datatype: number
+            - name: Support Område/Produkt
+              key: customfield_11200
+              schema:
+                datatype: option-with-child
+            - name: Supportlinje
+              key: customfield_11201
+              schema:
+                datatype: option
+            - name: Henvendelsestype
+              key: customfield_11202
+              schema:
+                datatype: option
+            - name: Development
+              key: customfield_12400
+              schema:
+                datatype: any
+            - name: Rank
+              key: customfield_10100
+              schema:
+                datatype: any
+            - name: XBeskrivelsestimerX
+              key: customfield_10221
+              schema:
+                datatype: number
+            - name: Wireframe
+              key: customfield_10101
+              schema:
+                datatype: string
+            - name: XAcceptkriterie
+              key: customfield_10222
+              schema:
+                datatype: string
+            - name: Release Version History
+              key: customfield_10102
+              schema:
+                datatype: version
+            - name: Epic/Theme
+              key: customfield_10214
+              schema:
+                datatype: array
+                items: string
+            - name: STUK Forløb
+              key: customfield_11306
+              schema:
+                datatype: array
+                items: string
+            - name: XRammeaftale
+              key: customfield_10217
+              schema:
+                datatype: option
+            - name: STUK teamleder
+              key: customfield_11307
+              schema:
+                datatype: array
+                items: string
+            - name: Epic/Theme
+              key: customfield_10219
+              schema:
+                datatype: array
+                items: string
+            - name: STUK tilknyttede konsulenter
+              key: customfield_11308
+              schema:
+                datatype: array
+                items: string
+            - name: Indgår i procedure for
+              key: customfield_10210
+              schema:
+                datatype: option
+            - name: Institutioner - mange
+              key: customfield_11300
+              schema:
+                datatype: array
+                items: string
+            - name: Beskrivelsestimer
+              key: customfield_10212
+              schema:
+                datatype: number
+            - name: STUK Forløbsrelation
+              key: customfield_11301
+              schema:
+                datatype: option
+            - name: Acceptkriterie
+              key: customfield_10213
+              schema:
+                datatype: string
+            - name: Structure Index Monitor
+              key: customfield_13600
+              schema:
+                datatype: any
+            - name: Max analysetimer
+              key: customfield_10203
+              schema:
+                datatype: number
+            - name: Sagsnummer
+              key: customfield_10204
+              schema:
+                datatype: string
+            - name: DKK
+              key: customfield_10205
+              schema:
+                datatype: number
+            - name: Reference (SUP)
+              key: customfield_10206
+              schema:
+                datatype: user
+            - name: Produktchef (STIL)
+              key: customfield_10207
+              schema:
+                datatype: user
+            - name: Rammeaftale
+              key: customfield_10208
+              schema:
+                datatype: option
+            - name: Vederlagsmodel
+              key: customfield_10209
+              schema:
+                datatype: option
+            - name: Regnskabsref
+              key: customfield_14000
+              schema:
+                datatype: string
+            - name: Epic/Theme
+              key: customfield_10200
+              schema:
+                datatype: array
+                items: string
+            - name: Reference (STIL)
+              key: customfield_10201
+              schema:
+                datatype: user
+            - name: Regnskab Projekt
+              key: customfield_13710
+              schema:
+                datatype: string
+            - name: Timer
+              key: customfield_10202
+              schema:
+                datatype: number
+            - name: Approvals
+              key: customfield_11403
+              schema:
+                datatype: sd-approvals
+            - name: KL Skr support behandles
+              key: customfield_13702
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: KL Tlf straksafklaring
+              key: customfield_13701
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Satisfaction date
+              key: customfield_11402
+              schema:
+                datatype: datetime
+            - name: KL Serviceforesp behandles
+              key: customfield_13704
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: KL 2. linje behandlet
+              key: customfield_13703
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Dagtilbud
+              key: customfield_13706
+              schema:
+                datatype: array
+                items: string
+            - name: KL Serviceforesp effektueret
+              key: customfield_13705
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Regnskab Aktivitet
+              key: customfield_13708
+              schema:
+                datatype: string
+            - name: ServiceNow RequestItem
+              key: customfield_13707
+              schema:
+                datatype: string
+            - name: Regnskab Anlæg
+              key: customfield_13709
+              schema:
+                datatype: string
+            - name: Satisfaction
+              key: customfield_11401
+              schema:
+                datatype: any
+            - name: Organizations
+              key: customfield_11400
+              schema:
+                datatype: array
+                items: sd-customerorganization
+            - name: Story Type
+              key: customfield_12601
+              schema:
+                datatype: option
+            - name: Target start
+              key: customfield_14102
+              schema:
+                datatype: date
+            - name: Target end
+              key: customfield_14103
+              schema:
+                datatype: date
+            - name: Team
+              key: customfield_14100
+              schema:
+                datatype: any
+            - name: Parent Link
+              key: customfield_14101
+              schema:
+                datatype: any
+            - name: Original story points
+              key: customfield_14104
+              schema:
+                datatype: number
+            - name: SAMTeam
+              key: customfield_12600
+              schema:
+                datatype: option
+            - name: XXYdelsestype
+              key: customfield_10300
+              schema:
+                datatype: option
+            - name: issueFunction
+              key: customfield_10301
+              schema:
+                datatype: any
+            - name: Tilknyttede væsentlige hændelser
+              key: customfield_13800
+              schema:
+                datatype: any
+            - name: ServiceNow Business Service
+              key: customfield_11505
+              schema:
+                datatype: array
+                items: string
+            - name: EnvironmentType
+              key: customfield_13001
+              schema:
+                datatype: option
+            - name: Severity
+              key: customfield_13000
+              schema:
+                datatype: option
+            - name: Expected Results
+              key: customfield_12701
+              schema:
+                datatype: string
+            - name: Særlige forhold i relation til test
+              key: customfield_10401
+              schema:
+                datatype: string
+            - name: Steps to reproduce
+              key: customfield_12700
+              schema:
+                datatype: string
+            - name: Timer - Optimistisk
+              key: customfield_10402
+              schema:
+                datatype: number
+            - name: Timer - Sandsynlig
+              key: customfield_10403
+              schema:
+                datatype: number
+            - name: Actual Results
+              key: customfield_12702
+              schema:
+                datatype: string
+            - name: Timer - Pessimistisk
+              key: customfield_10404
+              schema:
+                datatype: number
+            - name: Email
+              key: customfield_10405
+              schema:
+                datatype: string
+            - name: Zephyr Teststep
+              key: customfield_10409
+              schema:
+                datatype: any
+            - name: Reviewer
+              key: customfield_14200
+              schema:
+                datatype: user
+            - name: Ønskes testscenarier leveret?
+              key: customfield_10400
+              schema:
+                datatype: option
+            - name: Leverandør
+              key: customfield_10511
+              schema:
+                datatype: option
+            - name: SupportFAQ Picker
+              key: customfield_13900
+              schema:
+                datatype: issuelinks
+            - name: Tlf
+              key: customfield_10512
+              schema:
+                datatype: string
+            - name: Ændringsønske/spørgsmål
+              key: customfield_10513
+              schema:
+                datatype: string
+            - name: Driftsinfokanal
+              key: customfield_13901
+              schema:
+                datatype: array
+                items: option
+            - name: Mail til leverandør
+              key: customfield_10514
+              schema:
+                datatype: option
+            - name: Tid i support
+              key: customfield_10515
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Første synlige supporthandling
+              key: customfield_10516
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Tid i support excl leverandør
+              key: customfield_10517
+              schema:
+                datatype: sd-servicelevelagreement
+            - name: Tid hos leverandør
+              key: customfield_10518
+              schema:
+                datatype: sd-servicelevelagreement
+    types:
+        - id: "1"
+          name: Bug
+          handle: ""
+          subtask: false
+        - id: "10000"
+          name: Epic
+          handle: ""
+          subtask: false
+        - id: "10001"
+          name: Story
+          handle: ""
+          subtask: false
+        - id: "10200"
+          name: Leveringsaftale
+          handle: ""
+          subtask: false
+        - id: "10201"
+          name: Opgavebestilling
+          handle: ""
+          subtask: false
+        - id: "10202"
+          name: Arbejdspakke
+          handle: ""
+          subtask: false
+        - id: "10203"
+          name: Udviklingsopgave
+          handle: ""
+          subtask: false
+        - id: "10204"
+          name: Fejl
+          handle: ""
+          subtask: false
+        - id: "10205"
+          name: Forbedring
+          handle: ""
+          subtask: false
+        - id: "10206"
+          name: Dokument
+          handle: ""
+          subtask: true
+        - id: "10207"
+          name: AdHoc
+          handle: ""
+          subtask: true
+        - id: "10300"
+          name: Test
+          handle: ""
+          subtask: false
+        - id: "10500"
+          name: RFC
+          handle: ""
+          subtask: false
+        - id: "10501"
+          name: Standard Change Definition
+          handle: ""
+          subtask: false
+        - id: "10800"
+          name: Aktivitet
+          handle: ""
+          subtask: false
+        - id: "11200"
+          name: Aftaleændring
+          handle: ""
+          subtask: true
+        - id: "11201"
+          name: Afklaring
+          handle: ""
+          subtask: false
+        - id: "11400"
+          name: Activity
+          handle: ""
+          subtask: false
+        - id: "11800"
+          name: ITDRequest
+          handle: ""
+          subtask: false
+        - id: "5"
+          name: Sub-task
+          handle: ""
+          subtask: true
+login: nine-jrj
+project:
+    key: SKOLELOGIN
+    type: ""
+server: https://jira.stil.dk
+timezone: Europe/Copenhagen
+version:
+    major: 9
+    minor: 4
+    patch: 21
