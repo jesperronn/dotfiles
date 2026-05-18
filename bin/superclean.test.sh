@@ -63,6 +63,7 @@ test_basic_flags_and_formatting() {
   local emitted_keys=""
   local installed_keys=""
   local ranked_entries=""
+  local emitted_cache_rows=""
 
   superclean_reset_state
   superclean_parse_args --dry-run --verbose --interactive --aggressive
@@ -162,6 +163,20 @@ test_basic_flags_and_formatting() {
   ranked_entries="$(superclean_emit_ranked_child_entries "$tmp_root/parent")"
   assert_contains "$ranked_entries" "$tmp_root/parent/dir-a" "ranked child entries include directories"
   assert_contains "$ranked_entries" "$tmp_root/parent/file-a" "ranked child entries include files"
+  rm -rf "$tmp_root"
+
+  tmp_root="$(mktemp -d)"
+  mkdir -p \
+    "$tmp_root/Code/Cache" \
+    "$tmp_root/Code/User/workspaceStorage/session-1/GitHub.copilot-chat/chat-session-resources"
+  superclean_emit_app_support_rows() {
+    printf '000000010240\tinstalled\t%s\n' "$tmp_root/Code"
+  }
+  emitted_cache_rows="$(superclean_emit_unique_app_support_cache_rows)"
+  assert_contains "$emitted_cache_rows" "$tmp_root/Code/Cache" "app support cache rows include direct cache dirs"
+  assert_contains "$emitted_cache_rows" "$tmp_root/Code/User/workspaceStorage/session-1/GitHub.copilot-chat/chat-session-resources" "app support cache rows include nested chat session resources"
+  unset -f superclean_emit_app_support_rows
+  reload_superclean_functions
   rm -rf "$tmp_root"
 }
 

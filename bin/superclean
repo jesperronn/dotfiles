@@ -120,6 +120,18 @@ SUPER_CLEAN_APP_SUPPORT_CACHE_NAMES=(
   "logs"
 )
 
+SUPER_CLEAN_APP_SUPPORT_NESTED_CACHE_NAMES=(
+  "Cache"
+  "Caches"
+  "CachedData"
+  "Code Cache"
+  "GPUCache"
+  "Service Worker"
+  "blob_storage"
+  "chat-session-resources"
+  "logs"
+)
+
 superclean_usage() {
   local header_style="" flag_style="" command_style="" parameter_style="" reset_style=""
 
@@ -1201,7 +1213,8 @@ superclean_emit_orphan_app_support_selector_rows() {
 }
 
 superclean_emit_app_support_cache_rows() {
-  local size_kb status app_path child_path child_name
+  local size_kb status app_path child_path child_name nested_path
+  local -a nested_find_args=()
 
   while IFS=$'\t' read -r size_kb status app_path; do
     [[ "$status" == 'installed' ]] || continue
@@ -1212,7 +1225,24 @@ superclean_emit_app_support_cache_rows() {
       [[ -e "$child_path" ]] || continue
       printf '%012d\t%s\t%s\t%s\n' "$(superclean_path_size_kb "$child_path")" "$size_kb" "$app_path" "$child_path"
     done
+
+    if ((${#SUPER_CLEAN_APP_SUPPORT_NESTED_CACHE_NAMES[@]} > 0)); then
+      nested_find_args=()
+      for child_name in "${SUPER_CLEAN_APP_SUPPORT_NESTED_CACHE_NAMES[@]}"; do
+        nested_find_args+=(-name "$child_name" -o)
+      done
+      unset 'nested_find_args[${#nested_find_args[@]}-1]'
+
+      while IFS= read -r nested_path; do
+        [[ -n "$nested_path" ]] || continue
+        printf '%012d\t%s\t%s\t%s\n' "$(superclean_path_size_kb "$nested_path")" "$size_kb" "$app_path" "$nested_path"
+      done < <(find "$app_path" -mindepth 2 -maxdepth 8 -type d \( "${nested_find_args[@]}" \) -print 2>/dev/null | sort)
+    fi
   done < <(superclean_emit_app_support_rows)
+}
+
+superclean_emit_unique_app_support_cache_rows() {
+  superclean_emit_app_support_cache_rows | awk -F '\t' 'NF >= 4 && !seen[$4]++ { print $0 }'
 }
 
 superclean_emit_container_rows() {
@@ -1400,7 +1430,7 @@ superclean_interactive_select_app_support_cache_paths() {
     selected=$(while IFS=$'\t' read -r size_kb app_size_kb app_path cache_path; do
       [[ -n "$cache_path" ]] || continue
       superclean_format_app_support_cache_selector_row "$size_kb" "$app_size_kb" "$app_path" "$cache_path"
-    done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT") | fzf --multi \
+    done < <(superclean_emit_unique_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT") | fzf --multi \
       --delimiter=$'\t' \
       --with-nth=2,3,4 \
       "${fzf_args[@]}" \
@@ -1419,7 +1449,7 @@ superclean_interactive_select_app_support_cache_paths() {
     if superclean_prompt_yes_no "Remove installed-app cache $(basename "$app_path")/$(basename "$cache_path") ($(superclean_format_kb "$((10#$size_kb))"))?"; then
       printf '%s\n' "$cache_path"
     fi
-  done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
+  done < <(superclean_emit_unique_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
 }
 
 superclean_apply_orphan_app_support_cleanup() {
@@ -1473,7 +1503,7 @@ superclean_apply_installed_app_support_cache_cleanup() {
     [[ -n "$path" ]] || continue
     has_candidates=1
     break
-  done < <(superclean_emit_app_support_cache_rows)
+  done < <(superclean_emit_unique_app_support_cache_rows)
 
   (( has_candidates )) || return 0
 
@@ -1574,7 +1604,7 @@ superclean_plan_library_inventory() {
     [[ -n "$cache_path" ]] || continue
     cache_review_found=1
     superclean_print_size_label_path_line "$size_kb" "$(basename "$app_path")" "$cache_path" 14
-  done < <(superclean_emit_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
+  done < <(superclean_emit_unique_app_support_cache_rows | sort -rn | head -n "$SUPER_CLEAN_APP_SUPPORT_CACHE_REVIEW_LIMIT")
 
   if (( ! cache_review_found )); then
     superclean_log '  - none found in the top installed app-support entries'
