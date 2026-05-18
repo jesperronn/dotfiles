@@ -116,10 +116,13 @@ If you want to manage a nested home file without symlinking its whole parent dir
 
 The entire `~/.config` tree is symlinked from `link-dir/.config`.
 
+If you already have a file or folder in place and want to bring it under repo management, use `rehome /path/to/item`. It moves the target into `link-file/` or `link-dir/` inside the selected repo and leaves a symlink behind at the original location. Use `REHOME_DEFAULT_FILE_DEST` and `REHOME_DEFAULT_FOLDER_DEST` to change the default destinations.
+
 ## Scripts
 In addition to the aforementioned [dotfiles][dotfiles] script, there are a few other [bin scripts](bin). This includes [nave](https://github.com/isaacs/nave), which is a [git submodule](vendor).
 
 * [dotfiles][dotfiles] - (re)initialize dotfiles. It might ask for your password (for `sudo`). Use `--copy`, `--link`, or `--init` to run a single phase.
+* `rehome` - move an existing file or folder into `link-file/` or `link-dir/` and symlink it back. Use `--repo-root /path/to/repo` to target another repo, and `REHOME_DEFAULT_FILE_DEST` / `REHOME_DEFAULT_FOLDER_DEST` to override the default destinations.
 * [src](link-file/.bashrc#L8-18) - (re)source all files in `/source` directory
 * `bin/lint` - lint shell scripts with `bash -n` and `shellcheck`, including `--format offenses`, `--format worst`, and `--autocorrect` support for ShellCheck diff patches.
 * Look through the [bin](bin) subdirectory for a few more.
