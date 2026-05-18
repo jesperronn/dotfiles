@@ -4,3 +4,20 @@
 # Blank lines are ignored!
 # Empty values reset the configuration to the default value
 # more info: https://ghostty.org/docs/config
+
+
+#### color / theme ####
+# CMD + Shift + , to reload
+# Slightly brighten ANSI green for better contrast on dark backgrounds.
+palette = 2=#8ecf7a
+# Temporary test: make ANSI green obviously pink.
+# palette = 2=#ff5fa2
+
+
+#### tab layouts #####
+#macos-titlebar-style = native
+
+#### keyboard bindings #####
+
+keybind = cmd+shift+right=next_tab
+keybind = cmd+shift+left=previous_tab

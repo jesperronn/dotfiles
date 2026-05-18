@@ -319,6 +319,102 @@ config.use_fancy_tab_bar = true
 config.tab_and_split_indices_are_zero_based = false
 
 
+--[[
+============================
+Tab Title Logic
+============================
+
+The goal is to show a short, meaningful title in each tab that reflects WHERE
+you are in the filesystem, not just WHAT process is running.
+
+Priority order for the displayed title (highest → lowest):
+  1. User-set tab title  (set manually, e.g. via a keybinding)
+  2. Computed CWD title  (derived from the active pane's working directory)
+  3. WezTerm default     (usually the name of the running process, e.g. "bash")
+
+──────────────────────────────────────────────────────────────
+compute_cwd_title(pane)  →  string | nil
+──────────────────────────────────────────────────────────────
+Builds the CWD-based title. Contains four private helpers:
+
+  normalize_path(path)
+    Strips any trailing slashes so path comparisons work reliably.
+    e.g.  "/home/jesper/code/"  →  "/home/jesper/code"
+
+  basename(path)
+    Returns the last path component.
+    e.g.  "/home/jesper/code/my-project"  →  "my-project"
+
+  uri_to_path(uri)
+    WezTerm may give us the CWD as either:
+      • a table  { file_path = "/abs/path" }
+      • a "file:///abs/path" URI string  (converted via wezterm.uri_to_path)
+      • a plain path string  (returned as-is)
+    This helper normalises all three forms to a plain path string.
+
+  cwd_path(pane_obj)
+    Tries to read the pane's current working directory in two ways
+    (both wrapped in pcall to stay safe across API versions):
+      1. Field access:   pane_obj.current_working_dir
+      2. Method call:    pane_obj:get_current_working_dir()
+    Returns the path string, or nil if neither succeeds.
+
+  git_root(path)
+    Runs `git -C <path> rev-parse --show-toplevel` as a child process.
+    Returns the repository root path, or nil when the directory is not
+    inside a git repository (or git is not available).
+
+Main logic (after helpers):
+  • Get the CWD from the pane via cwd_path().
+  • Run git_root() to check whether the CWD is inside a git repo.
+    – If YES and CWD == repo root  →  show just the repo folder name.
+        Example:  ~/code/my-project          →  "my-project"
+    – If YES and CWD is a sub-folder  →  show "repo-name/current-folder".
+        Example:  ~/code/my-project/src/lib  →  "my-project/lib"
+        (Only one level deep; intermediate directories are omitted.)
+    – If NO (not in a git repo)  →  show just the basename of the CWD.
+        Example:  ~/Downloads               →  "Downloads"
+
+──────────────────────────────────────────────────────────────
+tab_title(tab_info)  →  string
+──────────────────────────────────────────────────────────────
+Resolves the final display title for a tab:
+  1. Returns tab_info.tab_title if it was explicitly set by the user.
+  2. Otherwise calls compute_cwd_title() on the active pane.
+  3. Falls back to tab_info.active_pane.title (the raw WezTerm default).
+
+──────────────────────────────────────────────────────────────
+"format-tab-title" event  (renders each tab in the bar)
+──────────────────────────────────────────────────────────────
+Called by WezTerm whenever it needs to paint a tab label.
+
+  Format:  " {1-based-index}: {title} "   (spaces for breathing room)
+
+  Tab style variants (controlled by the top-level `tab_style` variable):
+    • "square"  (default) – plain padded text, no decorative glyphs.
+    • "rounded"           – title wrapped with Nerd Font half-circle glyphs
+                            (ple_left_half_circle_thick /
+                             ple_right_half_circle_thick).
+
+  Active tab coloring:
+    background  =  tab_bar_active_tab_bg  (dark crust)
+    text color  =  tab_bar_active_tab_fg  (mauve)
+    The edge glyph uses tab_bar_active_tab_fg as its foreground to
+    create a smooth colour transition between the tab bar and the tab.
+
+  Inactive tabs:
+    Rendered as plain text with no background/foreground overrides,
+    so they inherit the tab bar's default colours.
+
+──────────────────────────────────────────────────────────────
+"update-status" event  (runs on every status-bar refresh)
+──────────────────────────────────────────────────────────────
+In addition to drawing the leader-key indicator on the left, this handler
+also proactively pushes the computed CWD title into the active tab via
+  active_tab:set_title(computed_title)
+This ensures the title stays current as you cd around inside a pane,
+even between tab switches where format-tab-title might be cached.
+]] --
 local function compute_cwd_title(pane)
     local function normalize_path(path)
         if not path then
