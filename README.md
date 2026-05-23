@@ -19,7 +19,7 @@ That command is [dotfiles][dotfiles], and this is my "dotfiles" Git repo.
 When [dotfiles][dotfiles] is run for the first time, it does a few things:
 
 1. In Ubuntu, Git is installed if necessary via APT (it's already there in OSX).
-1. This repo is cloned into your user directory, under `~/.dotfiles`.
+1. This repo is cloned into your user directory, under `~/src/dotfiles`.
 1. Files in `/copy` are copied into `~/`. ([read more](#the-copy-step))
 1. Directories in `/link-dir` are symlinked into `~/`. ([read more](#the-link-dir-step))
 1. Files in `/link-file` are symlinked into `~/`. The entire `link-dir/.config` tree is symlinked into `~/.config`. ([read more](#the-link-file-step))
@@ -39,7 +39,7 @@ On subsequent runs, step 1 is skipped, step 2 just updates the already-existing 
 * The `/vendor` directory contains third-party libraries.
 
 ### The "copy" step
-Any file in the `/copy` subdirectory will be copied into `~/`. Any file that _needs_ to be modified with personal information (like [copy/.gitconfig](copy/.gitconfig) which contains an email address and private key) should be _copied_ into `~/`. Because the file you'll be editing is no longer in `~/.dotfiles`, it's less likely to be accidentally committed into your public dotfiles repo.
+Any file in the `/copy` subdirectory will be copied into `~/`. Any file that _needs_ to be modified with personal information (like [copy/.gitconfig](copy/.gitconfig) which contains an email address and private key) should be _copied_ into `~/`. Because the file you'll be editing is no longer in `~/src/dotfiles`, it's less likely to be accidentally committed into your public dotfiles repo.
 
 ### The "link-dir" step
 Any directory in the `/link-dir` subdirectory gets symlinked into `~/` with `ln -s`. Edit one or the other, and you change the directory in both places.

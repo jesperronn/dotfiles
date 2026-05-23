@@ -66,7 +66,7 @@ To solve the "lack of thread discipline" among users, the script intentionally i
 15. "mmctl auth list --json [TEXT TABLE WRAPPED IN JSON]"
 16. "cat ~/.config/mmctl/config [CONFIG JSON SNIPPET]"
 17. "which file structure will we save into? lets figure that out. What is your suggestion? How many files/conversations? We also want to make it possible to fetch a range of dates from/to as parameters"
-18. "~/.dotfiles/bin/mm_backfill [DATE ERROR OUTPUT]"
+18. "~/src/dotfiles/bin/mm_backfill [DATE ERROR OUTPUT]"
 19. "extract MM_ARCHIVE_FOLDER="$HOME/src/mattermost_archive""
 20. "shebang use `#!/usr/bin/env bash` much more portable"
 21. "lets add `set -euo pipefail` to this, but make START_DATE, END_DATE default to today. If START_DATE is set but END_DATE missing then default END_DATE to START_DATE"
@@ -74,9 +74,9 @@ To solve the "lack of thread discipline" among users, the script intentionally i
 23. "bash template: [BASH SOURCE TEMPLATE]"
 24. "--verbose doesnt work. Implement. Also no feedback on saved / updated files. I also want a --progress flag..."
 25. "(perhaps slugify method to create filenames?)"
-26. "~/.dotfiles/bin/mm_backfill: line 137: syntax error near unexpected token `)`"
-27. "no, script still fails: ~/.dotfiles/bin/mm_backfill --verbose DEBUG: Refreshing User Map... ✖ 1"
-28. "still: ~/.dotfiles/bin/mm_backfill --verbose --progress DEBUG: Refreshing User Map... ✖ 1. now, introduce method `parse_args`... introduces `pars_prereqs`... test if target directory exists."
+26. "~/src/dotfiles/bin/mm_backfill: line 137: syntax error near unexpected token `)`"
+27. "no, script still fails: ~/src/dotfiles/bin/mm_backfill --verbose DEBUG: Refreshing User Map... ✖ 1"
+28. "still: ~/src/dotfiles/bin/mm_backfill --verbose --progress DEBUG: Refreshing User Map... ✖ 1. now, introduce method `parse_args`... introduces `pars_prereqs`... test if target directory exists."
 
 ### 7. Pending Tasks
 * [ ] Implement a retry mechanism for `curl` if the API times out during large backfills.

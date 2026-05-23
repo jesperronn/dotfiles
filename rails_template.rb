@@ -1,6 +1,6 @@
 # usage:
 #
-# rails new . -m ~/.dotfiles/rails_template.rb
+# rails new . -m ~/src/dotfiles/rails_template.rb
 
 gem 'devise'
 gem 'enumerize'

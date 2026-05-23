@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 
 # Where the magic happens.
-export DOTFILES=~/.dotfiles
+export DOTFILES=~/src/dotfiles
 
 if [[ -n "$HOME" && ( "$CODEX_SANDBOX" == "true" || "$TERM" == "dumb" ) ]]; then
   export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/$(whoami)_cache}"

@@ -64,7 +64,7 @@ done
 ###########################################
 
 # Where the magic happens.
-export DOTFILES=~/.dotfiles
+export DOTFILES=~/src/dotfiles
 
 # Logging stuff.
 function e_header()   { echo -e "\n\033[1m$@\033[0m"; }
@@ -538,7 +538,7 @@ fi
 # Initialize.
 if [[ ! -d $DOTFILES ]]; then
   if ! should_run_full_setup; then
-    e_error "Targeted modes require an existing ~/.dotfiles checkout."
+    e_error "Targeted modes require an existing ~/src/dotfiles checkout."
     exit 1
   fi
   # Dotfiles directory doesn't exist? Clone it!
