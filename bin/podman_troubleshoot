@@ -116,6 +116,10 @@ have_command() {
   command -v "$1" >/dev/null 2>&1
 }
 
+have_jq() {
+  have_command jq
+}
+
 require_podman() {
   if ! have_command podman; then
     log_action "podman is not installed or not on PATH"
@@ -126,6 +130,59 @@ require_podman() {
 
 have_image_name() {
   [[ -n "$IMAGE_NAME" ]]
+}
+
+podman_default_machine_name() {
+  podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+}
+
+podman_default_connection_name() {
+  podman system connection list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+}
+
+podman_machine_inventory_report() {
+  local machine_json
+  local connection_json
+  local default_machine
+  local default_connection
+  local machine_count
+  local default_connection_count
+
+  machine_json="$(podman machine list --format json)"
+  connection_json="$(podman system connection list --format json)"
+
+  default_machine="$(printf '%s\n' "$machine_json" | jq -r '.[] | select(.Default == true) | .Name' | head -n1)"
+  default_connection="$(printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' | head -n1)"
+  machine_count="$(printf '%s\n' "$machine_json" | jq 'length')"
+  default_connection_count="$(printf '%s\n' "$connection_json" | jq '[.[] | select(.Default == true)] | length')"
+
+  printf 'default machine: %s\n' "${default_machine:-<none>}"
+  printf 'default connection: %s\n' "${default_connection:-<none>}"
+  printf 'machine count: %s\n' "$machine_count"
+  printf 'default connection entries: %s\n' "$default_connection_count"
+
+  if [[ -z "$default_machine" || -z "$default_connection" || "$default_machine" != "$default_connection" ]]; then
+    return 1
+  fi
+
+  if [[ "$machine_count" -gt 1 ]]; then
+    printf 'note: multiple machines are present; confirm the stale one can be removed once it is no longer needed.\n'
+  fi
+}
+
+podman_machine_start_lock_report() {
+  local lock_file="$1"
+  local permissions
+  local owner
+
+  permissions="$(stat -f '%Sp' "$lock_file" 2>/dev/null)"
+  owner="$(stat -f '%Su:%Sg' "$lock_file" 2>/dev/null)"
+
+  printf 'lock file: %s\n' "$lock_file"
+  printf 'permissions: %s\n' "${permissions:-<unknown>}"
+  printf 'owner: %s\n' "${owner:-<unknown>}"
+
+  [[ "$permissions" == -rw-------* ]]
 }
 
 check_local_client_versions() {
@@ -168,6 +225,55 @@ check_podman_machine_inspect() {
     "podman machine inspect failed" \
     "run: podman machine list, then inspect the active machine name manually" \
     podman machine inspect
+}
+
+check_podman_machine_alignment() {
+  log_section "Podman Machine Alignment"
+
+  if ! have_jq; then
+    log_action "jq is not installed; default machine alignment checks were skipped"
+    printf '    next: install jq and re-run %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status podman_machine_inventory_report
+
+  if [[ $status -eq 0 ]]; then
+    log_ok "podman machine default and system connection are aligned"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "podman machine default and system connection are out of sync"
+    printf "    next: run: podman system connection default \"\$(podman machine list --format json | jq -r '.[] | select(.Default == true) | .Name')\"\n"
+    printf '    next: rerun podman-fix after the connection default is updated\n'
+  fi
+
+  show_detail "$output"
+}
+
+check_machine_start_lock() {
+  log_section "Machine Start Lock"
+
+  local lock_file="$HOME/.local/share/containers/podman/machine/machine-start.lock"
+  if [[ ! -e "$lock_file" ]]; then
+    log_ok "machine-start.lock is not present"
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status podman_machine_start_lock_report "$lock_file"
+
+  if [[ $status -eq 0 ]]; then
+    log_ok "machine-start.lock permissions look normal"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "machine-start.lock is not in the expected state"
+    printf '    next: if podman machine start still fails, inspect or remove the stale lock file before retrying\n'
+  fi
+
+  show_detail "$output"
 }
 
 check_engine_info() {
@@ -347,14 +453,18 @@ print_recovery_hints() {
 
   log_action "$FAILURES check(s) need attention"
   cat <<'EOF'
-    common next steps:
+common next steps:
       1. Restart the Podman machine:
          podman machine stop
          podman machine start
+         podman system connection default "$(podman machine list --format json | jq -r '.[] | select(.Default == true) | .Name')"
+         podman-fix
       2. Retry the failing command shown above.
-      3. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
-      4. If Podman client and VM feel out of sync, update Podman and restart the machine.
-      5. If you see "current system boot ID differs from cached boot ID", clear stale runtime state in the VM or rebuild the machine after preserving anything important.
+      3. If multiple machines are present, confirm the default machine and default connection point at the same name.
+      4. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
+      5. If Podman client and VM feel out of sync, update Podman and restart the machine.
+      6. If you see "current system boot ID differs from cached boot ID", clear stale runtime state in the VM or rebuild the machine after preserving anything important.
+      7. If `podman machine start` fails with `machine-start.lock`, inspect the lock file state before retrying.
 EOF
 }
 
@@ -371,6 +481,8 @@ run_main() {
   check_local_client_versions
   check_podman_machine_list
   check_podman_machine_inspect
+  check_podman_machine_alignment
+  check_machine_start_lock
   check_engine_info
   check_system_connections
   check_host_registry_connectivity

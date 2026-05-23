@@ -1,15 +1,33 @@
 # shellcheck shell=bash
 
+podman-default-machine-name() {
+    podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+}
+
 # Refreshes the user-space symlink to the transient Podman VM socket
 podman-fix() {
-    local CURRENT_VM_SOCK=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)
-    if [ -z "${CURRENT_VM_SOCK}" ]; then
-        echo "❌ Podman machine is not running."
+    local MACHINE_NAME
+    MACHINE_NAME="$(podman-default-machine-name)"
+    if [ -z "${MACHINE_NAME}" ]; then
+        echo "❌ No default Podman machine is configured."
         return 1
     fi
+
+    local CURRENT_VM_SOCK
+    CURRENT_VM_SOCK="$(podman machine inspect "${MACHINE_NAME}" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)"
+    if [ -z "${CURRENT_VM_SOCK}" ]; then
+        echo "❌ Podman machine '${MACHINE_NAME}' is not running."
+        return 1
+    fi
+
     local STABLE_SOCK="${HOME}/.local/share/containers/podman/machine/podman.sock"
     mkdir -p "$(dirname "${STABLE_SOCK}")"
     ln -sf "${CURRENT_VM_SOCK}" "$STABLE_SOCK"
+
+    if podman system connection default "${MACHINE_NAME}" >/dev/null 2>&1; then
+        echo "✅ Default Podman connection set to '${MACHINE_NAME}'"
+    fi
+
     echo "🔗 Symlink refreshed: $STABLE_SOCK -> ${CURRENT_VM_SOCK}"
 }
 export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"

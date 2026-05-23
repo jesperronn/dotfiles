@@ -19,6 +19,10 @@ STABLE_USER_SOCK=".local/share/containers/podman/machine/podman.sock"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+get_default_podman_machine_name() {
+    podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+}
+
 detect_shell() {
     if [[ "$SHELL" == *"zsh"* ]]; then
         CONF_FILE="$HOME/.zshrc"
@@ -98,19 +102,26 @@ install_tooling() {
 }
 
 init_podman() {
-    if ! podman machine inspect podman-machine-default >/dev/null 2>&1; then
-        echo "🤖 Initializing fresh High-Performance Podman machine..."
+    local MACHINE_NAME
+    MACHINE_NAME="$(get_default_podman_machine_name)"
+    if [[ -z "$MACHINE_NAME" ]]; then
+        MACHINE_NAME="podman-machine-default"
+    fi
+
+    if ! podman machine inspect "$MACHINE_NAME" >/dev/null 2>&1; then
+        echo "🤖 Initializing fresh High-Performance Podman machine: ${MACHINE_NAME}"
         # Simplified for Podman 5.7.1 compatibility
         # Defaults to AppleHV + VirtioFS on M-series Macs
         podman machine init \
+            --name "$MACHINE_NAME" \
             --cpus 6 \
             --memory 9000 \
             --disk-size 100 \
             --rootful=false
     fi
 
-    echo "🚀 Starting Podman machine..."
-    podman machine start 2>/dev/null || echo "ℹ️ Machine already running."
+    echo "🚀 Starting Podman machine: ${MACHINE_NAME}"
+    podman machine start "$MACHINE_NAME" 2>/dev/null || echo "ℹ️ Machine already running."
 }
 configure_shell() {
     echo "📝 Injecting configuration into $CONF_FILE..."
@@ -119,16 +130,30 @@ configure_shell() {
     if ! grep -q "podman-fix()" "$CONF_FILE"; then
         cat << 'EOF' >> "$CONF_FILE"
 
+# Returns the default Podman machine name so socket helpers and CLI defaults stay aligned.
+podman-default-machine-name() {
+    podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+}
+
 # Refreshes the user-space symlink to the transient Podman VM socket
 podman-fix() {
-    local CURRENT_VM_SOCK=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)
+    local MACHINE_NAME
+    MACHINE_NAME="$(podman-default-machine-name)"
+    if [ -z "${MACHINE_NAME}" ]; then
+        echo "❌ No default Podman machine is configured."
+        return 0
+    fi
+
+    local CURRENT_VM_SOCK
+    CURRENT_VM_SOCK="$(podman machine inspect "${MACHINE_NAME}" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)"
     if [ -z "${CURRENT_VM_SOCK}" ]; then
-        echo "❌ Podman machine is not running."
+        echo "❌ Podman machine '${MACHINE_NAME}' is not running."
         return 0
     fi
     local STABLE_SOCK="${HOME}/.local/share/containers/podman/machine/podman.sock"
     mkdir -p "$(dirname "${STABLE_SOCK}")"
     ln -sf "${CURRENT_VM_SOCK}" "${STABLE_SOCK}"
+    podman system connection default "${MACHINE_NAME}" >/dev/null 2>&1 || true
     echo "🔗 Symlink refreshed: ${STABLE_SOCK} -> ${CURRENT_VM_SOCK}"
 }
 EOF
