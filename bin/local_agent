@@ -1,0 +1,618 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+LOCAL_AGENT_VERIFY_OLLAMA_BIN="${LOCAL_AGENT_VERIFY_OLLAMA_BIN:-$DOTFILES_ROOT/bin/verify_ollama}"
+LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN="${LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN:-$DOTFILES_ROOT/bin/verify_ollama_models}"
+LOCAL_AGENT_OLLAMA_BASE_URL="${LOCAL_AGENT_OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+LOCAL_AGENT_RESULTS_FILE="${LOCAL_AGENT_RESULTS_FILE:-$DOTFILES_ROOT/docs/local-model-testrun-loop/results.md}"
+LOCAL_AGENT_DEFAULT_PRESET="${LOCAL_AGENT_DEFAULT_PRESET:-best}"
+LOCAL_AGENT_DEFAULT_CWD="${LOCAL_AGENT_DEFAULT_CWD:-$PWD}"
+LOCAL_AGENT_DEFAULT_CODEX_SANDBOX="${LOCAL_AGENT_DEFAULT_CODEX_SANDBOX:-workspace-write}"
+LOCAL_AGENT_DEFAULT_CODEX_APPROVAL="${LOCAL_AGENT_DEFAULT_CODEX_APPROVAL:-on-request}"
+LOCAL_AGENT_DEFAULT_VSCODE_WINDOW_MODE="${LOCAL_AGENT_DEFAULT_VSCODE_WINDOW_MODE:---reuse-window}"
+
+LOCAL_AGENT_FIX=0
+LOCAL_AGENT_INTERACTIVE=0
+LOCAL_AGENT_C_NO_COLOR=""
+LOCAL_AGENT_C_RESET=""
+LOCAL_AGENT_C_BOLD=""
+LOCAL_AGENT_C_GREEN=""
+LOCAL_AGENT_C_RED=""
+LOCAL_AGENT_C_SECTION=""
+LOCAL_AGENT_C_ACCENT=""
+LOCAL_AGENT_C_PLACEHOLDER=""
+
+local_agent_enable_color() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    LOCAL_AGENT_C_NO_COLOR=1
+    return 0
+  fi
+
+  if [[ ! -t 1 ]]; then
+    LOCAL_AGENT_C_NO_COLOR=1
+    return 0
+  fi
+
+  LOCAL_AGENT_C_RESET=$'\033[0m'
+  LOCAL_AGENT_C_BOLD=$'\033[1m'
+  LOCAL_AGENT_C_GREEN=$'\033[32m'
+  LOCAL_AGENT_C_RED=$'\033[31m'
+  LOCAL_AGENT_C_SECTION=$'\033[33m'
+  LOCAL_AGENT_C_ACCENT=$'\033[35m'
+  LOCAL_AGENT_C_PLACEHOLDER=$'\033[95m'
+}
+
+local_agent_color_print() {
+  local color="$1"
+  shift
+
+  if [[ -n "$LOCAL_AGENT_C_NO_COLOR" ]]; then
+    printf '%s\n' "$*"
+  else
+    printf '%b%s%b\n' "$color" "$*" "$LOCAL_AGENT_C_RESET"
+  fi
+}
+
+local_agent_fail() {
+  local message="$1"
+  local next_step="${2:-}"
+
+  local_agent_color_print "${LOCAL_AGENT_C_BOLD}${LOCAL_AGENT_C_RED}" "FATAL: $message" >&2
+  if [[ -n "$next_step" ]]; then
+    printf 'next step: %s\n' "$next_step" >&2
+  fi
+  return 1
+}
+
+local_agent_usage() {
+  local section_style="" tool_style="" flag_style="" placeholder_style="" reset_style=""
+
+  if [[ -z "$LOCAL_AGENT_C_NO_COLOR" ]]; then
+    section_style="${LOCAL_AGENT_C_BOLD}${LOCAL_AGENT_C_SECTION}"
+    tool_style="${LOCAL_AGENT_C_BOLD}${LOCAL_AGENT_C_ACCENT}"
+    flag_style="$LOCAL_AGENT_C_GREEN"
+    placeholder_style="$LOCAL_AGENT_C_PLACEHOLDER"
+    reset_style="$LOCAL_AGENT_C_RESET"
+  fi
+
+  printf 'Launch local Ollama-backed coding agents with stable presets.\n\n'
+  printf '%sUsage:%s %sbin/local_agent%s [%s--interactive%s] %sCOMMAND%s [%sARGS%s]\n\n' \
+    "$section_style" "$reset_style" \
+    "$tool_style" "$reset_style" \
+    "$flag_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+  printf '%sCommands:%s\n' "$section_style" "$reset_style"
+  printf '  %sdoctor%s [%s--fix%s]                     Verify Ollama keep-alive and model aliases.\n' \
+    "$flag_style" "$reset_style" "$flag_style" "$reset_style"
+  printf '  %smodels%s                                Show local-model choices with agentic labels from results.md.\n' \
+    "$flag_style" "$reset_style"
+  printf '  %scodex%s [%spreset%s] [%spath%s]             Open Codex interactively against a local Ollama model.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %sexec%s [%spreset%s] [%spath%s] %sprompt%s     Run one non-interactive Codex task locally.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %svscode%s [%spreset%s] [%spath%s]            Open VS Code agents and print local-model setup steps.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %svscode-json%s                           Print Custom Endpoint JSON for VS Code chat models.\n' \
+    "$flag_style" "$reset_style"
+  printf '  %senv%s [%spreset%s]                       Print OpenAI-compatible Ollama env exports.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %saider%s [%spreset%s] [%spath%s]             Launch aider against the same Ollama model if installed.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '\n%sGlobal flags:%s\n' "$section_style" "$reset_style"
+  printf '  %s-i, --interactive%s    Select the model with %s fzf %s instead of passing a preset.\n' \
+    "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '\n%sPresets:%s %sbest%s, %sfast%s, %ssmall%s\n' \
+    "$section_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" \
+    "$placeholder_style" "$reset_style"
+}
+
+local_agent_resolve_model() {
+  local preset="${1:-$LOCAL_AGENT_DEFAULT_PRESET}"
+
+  case "$preset" in
+    best)
+      printf '%s\n' 'qwen3.6-coding-best-64k'
+      ;;
+    fast)
+      printf '%s\n' 'qwen3.5-coding-fast-64k'
+      ;;
+    small)
+      printf '%s\n' 'qwen3.5-coding-small-32k'
+      ;;
+    qwen3.6-coding-best-64k|qwen3.5-coding-fast-64k|qwen3.5-coding-small-32k|qwen3.6-coding-64k|qwen3.5-9b-32k|gemma4-26b-64k)
+      printf '%s\n' "$preset"
+      ;;
+    *:*)
+      printf '%s\n' "$preset"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+local_agent_model_display_name() {
+  local model="$1"
+
+  case "$model" in
+    qwen3.6-coding-best-64k)
+      printf '%s\n' 'Ollama Qwen 3.6 Best (64k)'
+      ;;
+    qwen3.5-coding-fast-64k)
+      printf '%s\n' 'Ollama Qwen 3.5 Fast (64k)'
+      ;;
+    qwen3.5-coding-small-32k)
+      printf '%s\n' 'Ollama Qwen 3.5 Small (32k)'
+      ;;
+    *)
+      printf '%s\n' "$model"
+      ;;
+  esac
+}
+
+local_agent_model_max_input_tokens() {
+  local model="$1"
+
+  case "$model" in
+    *64k*)
+      printf '%s\n' '65536'
+      ;;
+    *32k*)
+      printf '%s\n' '32768'
+      ;;
+    *)
+      printf '%s\n' '32768'
+      ;;
+  esac
+}
+
+local_agent_require_command() {
+  local binary="$1"
+  local next_step="$2"
+
+  if ! command -v "$binary" >/dev/null 2>&1; then
+    local_agent_fail "$binary is not installed or not on PATH." "$next_step"
+    return 1
+  fi
+}
+
+local_agent_result_summary_model() {
+  local label="$1"
+
+  awk -v label="$label" '
+    $0 == label { capture = 1; next }
+    capture && $0 ~ /^- `/ {
+      line = $0
+      sub(/^- `/, "", line)
+      sub(/`$/, "", line)
+      print line
+      exit
+    }
+  ' "$LOCAL_AGENT_RESULTS_FILE" 2>/dev/null || true
+}
+
+local_agent_results_table_rows() {
+  awk '
+    /^\| Model \|/ { in_table = 1; next }
+    in_table && /^\| --- / { next }
+    in_table && /^\|/ {
+      line = $0
+      gsub(/^[[:space:]]*\|[[:space:]]*/, "", line)
+      gsub(/[[:space:]]*\|[[:space:]]*$/, "", line)
+      n = split(line, cols, /[[:space:]]*\|[[:space:]]*/)
+      if (n < 6) {
+        next
+      }
+      for (i = 1; i <= n; i++) {
+        gsub(/^`|`$/, "", cols[i])
+      }
+      printf "%s\t%s\t%s\t%s\t%s\t%s\n", cols[1], cols[2], cols[3], cols[4], cols[5], cols[6]
+    }
+    in_table && !/^\|/ && !/^$/ { exit }
+  ' "$LOCAL_AGENT_RESULTS_FILE" 2>/dev/null || true
+}
+
+local_agent_target_model_for_source() {
+  local source_model="$1"
+
+  case "$source_model" in
+    qwen3.6:35b-a3b-coding-mxfp8)
+      printf '%s\n' 'qwen3.6-coding-best-64k'
+      ;;
+    qwen3.5:35b-a3b-coding-nvfp4)
+      printf '%s\n' 'qwen3.5-coding-fast-64k'
+      ;;
+    qwen3.5:9b-mlx)
+      printf '%s\n' 'qwen3.5-coding-small-32k'
+      ;;
+    *)
+      printf '%s\n' "$source_model"
+      ;;
+  esac
+}
+
+local_agent_preset_for_source() {
+  local source_model="$1"
+
+  case "$source_model" in
+    qwen3.6:35b-a3b-coding-mxfp8)
+      printf '%s\n' 'best'
+      ;;
+    qwen3.5:35b-a3b-coding-nvfp4)
+      printf '%s\n' 'fast'
+      ;;
+    qwen3.5:9b-mlx)
+      printf '%s\n' 'small'
+      ;;
+    *)
+      printf '%s\n' '-'
+      ;;
+  esac
+}
+
+local_agent_agentic_badge() {
+  local source_model="$1"
+  local exact_final_edit="$2"
+  local verdict="$3"
+  local best_model=""
+  local fastest_model=""
+
+  best_model="$(local_agent_result_summary_model "Best current default:")"
+  fastest_model="$(local_agent_result_summary_model "Fastest model with comparable accuracy:")"
+
+  if [[ "$source_model" == "$best_model" ]]; then
+    printf '%s\n' 'top-pick'
+    return 0
+  fi
+
+  if [[ "$source_model" == "$fastest_model" ]]; then
+    printf '%s\n' 'fast-pick'
+    return 0
+  fi
+
+  if [[ "$exact_final_edit" != "Yes" ]]; then
+    printf '%s\n' 'not-good'
+    return 0
+  fi
+
+  if [[ "$verdict" == *"weaker"* || "$verdict" == *"slow"* || "$verdict" == *"slower"* || "$verdict" == *"cumbersome"* ]]; then
+    printf '%s\n' 'works-weaker'
+    return 0
+  fi
+
+  printf '%s\n' 'good'
+}
+
+local_agent_model_inventory_tsv() {
+  local results_file="$LOCAL_AGENT_RESULTS_FILE"
+  local source_model="" size="" exact_final_edit="" wall_time="" verdict=""
+  local target_model="" preset="" badge=""
+
+  if [[ ! -f "$results_file" ]]; then
+    cat <<'EOF'
+qwen3.6-coding-best-64k	best	qwen3.6:35b-a3b-coding-mxfp8	top-pick	37 GB	unknown	default for agentic edits and research
+qwen3.5-coding-fast-64k	fast	qwen3.5:35b-a3b-coding-nvfp4	fast-pick	21 GB	unknown	faster fallback with strong edit-loop results
+qwen3.5-coding-small-32k	small	qwen3.5:9b-mlx	works-weaker	8.9 GB	unknown	smaller fallback when the 35B models are too heavy
+EOF
+    return 0
+  fi
+
+  while IFS=$'\t' read -r source_model size exact_final_edit _effort wall_time verdict; do
+    [[ -n "${source_model:-}" ]] || continue
+    target_model="$(local_agent_target_model_for_source "$source_model")"
+    preset="$(local_agent_preset_for_source "$source_model")"
+    badge="$(local_agent_agentic_badge "$source_model" "$exact_final_edit" "$verdict")"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$target_model" \
+      "$preset" \
+      "$source_model" \
+      "$badge" \
+      "$size" \
+      "$wall_time" \
+      "$verdict"
+  done < <(local_agent_results_table_rows)
+}
+
+local_agent_models() {
+  local target_model="" preset="" source_model="" badge="" size="" wall_time="" verdict=""
+
+  while IFS=$'\t' read -r target_model preset source_model badge size wall_time verdict; do
+    [[ -n "${target_model:-}" ]] || continue
+    printf '%-12s %-8s %-30s %-34s %-8s %-12s %s\n' \
+      "$badge" \
+      "$preset" \
+      "$target_model" \
+      "$source_model" \
+      "$size" \
+      "$wall_time" \
+      "$verdict"
+  done < <(local_agent_model_inventory_tsv)
+}
+
+local_agent_select_model_interactively() {
+  local selection=""
+
+  local_agent_require_command fzf "brew install fzf" || return 1
+
+  selection="$(
+    local_agent_model_inventory_tsv | while IFS=$'\t' read -r target_model preset source_model badge size wall_time verdict; do
+      printf '%s\t%-12s %-8s %-30s %-34s %-8s %-12s %s\n' \
+        "$target_model" \
+        "$badge" \
+        "$preset" \
+        "$target_model" \
+        "$source_model" \
+        "$size" \
+        "$wall_time" \
+        "$verdict"
+    done | fzf --delimiter=$'\t' --with-nth=2 --prompt='local-agent model > ' --header='badge        preset   target                         benchmark source                    size     time         verdict'
+  )"
+
+  if [[ -z "$selection" ]]; then
+    local_agent_fail "No model selected." "rerun bin/local_agent --interactive <command>"
+    return 1
+  fi
+
+  printf '%s\n' "${selection%%$'\t'*}"
+}
+
+local_agent_require_ollama_model() {
+  local model="$1"
+
+  if ! ollama list >/dev/null 2>&1; then
+    local_agent_fail "ollama is not responding." "brew services start ollama"
+    return 1
+  fi
+
+  if ! ollama show "$model" >/dev/null 2>&1; then
+    local_agent_fail "Missing local Ollama model alias '$model'." "bin/local_agent doctor --fix"
+    return 1
+  fi
+}
+
+local_agent_doctor() {
+  local -a fix_args=()
+
+  if (( LOCAL_AGENT_FIX )); then
+    fix_args+=(--fix)
+  fi
+
+  "$LOCAL_AGENT_VERIFY_OLLAMA_BIN" "${fix_args[@]}"
+  "$LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN" "${fix_args[@]}"
+}
+
+local_agent_print_env() {
+  local model="$1"
+
+  cat <<EOF
+export OPENAI_BASE_URL='${LOCAL_AGENT_OLLAMA_BASE_URL}/v1'
+export OPENAI_API_KEY='ollama'
+export LOCAL_AGENT_MODEL='${model}'
+EOF
+}
+
+local_agent_codex() {
+  local model="$1"
+  local cwd="$2"
+
+  local_agent_require_command codex "brew install --cask codex" || return 1
+  local_agent_require_ollama_model "$model" || return 1
+
+  codex \
+    --oss \
+    --local-provider ollama \
+    -m "$model" \
+    -C "$cwd" \
+    -s "$LOCAL_AGENT_DEFAULT_CODEX_SANDBOX" \
+    -a "$LOCAL_AGENT_DEFAULT_CODEX_APPROVAL"
+}
+
+local_agent_codex_exec() {
+  local model="$1"
+  local cwd="$2"
+  shift 2
+
+  if [[ $# -eq 0 ]]; then
+    local_agent_fail "exec requires a prompt." "bin/local_agent exec best . \"review the auth flow\""
+    return 1
+  fi
+
+  local_agent_require_command codex "brew install --cask codex" || return 1
+  local_agent_require_ollama_model "$model" || return 1
+
+  codex exec \
+    --oss \
+    --local-provider ollama \
+    -m "$model" \
+    -C "$cwd" \
+    -s "$LOCAL_AGENT_DEFAULT_CODEX_SANDBOX" \
+    "$*"
+}
+
+local_agent_vscode_json() {
+  cat <<EOF
+[
+  {
+    "name": "Ollama Local",
+    "vendor": "customendpoint",
+    "apiKey": "ollama",
+    "apiType": "chat-completions",
+    "models": [
+      {
+        "id": "qwen3.6-coding-best-64k",
+        "name": "Ollama Qwen 3.6 Best (64k)",
+        "url": "${LOCAL_AGENT_OLLAMA_BASE_URL}/v1/chat/completions",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 65536,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "qwen3.5-coding-fast-64k",
+        "name": "Ollama Qwen 3.5 Fast (64k)",
+        "url": "${LOCAL_AGENT_OLLAMA_BASE_URL}/v1/chat/completions",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 65536,
+        "maxOutputTokens": 8192
+      },
+      {
+        "id": "qwen3.5-coding-small-32k",
+        "name": "Ollama Qwen 3.5 Small (32k)",
+        "url": "${LOCAL_AGENT_OLLAMA_BASE_URL}/v1/chat/completions",
+        "toolCalling": true,
+        "vision": false,
+        "maxInputTokens": 32768,
+        "maxOutputTokens": 8192
+      }
+    ]
+  }
+]
+EOF
+}
+
+local_agent_vscode() {
+  local model="$1"
+  local cwd="$2"
+
+  local_agent_require_command code "install Visual Studio Code and ensure the 'code' CLI is available" || return 1
+  local_agent_require_ollama_model "$model" || return 1
+
+  code "$LOCAL_AGENT_DEFAULT_VSCODE_WINDOW_MODE" --agents "$cwd"
+  printf 'VS Code opened for %s using recommended local model %s.\n' "$cwd" "$(local_agent_model_display_name "$model")"
+  printf 'next step: in VS Code run "Chat: Manage Language Models", add a Custom Endpoint provider, and paste the output of:\n'
+  printf '  bin/local_agent vscode-json\n'
+  printf 'then start an Agent session and pick model: %s\n' "$(local_agent_model_display_name "$model")"
+}
+
+local_agent_aider() {
+  local model="$1"
+  local cwd="$2"
+
+  local_agent_require_command aider "python -m pip install aider-install && aider-install" || return 1
+  local_agent_require_ollama_model "$model" || return 1
+
+  cd "$cwd"
+  export OLLAMA_API_BASE="$LOCAL_AGENT_OLLAMA_BASE_URL"
+  aider --model "ollama_chat/${model}"
+}
+
+run_main() {
+  local command=""
+  local preset="$LOCAL_AGENT_DEFAULT_PRESET"
+  local cwd="$LOCAL_AGENT_DEFAULT_CWD"
+  local model=""
+
+  LOCAL_AGENT_FIX=0
+  LOCAL_AGENT_INTERACTIVE=0
+  local_agent_enable_color
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        local_agent_usage
+        return 0
+        ;;
+      -i|--interactive)
+        LOCAL_AGENT_INTERACTIVE=1
+        shift
+        ;;
+      --fix)
+        LOCAL_AGENT_FIX=1
+        shift
+        ;;
+      doctor|models|vscode-json|env|codex|exec|vscode|aider)
+        command="$1"
+        shift
+        break
+        ;;
+      *)
+        local_agent_fail "Unknown command or option '$1'." "bin/local_agent --help"
+        return 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$command" ]]; then
+    local_agent_usage
+    return 0
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -i|--interactive)
+        LOCAL_AGENT_INTERACTIVE=1
+        shift
+        ;;
+      --fix)
+        LOCAL_AGENT_FIX=1
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+
+  if [[ "$command" == "doctor" ]]; then
+    local_agent_doctor
+    return 0
+  fi
+
+  if [[ "$command" == "models" ]]; then
+    local_agent_models
+    return 0
+  fi
+
+  if [[ "$command" == "vscode-json" ]]; then
+    local_agent_vscode_json
+    return 0
+  fi
+
+  if (( LOCAL_AGENT_INTERACTIVE )); then
+    model="$(local_agent_select_model_interactively)" || return 1
+  else
+    preset="${1:-$LOCAL_AGENT_DEFAULT_PRESET}"
+    model="$(local_agent_resolve_model "$preset")" \
+      || { local_agent_fail "Unknown preset or model '$preset'." "bin/local_agent models"; return 1; }
+    shift || true
+  fi
+
+  case "$command" in
+    env)
+      local_agent_print_env "$model"
+      ;;
+    codex)
+      cwd="${1:-$LOCAL_AGENT_DEFAULT_CWD}"
+      local_agent_codex "$model" "$cwd"
+      ;;
+    exec)
+      cwd="${1:-$LOCAL_AGENT_DEFAULT_CWD}"
+      shift || true
+      local_agent_codex_exec "$model" "$cwd" "$@"
+      ;;
+    vscode)
+      cwd="${1:-$LOCAL_AGENT_DEFAULT_CWD}"
+      local_agent_vscode "$model" "$cwd"
+      ;;
+    aider)
+      cwd="${1:-$LOCAL_AGENT_DEFAULT_CWD}"
+      local_agent_aider "$model" "$cwd"
+      ;;
+    *)
+      local_agent_fail "Unknown command '$command'." "bin/local_agent --help"
+      return 1
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi
