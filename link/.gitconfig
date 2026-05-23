@@ -1,0 +1,139 @@
+[user]
+  # These values are set in ~/.gitconfig_local
+  # see https://stackoverflow.com/a/42571751/109305
+[include]
+  path = ~/.gitconfig_local
+[includeif "gitdir/i:~/src/stil/"]
+  path = ~/.gitconfig_nine
+[includeif "gitdir/i:~/src/atp/"]
+  path = ~/.gitconfig_nine
+[core]
+  autocrlf     = input
+  whitespace   = fix,space-before-tab,tab-in-indent,trailing-space
+  excludesfile = ~/.gitignore_global
+  editor       = vim
+  pager        = "less -M"
+  pager        = "less -M -F -X -S"
+[apply]
+  whitespace   = fix
+[color]
+  diff         = auto
+  status       = auto
+  branch       = auto
+  ui           = auto
+  interactive  = auto
+[alias]
+  git          = !exec git
+
+  st           = status -bs
+  ci           = commit
+  co           = checkout
+  br           = branch
+  brs          = branch --sort committerdate
+  root         = rev-parse --show-toplevel
+  cdroot       = !cd $(git root)
+  sha          = rev-parse HEAD
+  taglist      = for-each-ref --sort taggerdate --color --format '%(align:25,left)%(refname:short)%(end) %(objectname:short) %(color:blue)%(taggerdate:short)%(color:reset)%(color:cyan)%(committerdate:short)%(color:reset)' refs/tags
+  branchlist   = git for-each-ref --sort committerdate --format '%(objectname:short) %(color:blue)%(authordate:short)%(color:reset) %(align:36,left)%(refname:short)%(end)%09(%(authorname))' refs/remotes
+  sortsize     = ! git ls-tree -r --long HEAD | sort --key 4 --numeric-sort
+  alias        = ! git config --get-regexp ^alias\\.
+
+  # After a rebase, when you run it, it resets all of the commit dates to the author dates
+  # so your commit logs on github / gitlab show up in proper chronological order, instead of the moment of the rebase.
+  redate = rebase --committer-date-is-author-date
+
+  # available short color formats:  normal, black, red, green, yellow, blue, magenta, cyan and white. First color: foreground; Second: background.
+  ls  = log --pretty=\"%C(green)%h %C(cyan)%<(7,trunc)%cr%C(reset)%C(magenta)%C(bold)%<|(-44,trunc)% s%C(reset)%C(cyan)%C(dim)%<(13,trunc)% aN%C(blue)% G? %>|(-1)% ai%C(reset)%C(auto)%+d%C(reset)\" --abbrev-commit --decorate=short
+  lss = log --pretty=\"%C(green)%h %C(cyan)%<(7,trunc)%cr%C(reset)%C(magenta)%C(bold)%<|(-44,trunc)% s%C(reset)%C(cyan)%C(dim)%<(13,trunc)% aN%C(blue)% G? %>|(-1)% ai%C(reset)%C(auto)%+d%C(reset) %C(red)%+b%C(reset)\" --abbrev-commit --decorate=short
+  logsince  = log --pretty='* %s' --reverse
+  logsinceh = log --pretty='%C(dim)%h%C(reset) %s' --reverse
+  # stats shorcuts fra https://gist.github.com/hofmannsven/6814278
+  stats        = log -10 --dirstat=files,1,cumulative --ignore-blank-lines --abbrev-commit --oneline --graph --decorate
+  rebasesign   = rebase --exec 'git commit --amend --no-edit -n -S'
+  sign         = commit --amend --no-edit -S
+  # clean/remove merged branches
+  gone          = !git branch -v | grep gone | awk '{print $1}'
+  fetchall      = !find . -type d -maxdepth 1 -mindepth 1 | parallel --keep-order \"test -d {}/.git && echo {} && git -C {} fetch --tags -f --all\"
+
+  # check-whitespace usage:
+  # git check-whitespace | grep trailing | cut -d: -f1 | uniq -u -z | xargs -0 sed --in-place -e 's/[ \t]+$//'
+  # from https://stackoverflow.com/a/40371757/109305
+  check-whitespace = !git diff-tree --check $(git hash-object -t tree /dev/null) HEAD
+
+[fetch]
+  recursesubmodules = true
+  prune        = true
+[merge]
+  log = true
+[submodule]
+  fetchjobs    = 8
+[log]
+  abbrevCommit = true
+        follow = true
+[push]
+  default      = current
+	autoSetupRemote = true
+[rebase]
+	autosquash = true
+	autostash = true
+[rerere]
+  enable       = true
+[remote "origin"]
+  prune        = true
+
+[credential]
+  helper       = store --file=~/.git-credentials
+[filter "lfs"]
+        required = true
+        clean = git-lfs clean -- %f
+        smudge = git-lfs smudge -- %f
+        process = git-lfs filter-process
+[commit]
+  gpgsign = false
+[gpg]
+  program = gpg
+
+# below a section to setup diffing of compressed/binary file formats
+[core]
+  attributesFile = ~/.gitattributes
+[diff "zip"]
+  textconv = unzip -p
+  binary = true
+[diff "gz"]
+  textconv = gzcat
+  binary = true
+[diff "bz2"]
+  textconv = bzcat
+  binary = true
+[diff "xz"]
+  textconv = xzcat
+  binary = true
+[diff "tar"]
+  textconv = tar -O -xf
+  binary = true
+[diff "tar-bz2"]
+  textconv = tar -O -xjf
+  binary = true
+[diff "tar-gz"]
+  textconv = tar -O -xzf
+  binary = true
+[diff "tar-xz"]
+  textconv = tar -O -xJf
+  binary = true
+
+[diff "odf"]
+  textconv = odt2txt
+
+
+[diff "bin"]
+  textconv = hexdump -v -C
+
+# images require `brew install exiftool`
+[diff "image"]
+  textconv = exiftool
+[pull]
+	ff = only
+[blame]
+    # ignoreRevsFile = .git-blame-ignore-revs
+[init]
+        defaultBranch = main

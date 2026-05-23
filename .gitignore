@@ -1,0 +1,17 @@
+# Lots of junk goes in here.
+/caches/
+/backups/
+
+# Top secret stuff!
+/link/.ssh/authorized_keys
+/link/.ssh/id_*
+/link/.ssh/*.pem
+/link/.ssh/known_hosts*
+
+# Don't commit Vim plugins, vim-plug will install them.
+/link/.vim/plugged
+
+# Don't commit tmux plugins, tpm will install them.
+/link/.tmux/plugins
+
+bin/cloud_sql_proxy

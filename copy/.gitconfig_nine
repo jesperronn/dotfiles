@@ -1,0 +1,4 @@
+[user]
+  # These values are set in ~/.gitconfig_nine
+  # and will override the default email address
+  email   = jrj@nine.dk

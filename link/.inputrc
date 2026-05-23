@@ -1,0 +1,22 @@
+# This will permanently set command line vim mode
+# set editing-mode vi
+
+# temporarily set vi mode:
+# shopt -os vi
+# temporarily unset vi mode:
+# shopt -ou vi
+
+# COMMAND MODE
+set keymap vi-command
+
+# INSERT MODE
+set keymap vi-insert
+
+set vi-ins-mode-string \1\e[5 q\e]12;green\a\2
+set vi-cmd-mode-string \1\e[1 q\e]12;orange\a\2
+
+# set show-mode-in-prompt on
+
+# Up/down arrows search history
+"\e[A": history-search-backward
+"\e[B": history-search-forward

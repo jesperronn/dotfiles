@@ -1,0 +1,32 @@
+# Direnv common sense configuration. 
+# This file is used to configure direnv, a shell extension that allows you to load and unload 
+# environment variables based on the current directory.
+#
+# This file is located in the $HOME/.config/direnv directory.
+# It is loaded automatically by direnv when it starts up.
+# $ cat $HOME/.config/direnv/direnv.toml
+# see https://direnv.net/man/direnv.toml.1.html
+
+
+# ###########
+# Update from URL First check for existing:
+# test -f "$HOME/.config/direnv/direnv.toml" && echo "NOTE: File already exists" || echo "File does not exist"
+#
+# If the file does not exist, create it:
+# mkdir -p $HOME/.config/direnv
+# curl -o $HOME/.config/direnv/direnv.toml https://gist.github.com/jesperronn/f694113f6928fcff5728822d11117ff8/raw/direnv.toml
+# ###########
+
+[global]
+
+# Also look for and load .env files on top of the .envrc files.
+# If both .envrc and .env files exist, the .envrc will always be chosen first.
+load_dotenv = true
+
+# If set to true, the .envrc will be loaded with set -euo pipefail.
+# This option will be the default in the future.
+strict_env = true
+
+# Specify how long to wait before warning the user that the command is taking too long to execute. 
+# Defaults to “5s”.
+warn_timeout = "2s"

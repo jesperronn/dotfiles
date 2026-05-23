@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+# This script is used to colorize the output of the `less` command.
+# It enhances the readability of the text by adding color to the output.
+# 
+# Usage:
+#   ./colorize_less.sh [options] <file> or <stdin>
+#
+# Options:
+#   -h, --help    Show this help message and exit.
+#
+# Example:
+#   cat file.txt | ./colorize_less | less -R
+#
+# Dependencies:
+#   - `less` command must be installed on the system.
+#   - `awk` command must be installed on the system.
+#
+# Author:
+#   Jesper (Github Copilot assisted)
+#   Date: 2024-10-15
+#
+
+
+# Define color codes (using ANSI escape codes -- \e is the same as \033 but \e didnt work in some terminals)
+C_0="\033[0m"
+C_BOLD="\033[1m"
+C_RED="\033[31m"
+C_ORANGE="\033[38;5;202m"
+C_BLUE="\033[34m"
+C_CYAN="\033[36m"
+C_DIM="\033[37m"
+
+
+
+# Colorize the log lines
+colorize() {
+  awk -v red="$C_RED" -v orange="$C_ORANGE" -v blue="$C_BLUE" -v cyan="$C_CYAN" -v dim="$C_DIM" -v bold="$C_BOLD" -v reset="$C_0" '
+  /FATAL/ {print bold red $0 reset; next}
+  /ERROR/ {print red $0 reset; next}
+  /WARN/ {print orange $0 reset; next}
+  /INFO/ {print blue $0 reset; next}
+  /DEBUG/ {print dim $0 reset; next}
+  {print}
+  '
+}
+
+# Check if a file is provided as an argument or if input is from stdin
+if [ -t 0 ]; then
+  # No input from stdin, read from file
+  if [ -n "$1" ]; then
+    cat "$1" | colorize 
+  else
+    echo "Usage: $0 <file>"
+    exit 1
+  fi
+else
+  # Input from stdin
+  colorize 
+fi

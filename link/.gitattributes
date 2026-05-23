@@ -1,0 +1,30 @@
+# #####
+# handle diff of undiffable files. 
+# you also need required changes in global .gitconfig
+# #####
+
+# standard compressed files:
+*.tar diff=tar
+*.tar.bz2 diff=tar-bz2
+*.tar.gz diff=tar-gz
+*.tar.xz diff=tar-xz
+*.bz2 diff=bz2
+*.gz diff=gz
+*.zip diff=zip
+*.xz diff=xz
+
+# document/office files:
+*.odf diff=odf
+*.odt diff=odf
+*.odp diff=odf
+*.pdf diff=pdf
+*.xlsx diff=excel
+
+# other binary files:
+*.exe diff=bin
+
+
+# images:
+*.png diff=image
+*.jpg diff=image
+*.icon diff=image
