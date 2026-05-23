@@ -7,15 +7,15 @@ model="${1:-qwen3.6:35b-a3b-coding-mxfp8}"
 timeout_secs="${2:-240}"
 slug="$(printf '%s' "$model" | tr ':/.' '-' | tr -cd '[:alnum:]-')"
 workspace_root="${TMPDIR:-/tmp}/local-model-testrun-loop/runs"
+mkdir -p "$workspace_root"
 workspace="$(mktemp -d "$workspace_root/${slug}-$(date +%Y%m%dT%H%M%S)-XXXXXX")"
 raw_log_file="$(mktemp "$workspace_root/${slug}-raw-XXXXXX")"
 log_file="$workspace_root/${slug}-run.jsonl"
 last_file="$workspace_root/${slug}-last.txt"
 
-prompt='You are in a tiny git repo for local-model-testrun-loop verification. Use shell commands to inspect the repo, then edit only README.md so line 3 becomes exactly: This line is the deterministic edit target BINGO. Do not use apply_patch. Verify the tracked-file diff with git diff -- README.md before finishing. Keep the final response to one short sentence.'
+prompt='You are in a tiny git repo for local-model-testrun-loop verification. Use shell commands to inspect the repo, then make two exact changes: edit README.md so line 3 becomes exactly: This line is the deterministic edit target BINGO. Then create a new file named simple-text.txt containing exactly: Simple text in a new file. Do not use apply_patch. Verify the README change with git diff -- README.md and verify the new file with git diff --no-index -- /dev/null simple-text.txt before finishing. Keep the final response to one short sentence.'
 
 rm -f "$raw_log_file" "$log_file" "$last_file"
-mkdir -p "$workspace_root"
 
 while read -r loaded_model _; do
   [[ -n "${loaded_model:-}" && "$loaded_model" != "NAME" ]] || continue
@@ -90,3 +90,5 @@ printf 'last message:\n'
 cat "$last_file"
 printf '\n\nverified diff:\n'
 git -C "$workspace" diff -- README.md
+printf '\nnew-file diff:\n'
+git -C "$workspace" diff --no-index -- /dev/null simple-text.txt

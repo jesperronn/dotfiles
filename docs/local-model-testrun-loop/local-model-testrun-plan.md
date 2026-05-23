@@ -118,14 +118,15 @@ Use a prompt that is explicit, deterministic, and verification-oriented.
 Current prompt used by the runner:
 
 ```text
-You are in a tiny git repo for local-model-testrun-loop verification. Use shell commands to inspect the repo, then edit only README.md so line 3 becomes exactly: This line is the deterministic edit target BINGO. Do not use apply_patch. Verify the tracked-file diff with git diff -- README.md before finishing. Keep the final response to one short sentence.
+You are in a tiny git repo for local-model-testrun-loop verification. Use shell commands to inspect the repo, then make two exact changes: edit README.md so line 3 becomes exactly: This line is the deterministic edit target BINGO. Then create a new file named simple-text.txt containing exactly: Simple text in a new file. Do not use apply_patch. Verify the README change with git diff -- README.md and verify the new file with git diff --no-index -- /dev/null simple-text.txt before finishing. Keep the final response to one short sentence.
 ```
 
 This prompt is better than a vague “add BINGO” prompt because it:
 
 - specifies the exact final line
+- adds a second deterministic file-creation task
 - forbids `apply_patch`
-- requires explicit diff verification
+- requires explicit diff verification for the tracked README change and the new file
 - constrains the final response
 
 ## Recommended End-to-End Procedure
@@ -154,8 +155,8 @@ python3 ../bin/local-model-testrun-inspect.py \
 Check:
 
 - did it inspect the repo?
-- did it make the exact change?
-- did it verify with `git diff -- README.md`?
+- did it make both exact changes?
+- did it verify with `git diff -- README.md` and `git diff --no-index -- /dev/null simple-text.txt`?
 - how many recovery steps did it need?
 - how long did it take?
 
