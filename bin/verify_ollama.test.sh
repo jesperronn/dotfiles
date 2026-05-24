@@ -24,6 +24,15 @@ test_desired_keep_alive_defaults_to_30m() {
   assert_eq "30m" "$output" "desired keep-alive defaults to 30m"
 }
 
+test_desired_context_length_defaults_to_524288() {
+  local output=""
+  local status=0
+
+  capture_command output status verify_ollama_desired_context_length
+  assert_status "0" "$status" "desired context-length helper succeeds"
+  assert_eq "524288" "$output" "desired context length defaults to 524288"
+}
+
 test_run_main_applies_launchctl_value_on_macos() {
   local tmp_dir=""
   local plist_path=""
@@ -41,6 +50,8 @@ test_run_main_applies_launchctl_value_on_macos() {
   <dict>
     <key>OLLAMA_KEEP_ALIVE</key>
     <string>30m</string>
+    <key>OLLAMA_CONTEXT_LENGTH</key>
+    <string>524288</string>
   </dict>
 </dict>
 </plist>
@@ -79,10 +90,16 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then
-  printf '30m\n'
-  exit 0
-fi
+case "$2" in
+  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")
+    printf '30m\n'
+    exit 0
+    ;;
+  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")
+    printf '524288\n'
+    exit 0
+    ;;
+esac
 
 printf 'unexpected PlistBuddy invocation: %s\n' "$*" >&2
 exit 1
@@ -98,8 +115,10 @@ EOF
 
   assert_status "0" "$status" "verify_ollama succeeds on macOS"
   assert_contains "$output" "Set OLLAMA_KEEP_ALIVE=30m" "verify_ollama reports the applied value"
+  assert_contains "$output" "Set OLLAMA_CONTEXT_LENGTH=524288" "verify_ollama reports the applied context value"
   assert_contains "$output" "Restart Ollama and any VS Code windows" "verify_ollama explains restart requirement"
   assert_contains "$(cat "$tmp_dir/launchctl.log")" "setenv OLLAMA_KEEP_ALIVE 30m" "verify_ollama writes launchctl env"
+  assert_contains "$(cat "$tmp_dir/launchctl.log")" "setenv OLLAMA_CONTEXT_LENGTH 524288" "verify_ollama writes launchctl context env"
 }
 
 test_run_main_fails_when_homebrew_plist_is_wrong() {
@@ -119,6 +138,8 @@ test_run_main_fails_when_homebrew_plist_is_wrong() {
   <dict>
     <key>OLLAMA_KEEP_ALIVE</key>
     <string>5m</string>
+    <key>OLLAMA_CONTEXT_LENGTH</key>
+    <string>131072</string>
   </dict>
 </dict>
 </plist>
@@ -171,6 +192,8 @@ test_run_main_fails_when_ollama_is_not_running() {
   <dict>
     <key>OLLAMA_KEEP_ALIVE</key>
     <string>30m</string>
+    <key>OLLAMA_CONTEXT_LENGTH</key>
+    <string>524288</string>
   </dict>
 </dict>
 </plist>
@@ -187,6 +210,11 @@ set -euo pipefail
 
 if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then
   printf '30m\n'
+  exit 0
+fi
+
+if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH" ]]; then
+  printf '524288\n'
   exit 0
 fi
 
@@ -267,17 +295,27 @@ set -euo pipefail
 
 plist_path="${@: -1}"
 
-if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then
-  if rg -n '<string>30m</string>' "$plist_path" >/dev/null 2>&1; then
-    printf '30m\n'
-  else
-    printf '5m\n'
-  fi
-  exit 0
-fi
+case "$2" in
+  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")
+    if rg -n '<string>30m</string>' "$plist_path" >/dev/null 2>&1; then
+      printf '30m\n'
+    else
+      printf '5m\n'
+    fi
+    exit 0
+    ;;
+  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")
+    if rg -n '<string>524288</string>' "$plist_path" >/dev/null 2>&1; then
+      printf '524288\n'
+    else
+      printf '131072\n'
+    fi
+    exit 0
+    ;;
+esac
 
 if [[ "$1" == "-c" && $2 == Set* ]]; then
-  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
   exit 0
 fi
 
@@ -301,19 +339,23 @@ EOF
   assert_status "0" "$status" "verify_ollama --fix succeeds"
   assert_contains "$output" "FATAL: Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
   assert_contains "$output" "editing: adding \"OLLAMA_KEEP_ALIVE=30m\"" "verify_ollama --fix reports the edit"
+  assert_contains "$output" "editing: adding \"OLLAMA_CONTEXT_LENGTH=524288\"" "verify_ollama --fix reports the context edit"
   assert_contains "$output" "done, edit successful" "verify_ollama --fix confirms the edit"
   assert_contains "$output" "next step: brew services restart ollama" "verify_ollama --fix gives the restart next step"
   assert_contains "$(cat "$plist_path")" "30m" "verify_ollama --fix repairs the plist"
+  assert_contains "$(cat "$plist_path")" "524288" "verify_ollama --fix repairs the context length"
 }
 
 test_sourcing_ai_tools_exports_keep_alive() {
   source "$AI_TOOLS_FILE"
   assert_eq "30m" "$OLLAMA_KEEP_ALIVE" "ai tools source exports the keep-alive env"
+  assert_eq "524288" "$OLLAMA_CONTEXT_LENGTH" "ai tools source exports the context length env"
 }
 
 test_sourcing_ai_tools_keeps_export_stable() {
   source "$AI_TOOLS_FILE"
   assert_eq "30m" "$OLLAMA_KEEP_ALIVE" "ai tools source keeps the env export stable"
+  assert_eq "524288" "$OLLAMA_CONTEXT_LENGTH" "ai tools source keeps the context length export stable"
 }
 
 test_run_main_skips_outside_macos() {

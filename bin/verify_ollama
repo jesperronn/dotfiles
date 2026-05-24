@@ -5,111 +5,160 @@ set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OLLAMA_KEEP_ALIVE_DEFAULT="30m"
+OLLAMA_CONTEXT_LENGTH_DEFAULT="524288"
 OLLAMA_LAUNCH_AGENT_LABEL="com.jesperronn.ollama-keep-alive"
 OLLAMA_HOMEBREW_PLIST="${OLLAMA_HOMEBREW_PLIST:-/opt/homebrew/opt/ollama/homebrew.mxcl.ollama.plist}"
 OLLAMA_PROCESS_NAME="${OLLAMA_PROCESS_NAME:-ollama}"
 OLLAMA_PLIST_BUDDY="${OLLAMA_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 OLLAMA_SUDO_CMD="${OLLAMA_SUDO_CMD:-sudo}"
 VERIFY_OLLAMA_FIX=0
+VERIFY_OLLAMA_VERBOSE=0
+
+# ANSI colors
+C_GREEN='\033[0;32m'
+C_RED='\033[0;31m'
+C_0='\033[0m'
+
+verify_ollama_usage() {
+  cat <<EOF
+Usage: bin/verify_ollama [--fix] [--verbose]
+
+Options:
+      --fix     Repair the Homebrew Ollama plist and restart/start ollama when needed.
+      --verbose Print useful debugging information.
+      -h, --help  Show this help.
+EOF
+}
 
 verify_ollama_desired_keep_alive() {
   printf '%s\n' "${OLLAMA_KEEP_ALIVE:-$OLLAMA_KEEP_ALIVE_DEFAULT}"
 }
 
+verify_ollama_desired_context_length() {
+  printf '%s\n' "${OLLAMA_CONTEXT_LENGTH:-$OLLAMA_CONTEXT_LENGTH_DEFAULT}"
+}
+
 verify_ollama_is_macos() {
-  [[ "$(uname -s)" == "Darwin" ]]
+    [[ "$(uname -s)" == "Darwin" ]]
 }
 
 verify_ollama_current_keep_alive() {
-  launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true
+  verify_ollama_current_env_value OLLAMA_KEEP_ALIVE
+}
+
+verify_ollama_current_context_length() {
+  verify_ollama_current_env_value OLLAMA_CONTEXT_LENGTH
 }
 
 verify_ollama_set_keep_alive() {
   local desired_keep_alive="$1"
 
-  launchctl setenv OLLAMA_KEEP_ALIVE "$desired_keep_alive"
+  verify_ollama_set_env_value OLLAMA_KEEP_ALIVE "$desired_keep_alive"
 }
 
-verify_ollama_sync_plist_keep_alive() {
+verify_ollama_set_context_length() {
+  local desired_context_length="$1"
+
+  verify_ollama_set_env_value OLLAMA_CONTEXT_LENGTH "$desired_context_length"
+}
+
+verify_ollama_current_env_value() {
+  local env_name="$1"
+
+  launchctl getenv "$env_name" 2>/dev/null || true
+}
+
+verify_ollama_set_env_value() {
+  local env_name="$1"
+  local desired_value="$2"
+
+  launchctl setenv "$env_name" "$desired_value"
+}
+
+verify_ollama_plist_env_value() {
   local plist_path="$1"
-  local desired_keep_alive="${OLLAMA_KEEP_ALIVE:-30m}"
+  local env_name="$2"
+
+     "$OLLAMA_PLIST_BUDDY" -c "Print :EnvironmentVariables:$env_name" "$plist_path" 2>/dev/null || true
+}
+
+verify_ollama_set_plist_env_value() {
+  local plist_path="$1"
+  local env_name="$2"
+  local desired_value="$3"
   local plist_buddy="/usr/libexec/PlistBuddy"
 
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  [[ -f "$plist_path" && -w "$plist_path" ]] || return 0
+     [[ "$(uname -s)" == "Darwin" ]] || return 0
+     [[ -f "$plist_path" && -w "$plist_path" ]] || return 0
   command -v "$plist_buddy" >/dev/null 2>&1 || return 0
 
-  "$plist_buddy" -c "Add :EnvironmentVariables dict" "$plist_path" 2>/dev/null || true
-  "$plist_buddy" -c "Set :EnvironmentVariables:OLLAMA_KEEP_ALIVE $desired_keep_alive" "$plist_path" 2>/dev/null \
-    || "$plist_buddy" -c "Add :EnvironmentVariables:OLLAMA_KEEP_ALIVE string $desired_keep_alive" "$plist_path"
+     "$plist_buddy" -c "Add :EnvironmentVariables dict" "$plist_path" 2>/dev/null || true
+     "$plist_buddy" -c "Set :EnvironmentVariables:$env_name $desired_value" "$plist_path" 2>/dev/null \
+       || "$plist_buddy" -c "Add :EnvironmentVariables:$env_name string $desired_value" "$plist_path"
 }
 
 verify_ollama_sync_homebrew_ollama_plist() {
-  verify_ollama_sync_plist_keep_alive "$HOME/Library/LaunchAgents/homebrew.mxcl.ollama.plist"
-  verify_ollama_sync_plist_keep_alive "/opt/homebrew/opt/ollama/homebrew.mxcl.ollama.plist"
+  local desired_keep_alive=""
+  local desired_context_length=""
+
+  desired_keep_alive="$(verify_ollama_desired_keep_alive)"
+  desired_context_length="$(verify_ollama_desired_context_length)"
+
+  verify_ollama_set_plist_env_value "$HOME/Library/LaunchAgents/homebrew.mxcl.ollama.plist" OLLAMA_KEEP_ALIVE "$desired_keep_alive"
+  verify_ollama_set_plist_env_value "$HOME/Library/LaunchAgents/homebrew.mxcl.ollama.plist" OLLAMA_CONTEXT_LENGTH "$desired_context_length"
+  verify_ollama_set_plist_env_value "/opt/homebrew/opt/ollama/homebrew.mxcl.ollama.plist" OLLAMA_KEEP_ALIVE "$desired_keep_alive"
+  verify_ollama_set_plist_env_value "/opt/homebrew/opt/ollama/homebrew.mxcl.ollama.plist" OLLAMA_CONTEXT_LENGTH "$desired_context_length"
+}
+
+verify_ollama_sync_ollama_env() {
+  local desired_keep_alive=""
+  local desired_context_length=""
+  local current_keep_alive=""
+  local current_context_length=""
+
+     [[ "$(uname -s)" == "Darwin" ]] || return 0
+  command -v launchctl >/dev/null 2>&1 || return 0
+
+  desired_keep_alive="$(verify_ollama_desired_keep_alive)"
+  desired_context_length="$(verify_ollama_desired_context_length)"
+
+  current_keep_alive="$(verify_ollama_current_env_value OLLAMA_KEEP_ALIVE)"
+  current_context_length="$(verify_ollama_current_env_value OLLAMA_CONTEXT_LENGTH)"
+
+     [[ "$current_keep_alive" == "$desired_keep_alive" && "$current_context_length" == "$desired_context_length" ]] && return 0
+
+  verify_ollama_set_env_value OLLAMA_KEEP_ALIVE "$desired_keep_alive" 2>/dev/null || true
+  verify_ollama_set_env_value OLLAMA_CONTEXT_LENGTH "$desired_context_length" 2>/dev/null || true
+  verify_ollama_sync_homebrew_ollama_plist
 }
 
 verify_ollama_sync_ollama_keep_alive() {
-  local desired_keep_alive="${OLLAMA_KEEP_ALIVE:-30m}"
-  local current_keep_alive=""
-
-  [[ "$(uname -s)" == "Darwin" ]] || return 0
-  command -v launchctl >/dev/null 2>&1 || return 0
-
-  current_keep_alive="$(launchctl getenv OLLAMA_KEEP_ALIVE 2>/dev/null || true)"
-  [[ "$current_keep_alive" == "$desired_keep_alive" ]] && return 0
-
-  launchctl setenv OLLAMA_KEEP_ALIVE "$desired_keep_alive" 2>/dev/null || true
-  verify_ollama_sync_homebrew_ollama_plist
+  verify_ollama_sync_ollama_env
 }
 
 verify_ollama_print_launch_agent_hint() {
   printf 'LaunchAgent: %s/link-file/Library/LaunchAgents/%s.plist\n' \
-    "$DOTFILES_ROOT" "$OLLAMA_LAUNCH_AGENT_LABEL"
-}
-
-verify_ollama_fail() {
-  local message="$1"
-  local next_step="$2"
-
-  printf 'FATAL: %s\n' "$message" >&2
-  printf 'next step: %s\n' "$next_step" >&2
-  return 1
-}
-
-verify_ollama_warn() {
-  local message="$1"
-  local next_step="$2"
-
-  printf 'FATAL: %s\n' "$message" >&2
-  printf 'next step: %s\n' "$next_step" >&2
-}
-
-verify_ollama_usage() {
-  cat <<EOF
-Usage: bin/verify_ollama [--fix]
-
-Options:
-  --fix   Repair the Homebrew Ollama plist and restart/start ollama when needed.
-  -h, --help  Show this help.
-EOF
+       "$DOTFILES_ROOT" "$OLLAMA_LAUNCH_AGENT_LABEL"
 }
 
 verify_ollama_parse_opts() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --fix)
+         --fix)
         VERIFY_OLLAMA_FIX=1
-        ;;
-      -h|--help)
+            ;;
+         --verbose)
+        VERIFY_OLLAMA_VERBOSE=1
+            ;;
+         -h|--help)
         verify_ollama_usage
         return 0
-        ;;
-      *)
+            ;;
+         *)
         printf 'FATAL: Unknown option: %s\n' "$1" >&2
         printf 'next step: run bin/verify_ollama --help\n' >&2
         return 1
-        ;;
+            ;;
     esac
     shift
   done
@@ -120,7 +169,7 @@ verify_ollama_parse_opts() {
 verify_ollama_plist_keep_alive() {
   local plist_path="$1"
 
-  "$OLLAMA_PLIST_BUDDY" -c 'Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE' "$plist_path" 2>/dev/null || true
+     "$OLLAMA_PLIST_BUDDY" -c 'Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE' "$plist_path" 2>/dev/null || true
 }
 
 verify_ollama_set_plist_keep_alive() {
@@ -134,9 +183,9 @@ verify_ollama_set_plist_keep_alive() {
     plist_cmd=("$OLLAMA_SUDO_CMD" "$OLLAMA_PLIST_BUDDY")
   fi
 
-  "${plist_cmd[@]}" -c "Add :EnvironmentVariables dict" "$plist_path" 2>/dev/null || true
-  "${plist_cmd[@]}" -c "Set :EnvironmentVariables:OLLAMA_KEEP_ALIVE $desired_keep_alive" "$plist_path" 2>/dev/null \
-    || "${plist_cmd[@]}" -c "Add :EnvironmentVariables:OLLAMA_KEEP_ALIVE string $desired_keep_alive" "$plist_path"
+     "${plist_cmd[@]}" -c "Add :EnvironmentVariables dict" "$plist_path" 2>/dev/null || true
+     "${plist_cmd[@]}" -c "Set :EnvironmentVariables:OLLAMA_KEEP_ALIVE $desired_keep_alive" "$plist_path" 2>/dev/null \
+       || "${plist_cmd[@]}" -c "Add :EnvironmentVariables:OLLAMA_KEEP_ALIVE string $desired_keep_alive" "$plist_path"
 }
 
 verify_ollama_running_pid() {
@@ -149,101 +198,164 @@ verify_ollama_running_command() {
   ps -p "$pid" -o command= 2>/dev/null | awk '{$1=$1; print}'
 }
 
-run_main() {
-  local desired_keep_alive=""
-  local plist_keep_alive=""
-  local running_pid=""
-  local running_command=""
-  local fix_applied=0
-  local restart_required=0
+verify_ollama_check_plist_env() {
+  local env_name="$1"
+  local desired_value="$2"
+  local plist_value=""
 
-  verify_ollama_parse_opts "$@" || return $?
+  plist_value="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" "$env_name")"
 
-  desired_keep_alive="$(verify_ollama_desired_keep_alive)"
-
-  if ! verify_ollama_is_macos; then
-    printf 'Skipping: Ollama launchd env setup is only needed on macOS.\n'
-    printf 'Desired OLLAMA_KEEP_ALIVE=%s\n' "$desired_keep_alive"
-    return 0
-  fi
-
-  if ! command -v launchctl >/dev/null 2>&1; then
-    printf 'FATAL: launchctl is not available.\n' >&2
-    return 1
-  fi
-
-  plist_keep_alive="$(verify_ollama_plist_keep_alive "$OLLAMA_HOMEBREW_PLIST")"
-  if [[ "$plist_keep_alive" != "$desired_keep_alive" ]]; then
+  if [[ "$plist_value" != "$desired_value" ]]; then
     if (( VERIFY_OLLAMA_FIX )); then
-      verify_ollama_warn \
-        "Homebrew Ollama plist $OLLAMA_HOMEBREW_PLIST does not set OLLAMA_KEEP_ALIVE=$desired_keep_alive (found: ${plist_keep_alive:-unset})." \
-        "bin/verify_ollama --fix, or edit $OLLAMA_HOMEBREW_PLIST, then run 'brew services restart ollama'"
-      printf 'editing: adding "OLLAMA_KEEP_ALIVE=%s" to %s\n' "$desired_keep_alive" "$OLLAMA_HOMEBREW_PLIST"
-      verify_ollama_set_plist_keep_alive "$OLLAMA_HOMEBREW_PLIST" "$desired_keep_alive"
-      plist_keep_alive="$(verify_ollama_plist_keep_alive "$OLLAMA_HOMEBREW_PLIST")"
-      if [[ "$plist_keep_alive" == "$desired_keep_alive" ]]; then
-        fix_applied=1
-        printf 'done, edit successful\n'
-        restart_required=1
+      printf "${C_RED}[FAIL]${C_0} Homebrew Ollama plist $OLLAMA_HOMEBREW_PLIST does not set $env_name=$desired_value (found: ${plist_value:-unset}).\n"
+      printf "${C_RED}next step: bin/verify_ollama --fix${C_0}\n"
+      printf 'editing: adding "%s=%s" to %s\n' "$env_name" "$desired_value" "$OLLAMA_HOMEBREW_PLIST"
+      verify_ollama_set_plist_env_value "$OLLAMA_HOMEBREW_PLIST" "$env_name" "$desired_value"
+      plist_value="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" "$env_name")"
+      if [[ "$plist_value" == "$desired_value" ]]; then
+        return 0
       else
-        printf 'FATAL: Homebrew Ollama plist repair did not stick (found: %s).\n' "${plist_keep_alive:-unset}" >&2
-        printf "next step: edit %s, then run 'brew services restart ollama'\n" "$OLLAMA_HOMEBREW_PLIST" >&2
+        printf "${C_RED}next step: edit $OLLAMA_HOMEBREW_PLIST, then run 'brew services restart ollama'${C_0}\n" >&2
         return 1
       fi
     else
-      verify_ollama_fail \
-        "Homebrew Ollama plist $OLLAMA_HOMEBREW_PLIST does not set OLLAMA_KEEP_ALIVE=$desired_keep_alive (found: ${plist_keep_alive:-unset})." \
-        "bin/verify_ollama --fix, or edit $OLLAMA_HOMEBREW_PLIST, then run 'brew services restart ollama'"
+      printf "${C_RED}[FAIL]${C_0} Homebrew Ollama plist $OLLAMA_HOMEBREW_PLIST does not set $env_name=$desired_value (found: ${plist_value:-unset}).\n"
+      printf "${C_RED}next step: bin/verify_ollama --fix${C_0}\n"
       return 1
     fi
   fi
+  printf "${C_GREEN}[PASS]${C_0} $OLLAMA_HOMEBREW_PLIST has $env_name=$desired_value\n"
+  return 0
+}
+
+verify_ollama_check_ollama_running() {
+  local running_pid=""
+  local running_command=""
 
   running_pid="$(verify_ollama_running_pid)"
   if [[ -z "$running_pid" ]]; then
-    if (( VERIFY_OLLAMA_FIX )); then
-      printf 'FATAL: Ollama is not running.\n' >&2
-      printf 'next step: brew services start ollama\n' >&2
+    printf "${C_RED}[FAIL]${C_0} Ollama is not running.\n"
+    printf "${C_RED}next step: brew services start ollama${C_0}\n"
+    return 1
+  fi
+
+  running_command="$(verify_ollama_running_command "$running_pid")"
+  if [[ "$running_command" != *"$OLLAMA_PROCESS_NAME serve"* ]]; then
+    printf "${C_RED}[FAIL]${C_0} Running process $running_pid does not look like ollama serve: $running_command\n"
+    printf "${C_RED}next step: brew services restart ollama${C_0}\n"
+    return 1
+  fi
+  printf "${C_GREEN}[PASS]${C_0} Ollama running: pid %s (%s)\n" "$running_pid" "$running_command"
+  return 0
+}
+
+verify_ollama_sync_env_vars() {
+  local env_name="$1"
+  local desired_value="$2"
+  local current_value=""
+
+  current_value="$(verify_ollama_current_env_value "$env_name")"
+
+  if [[ "$current_value" != "$desired_value" ]]; then
+    if verify_ollama_set_env_value "$env_name" "$desired_value" 2>/dev/null; then
+      printf "${C_GREEN}[PASS]${C_0} Set %s=%s for this login session.\n" "$env_name" "$desired_value"
     else
-      verify_ollama_fail \
-        "Ollama is not running." \
-        "brew services start ollama"
-      return 1
+      printf "${COLOR_YELLOW}[WARN]${C_0} Could not set %s=%s for this login session.\n" "$env_name" "$desired_value" >&2
+      printf "${COLOR_YELLOW}next step: run bin/verify_ollama without sudo, or set it manually with launchctl${C_0}\n" >&2
     fi
-  fi
-
-  if [[ -n "$running_pid" ]]; then
-    running_command="$(verify_ollama_running_command "$running_pid")"
-    if [[ "$running_command" != *"$OLLAMA_PROCESS_NAME serve"* ]]; then
-      verify_ollama_fail \
-        "Running process $running_pid does not look like ollama serve: $running_command" \
-        "brew services restart ollama"
-      return 1
-    fi
-  fi
-
-  if [[ "$(verify_ollama_current_keep_alive)" == "$desired_keep_alive" ]]; then
-    printf 'OLLAMA_KEEP_ALIVE already set to %s for this login session.\n' "$desired_keep_alive"
   else
-    verify_ollama_sync_ollama_keep_alive
-    if (( ! fix_applied )); then
-      restart_required=1
-    fi
-    printf 'Set OLLAMA_KEEP_ALIVE=%s for this login session.\n' "$desired_keep_alive"
+    printf "${C_GREEN}[PASS]${C_0} %s already set to %s for this login session.\n" "$env_name" "$desired_value"
+  fi
+}
+
+verify_ollama_print_summary() {
+  local plist_keep_alive="$1"
+  local plist_context_length="$2"
+  local running_pid="$3"
+  local running_command="$4"
+
+  if (( VERIFY_OLLAMA_VERBOSE )); then
+    printf 'DEBUG: plist_keep_alive=%s, plist_context_length=%s\n' "${plist_keep_alive:-unset}" "${plist_context_length:-unset}"
+    printf 'DEBUG: desired_keep_alive=%s, desired_context_length=%s\n' "$1" "$2"
+    printf 'DEBUG: current_keep_alive=%s, current_context_length=%s\n' \
+         "$(verify_ollama_current_keep_alive)" "$(verify_ollama_current_context_length)"
   fi
 
-  printf 'Homebrew plist: %s has OLLAMA_KEEP_ALIVE=%s\n' "$OLLAMA_HOMEBREW_PLIST" "$plist_keep_alive"
+  printf 'Homebrew plist: %s has OLLAMA_KEEP_ALIVE=%s, OLLAMA_CONTEXT_LENGTH=%s\n' \
+       "$OLLAMA_HOMEBREW_PLIST" "${plist_keep_alive:-unset}" "${plist_context_length:-unset}"
   if [[ -n "$running_pid" ]]; then
     printf 'Running ollama: pid %s (%s)\n' "$running_pid" "$running_command"
   else
     printf 'Running ollama: not running\n'
   fi
   verify_ollama_print_launch_agent_hint
+}
 
-  if (( VERIFY_OLLAMA_FIX )) && (( restart_required )); then
-    printf 'next step: brew services restart ollama\n'
-  elif (( restart_required )); then
-    printf 'Restart Ollama and any VS Code windows that should inherit the updated env.\n'
+run_main() {
+  local desired_keep_alive=""
+  local desired_context_length=""
+  local running_pid=""
+  local running_command=""
+  local plist_keep_alive=""
+  local plist_context_length=""
+  local fix_applied=0
+  local restart_required=0
+  local has_error=0
+
+  # Step 1: Parse command-line options
+  verify_ollama_parse_opts "$@" || return $?
+
+  # Step 2: Get desired values
+  desired_keep_alive="$(verify_ollama_desired_keep_alive)"
+  desired_context_length="$(verify_ollama_desired_context_length)"
+
+  # Step 3: Check if running on macOS
+  if ! verify_ollama_is_macos; then
+    printf 'Skipping: Ollama launchd env setup is only needed on macOS.\n'
+    printf 'Desired OLLAMA_KEEP_ALIVE=%s, OLLAMA_CONTEXT_LENGTH=%s\n' "$desired_keep_alive" "$desired_context_length"
+    return 0
   fi
+
+  # Step 4: Check if launchctl is available
+  if ! command -v launchctl >/dev/null 2>&1; then
+    printf "${C_RED}[FAIL]${C_0} launchctl is not available.\n"
+    printf "${C_RED}next step: install launchctl${C_0}\n" >&2
+    return 1
+  fi
+
+  # Step 5: Check plist for OLLAMA_KEEP_ALIVE
+  verify_ollama_check_plist_env "OLLAMA_KEEP_ALIVE" "$desired_keep_alive" || has_error=1
+
+  # Step 6: Check plist for OLLAMA_CONTEXT_LENGTH
+  verify_ollama_check_plist_env "OLLAMA_CONTEXT_LENGTH" "$desired_context_length" || has_error=1
+
+  # Step 7: Check if ollama is running
+  verify_ollama_check_ollama_running || has_error=1
+
+  # Step 8: Get running process info
+  running_pid="$(verify_ollama_running_pid)"
+  running_command="$(verify_ollama_running_command "$running_pid")"
+
+  # Step 9: Sync environment variables for current session
+  verify_ollama_sync_env_vars "OLLAMA_KEEP_ALIVE" "$desired_keep_alive"
+  verify_ollama_sync_env_vars "OLLAMA_CONTEXT_LENGTH" "$desired_context_length"
+
+  # Step 10: Get plist values for summary
+  plist_keep_alive="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" OLLAMA_KEEP_ALIVE)"
+  plist_context_length="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" OLLAMA_CONTEXT_LENGTH)"
+
+  # Step 11: Print summary
+  verify_ollama_print_summary "$desired_keep_alive" "$desired_context_length" "$running_pid" "$running_command"
+
+  # Step 12: Print next step if restart is required
+  if (( restart_required )); then
+    printf "${C_RED}next step: bin/verify_ollama --fix${C_0}\n"
+  fi
+
+  if (( has_error )); then
+    return 1
+  fi
+  return 0
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
