@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Check if Git is explicitly requesting a signing operation.
+# Git typically uses --detach-sign (-b), --clearsign, or --sign (-s) when making a commit.
+SHOULD_SIGN=false
+for arg in "$@"; do
+    if [[ "$arg" == "--detach-sign" || "$arg" == "-b" || "$arg" == "--clearsign" || "$arg" == "--sign" || "$arg" == "-s" ]]; then
+        SHOULD_SIGN=true
+        break
+    fi
+done
+
+# If we are NOT signing (e.g., git log, git verify-commit), bypass all cache checks
+# and pass execution straight to GPG immediately.
+if [ "$SHOULD_SIGN" = false ]; then
+    GPG_BIN=$(command -v gpg)
+    exec "$GPG_BIN" "$@"
+fi
+
+# ==============================================================================
+# BEYOND THIS POINT: We are definitely trying to SIGN data (e.g., git commit -S)
+# ==============================================================================
+
+# Dynamically pull the keygrip from your git config
+KEYGRIP=$(git config --get custom.gpgkeygrip)
+
+# Check if the keygrip is empty, missing, or still contains the template help string
+if [[ -z "$KEYGRIP" || "$KEYGRIP" == MISSING* ]]; then
+    cat >&2 <<'EOF'
+
+==========================================================
+ERROR: custom.gpgkeygrip is not configured in git config.
+To fix this, find your keygrip by running:
+    gpg --list-secret-keys --with-keygrip | grep -A 2 'sec'
+Then add it to your git config under [custom] gpgkeygrip.
+==========================================================
+EOF
+    exit 1
+fi
+
+# Ask the background gpg-agent daemon if this keygrip currently has a cached passphrase.
+# The daemon responds with "OK" if cached, or an error/blank if locked.
+IS_CACHED=$(gpg-connect-agent "KEYINFO $KEYGRIP" /bye 2>/dev/null | grep -E "6=1|OK.*1")
+
+if [[ -z "$IS_CACHED" ]]; then
+    # The passphrase is NOT cached. Abort cleanly before Cline hangs on an invisible prompt.
+    cat >&2 <<'EOF'
+
+==========================================================
+ABORTED: GPG signing passphrase is not cached in gpg-agent.
+Prevented a background tool/Cline from hanging indefinitely.
+Please sign something in an interactive terminal first:
+    echo "test" | gpg --clearsign
+==========================================================
+EOF
+    exit 1
+fi
+
+# Passphrase is safely cached. Hand off execution seamlessly to GPG.
+GPG_BIN=$(command -v gpg)
+exec "$GPG_BIN" --batch --no-tty "$@"

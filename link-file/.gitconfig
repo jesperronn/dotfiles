@@ -91,9 +91,9 @@
         smudge = git-lfs smudge -- %f
         process = git-lfs filter-process
 [commit]
-  gpgsign = false
+  gpsign = false
 [gpg]
-  program = gpg
+  program = ~/src/dotfiles/bin/git-gpg-wrapper
 
 # below a section to setup diffing of compressed/binary file formats
 [core]
