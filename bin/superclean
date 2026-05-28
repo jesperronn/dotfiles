@@ -21,6 +21,7 @@ SUPER_CLEAN_GROUP_RUBY=1
 SUPER_CLEAN_GROUP_GO=1
 SUPER_CLEAN_GROUP_BREW=1
 SUPER_CLEAN_GROUP_APPS=1
+SUPER_CLEAN_GROUP_ASSISTANTS=0
 SUPER_CLEAN_GROUP_LOGS=1
 SUPER_CLEAN_GROUP_HOOKS=1
 SUPER_CLEAN_GROUP_CONTAINERS=1
@@ -100,6 +101,8 @@ SUPER_CLEAN_CONTAINER_BREAKDOWN_PARENTS=5
 SUPER_CLEAN_CONTAINER_BREAKDOWN_CHILDREN=5
 SUPER_CLEAN_CORESIMULATOR_INVENTORY_LIMIT=8
 SUPER_CLEAN_SYSTEM_LIBRARY_INVENTORY_LIMIT=10
+SUPER_CLEAN_ASSISTANT_SESSION_STALE_DAYS=40
+SUPER_CLEAN_ASSISTANT_CANDIDATE_REVIEW_LIMIT=20
 
 SUPER_CLEAN_APP_SUPPORT_CACHE_NAMES=(
   "Cache"
@@ -179,6 +182,8 @@ superclean_usage() {
   printf '          Include or exclude Homebrew cleanup.\n'
   printf '  %s%s%s\n' "$flag_style" '--apps, --no-apps' "$reset_style"
   printf '          Include or exclude app/system cache cleanup and Library inventory reporting in dry-run mode.\n'
+  printf '  %s%s%s\n' "$flag_style" '--assistants, --no-assistants' "$reset_style"
+  printf '          Include or exclude AI assistant session/history cleanup.\n'
   printf '  %s%s%s\n' "$flag_style" '--logs, --no-logs' "$reset_style"
   printf '          Include or exclude aggressive log cleanup.\n'
   printf '  %s%s%s\n' "$flag_style" '--hooks, --no-hooks' "$reset_style"
@@ -410,6 +415,7 @@ superclean_enable_only_mode() {
   SUPER_CLEAN_GROUP_GO=0
   SUPER_CLEAN_GROUP_BREW=0
   SUPER_CLEAN_GROUP_APPS=0
+  SUPER_CLEAN_GROUP_ASSISTANTS=0
   SUPER_CLEAN_GROUP_LOGS=0
   SUPER_CLEAN_GROUP_HOOKS=0
   SUPER_CLEAN_GROUP_CONTAINERS=0
@@ -430,6 +436,7 @@ superclean_set_group() {
     go) SUPER_CLEAN_GROUP_GO=$value ;;
     brew) SUPER_CLEAN_GROUP_BREW=$value ;;
     apps) SUPER_CLEAN_GROUP_APPS=$value ;;
+    assistants) SUPER_CLEAN_GROUP_ASSISTANTS=$value ;;
     logs) SUPER_CLEAN_GROUP_LOGS=$value ;;
     hooks) SUPER_CLEAN_GROUP_HOOKS=$value ;;
     containers) SUPER_CLEAN_GROUP_CONTAINERS=$value ;;
@@ -450,6 +457,7 @@ superclean_group_enabled() {
     go) (( SUPER_CLEAN_GROUP_GO )) ;;
     brew) (( SUPER_CLEAN_GROUP_BREW )) ;;
     apps) (( SUPER_CLEAN_GROUP_APPS )) ;;
+    assistants) (( SUPER_CLEAN_GROUP_ASSISTANTS )) ;;
     logs) (( SUPER_CLEAN_GROUP_LOGS )) ;;
     hooks) (( SUPER_CLEAN_GROUP_HOOKS )) ;;
     containers) (( SUPER_CLEAN_GROUP_CONTAINERS )) ;;
@@ -471,6 +479,7 @@ superclean_group_description() {
     go) printf '%s' 'Go runtime caches' ;;
     brew) printf '%s' 'Homebrew caches' ;;
     apps) printf '%s' 'App and system caches' ;;
+    assistants) printf '%s' 'AI assistant session cleanup' ;;
     logs) printf '%s' 'Aggressive log cleanup' ;;
     hooks) printf '%s' 'Project cleanup hooks' ;;
     containers) printf '%s' 'Container prune commands' ;;
@@ -506,7 +515,7 @@ superclean_interactive_select_cleanup_groups() {
     fzf_args+=("$arg")
   done < <(superclean_fzf_multiselect_args)
 
-  for group in node java ruby go brew apps logs hooks containers downloads desktop documents ollama; do
+  for group in node java ruby go brew apps assistants logs hooks containers downloads desktop documents ollama; do
     superclean_group_enabled "$group" || continue
     rows+=("$(superclean_format_group_selector_row "$group")")
   done
@@ -530,6 +539,7 @@ superclean_interactive_select_cleanup_groups() {
       superclean_set_group go 0
       superclean_set_group brew 0
       superclean_set_group apps 0
+      superclean_set_group assistants 0
       superclean_set_group logs 0
       superclean_set_group hooks 0
       superclean_set_group containers 0
@@ -547,6 +557,7 @@ superclean_interactive_select_cleanup_groups() {
     superclean_set_group go 0
     superclean_set_group brew 0
     superclean_set_group apps 0
+    superclean_set_group assistants 0
     superclean_set_group logs 0
     superclean_set_group hooks 0
     superclean_set_group containers 0
@@ -564,7 +575,7 @@ superclean_interactive_select_cleanup_groups() {
   fi
 
   superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
-  for group in node java ruby go brew apps logs hooks containers downloads desktop documents ollama; do
+  for group in node java ruby go brew apps assistants logs hooks containers downloads desktop documents ollama; do
     superclean_group_enabled "$group" || continue
     if superclean_prompt_yes_no "Enable $(superclean_group_description "$group")?"; then
       continue
@@ -733,11 +744,11 @@ superclean_parse_args() {
       --no-sudo)
         SUPER_CLEAN_SUDO_ENABLED=0
         ;;
-      --node|--java|--ruby|--go|--brew|--apps|--logs|--hooks|--containers|--downloads|--desktop|--documents|--ollama)
+      --node|--java|--ruby|--go|--brew|--apps|--assistants|--logs|--hooks|--containers|--downloads|--desktop|--documents|--ollama)
         superclean_enable_only_mode
         superclean_set_group "${1#--}" 1
         ;;
-      --no-node|--no-java|--no-ruby|--no-go|--no-brew|--no-apps|--no-logs|--no-hooks|--no-containers|--no-downloads|--no-desktop|--no-documents|--no-ollama)
+      --no-node|--no-java|--no-ruby|--no-go|--no-brew|--no-apps|--no-assistants|--no-logs|--no-hooks|--no-containers|--no-downloads|--no-desktop|--no-documents|--no-ollama)
         superclean_set_group "${1#--no-}" 0
         ;;
       -h|--help)
@@ -1528,6 +1539,268 @@ superclean_apply_installed_app_support_cache_cleanup() {
   while IFS= read -r path; do
     [[ -n "$path" ]] && paths+=("$path")
   done < <(superclean_interactive_select_app_support_cache_paths)
+
+  for path in "${paths[@]}"; do
+    superclean_remove_path "$path"
+  done
+}
+
+superclean_assistant_stale_cutoff_epoch() {
+  local now
+
+  now=$(date +%s)
+  echo $(( now - (SUPER_CLEAN_ASSISTANT_SESSION_STALE_DAYS * 86400) ))
+}
+
+superclean_emit_assistant_candidate_paths() {
+  local path
+
+  if [[ -d "$HOME/.claude/debug" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'log' "$path"
+    done < <(find "$HOME/.claude/debug" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.codex/log" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'log' "$path"
+    done < <(find "$HOME/.codex/log" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.hermes/logs" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'log' "$path"
+    done < <(find "$HOME/.hermes/logs" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if (( ! SUPER_CLEAN_AGGRESSIVE )); then
+    return 0
+  fi
+
+  if [[ -d "$HOME/.copilot/jb" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.copilot/jb" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.copilot/history-session-state" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'history' "$path"
+    done < <(find "$HOME/.copilot/history-session-state" -mindepth 1 -maxdepth 1 -type f -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.config/github-copilot/iu/chat-agent-sessions" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.config/github-copilot/iu/chat-agent-sessions" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -f "$HOME/.claude/history.jsonl" ]]; then
+    printf '%s\t%s\n' 'history' "$HOME/.claude/history.jsonl"
+  fi
+
+  if [[ -d "$HOME/.claude/shell-snapshots" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.claude/shell-snapshots" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.claude/todos" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.claude/todos" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.codex/archived_sessions" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'archive' "$path"
+    done < <(find "$HOME/.codex/archived_sessions" -mindepth 1 -maxdepth 1 -type f -print 2>/dev/null | sort)
+  fi
+
+  if [[ -f "$HOME/.codex/history.jsonl" ]]; then
+    printf '%s\t%s\n' 'history' "$HOME/.codex/history.jsonl"
+  fi
+
+  if [[ -f "$HOME/.codex/session_index.jsonl" ]]; then
+    printf '%s\t%s\n' 'history' "$HOME/.codex/session_index.jsonl"
+  fi
+
+  if [[ -d "$HOME/.codex/sessions" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.codex/sessions" -mindepth 2 -maxdepth 2 -type d -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.codex/shell_snapshots" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.codex/shell_snapshots" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.cline/data/workspaces" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.cline/data/workspaces" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.hermes/sessions" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'session' "$path"
+    done < <(find "$HOME/.hermes/sessions" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.codex/tmp" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'cache' "$path"
+    done < <(find "$HOME/.codex/tmp" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.hermes/audio_cache" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'cache' "$path"
+    done < <(find "$HOME/.hermes/audio_cache" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+
+  if [[ -d "$HOME/.hermes/image_cache" ]]; then
+    while IFS= read -r path; do
+      [[ -n "$path" ]] || continue
+      printf '%s\t%s\n' 'cache' "$path"
+    done < <(find "$HOME/.hermes/image_cache" -mindepth 1 -maxdepth 1 \( -type d -o -type f \) -print 2>/dev/null | sort)
+  fi
+}
+
+superclean_emit_assistant_cleanup_rows() {
+  local cutoff_epoch kind path size_kb mtime_epoch
+
+  cutoff_epoch=$(superclean_assistant_stale_cutoff_epoch)
+
+  while IFS=$'\t' read -r kind path; do
+    [[ -n "$kind" && -n "$path" ]] || continue
+    [[ -e "$path" ]] || continue
+    if (( ! SUPER_CLEAN_AGGRESSIVE )); then
+      [[ "$kind" == 'log' ]] || continue
+    else
+      mtime_epoch=$(superclean_path_mtime_epoch "$path")
+      case "$kind" in
+        session|history|archive)
+          (( mtime_epoch > 0 && mtime_epoch <= cutoff_epoch )) || continue
+          ;;
+      esac
+    fi
+
+    size_kb=$(superclean_path_size_kb "$path")
+    mtime_epoch=${mtime_epoch:-0}
+    printf '%012d\t%012d\t%s\t%s\t%s\n' \
+      "$size_kb" \
+      "$mtime_epoch" \
+      "$kind" \
+      "$(superclean_format_mtime_epoch "$mtime_epoch")" \
+      "$path"
+  done < <(superclean_emit_assistant_candidate_paths | awk -F '\t' '!seen[$2]++ { print $0 }')
+}
+
+superclean_interactive_select_assistant_paths() {
+  local selected
+  local -a fzf_args=()
+
+  while IFS= read -r arg; do
+    [[ -n "$arg" ]] || continue
+    fzf_args+=("$arg")
+  done < <(superclean_fzf_multiselect_args)
+
+  if (( SUPER_CLEAN_HAS_FZF )); then
+    selected=$(superclean_emit_assistant_cleanup_rows | sort -rn | head -n "$SUPER_CLEAN_ASSISTANT_CANDIDATE_REVIEW_LIMIT" | fzf --multi \
+      --delimiter=$'\t' \
+      --with-nth=3,4,5 \
+      "${fzf_args[@]}" \
+      --prompt="Select AI assistant session files to remove > " \
+      --header="tab: mark  ctrl-a: all  ctrl-d: none  enter: continue  ctrl-c: abort" || true)
+
+    if [[ -n "$selected" ]]; then
+      printf '%s\n' "$selected" | awk -F '\t' '{print $5}'
+    fi
+    return 0
+  fi
+
+  superclean_log "Protip: Interactive cleanup is faster if you install \"fzf\" (\`brew install fzf\`)"
+  local size_human mtime_human kind path
+  while IFS=$'\t' read -r _size_kb _mtime_epoch kind mtime_human path; do
+    [[ -n "$path" ]] || continue
+    if superclean_prompt_yes_no "Remove $kind $path (updated $mtime_human)?"; then
+      printf '%s\n' "$path"
+    fi
+  done < <(superclean_emit_assistant_cleanup_rows | sort -rn | head -n "$SUPER_CLEAN_ASSISTANT_CANDIDATE_REVIEW_LIMIT")
+}
+
+superclean_plan_assistant_paths() {
+  local path size_kb mtime_epoch kind mtime_human
+  local found=0
+  local mode_label="assistant logs"
+
+  if (( SUPER_CLEAN_AGGRESSIVE )); then
+    mode_label="AGGRESSIVE assistant conversation/cache cleanup"
+  fi
+
+  if (( ! SUPER_CLEAN_DRY_RUN )); then
+    return 0
+  fi
+
+  superclean_info "[+] Review: AI assistant cleanup ($mode_label)"
+  while IFS=$'\t' read -r size_kb mtime_epoch kind mtime_human path; do
+    [[ -n "$path" ]] || continue
+    found=1
+    superclean_print_size_date_label_path_line "$size_kb" "$mtime_epoch" "$kind" "$path" 12
+  done < <(superclean_emit_assistant_cleanup_rows | sort -rn | head -n "$SUPER_CLEAN_ASSISTANT_CANDIDATE_REVIEW_LIMIT")
+
+  if (( ! found )); then
+    superclean_log '  - none found'
+  fi
+}
+
+superclean_apply_assistant_paths() {
+  local path has_candidates=0
+  local -a paths=()
+
+  superclean_group_enabled assistants || return 0
+
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    has_candidates=1
+    break
+  done < <(superclean_emit_assistant_cleanup_rows)
+
+  (( has_candidates )) || return 0
+
+  if (( SUPER_CLEAN_INTERACTIVE )); then
+    if (( SUPER_CLEAN_DRY_RUN )); then
+      superclean_info "[+] Interactive review: AI assistant sessions and history (dry-run)"
+    else
+      superclean_warn_orange "Interactive AI assistant session cleanup"
+    fi
+
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(superclean_interactive_select_assistant_paths)
+  else
+    while IFS= read -r path; do
+      [[ -n "$path" ]] && paths+=("$path")
+    done < <(superclean_emit_assistant_cleanup_rows)
+  fi
 
   for path in "${paths[@]}"; do
     superclean_remove_path "$path"
@@ -2943,6 +3216,8 @@ superclean_main() {
   superclean_apply_installed_app_support_cache_cleanup
   superclean_apply_system_paths
   superclean_apply_review_paths
+  superclean_plan_assistant_paths
+  superclean_apply_assistant_paths
 
   superclean_plan_hooks
   superclean_apply_hooks

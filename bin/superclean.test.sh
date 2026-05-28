@@ -33,6 +33,7 @@ superclean_reset_state() {
   SUPER_CLEAN_GROUP_GO=1
   SUPER_CLEAN_GROUP_BREW=1
   SUPER_CLEAN_GROUP_APPS=1
+  SUPER_CLEAN_GROUP_ASSISTANTS=0
   SUPER_CLEAN_GROUP_LOGS=1
   SUPER_CLEAN_GROUP_HOOKS=1
   SUPER_CLEAN_GROUP_CONTAINERS=1
@@ -51,6 +52,8 @@ superclean_reset_state() {
   SUPER_CLEAN_INSTALLED_APP_KEYS=""
   SUPER_CLEAN_LIVE_SCAN_ACTIVE=0
   SUPER_CLEAN_USER_FILE_REVIEW_LIMIT=30
+  SUPER_CLEAN_ASSISTANT_SESSION_STALE_DAYS=40
+  SUPER_CLEAN_ASSISTANT_CANDIDATE_REVIEW_LIMIT=20
   SUPER_CLEAN_ROOTS=(
     "$HOME/src"
     "$HOME/projects"
@@ -106,9 +109,19 @@ test_basic_flags_and_formatting() {
   superclean_reset_state
   superclean_parse_args --apps
   assert_eq "1" "$SUPER_CLEAN_GROUP_APPS" "apps group enabled"
+  assert_eq "0" "$SUPER_CLEAN_GROUP_ASSISTANTS" "apps-only mode leaves assistants disabled"
   assert_eq "0" "$SUPER_CLEAN_GROUP_NODE" "node group disabled by apps only mode"
   assert_eq "0" "$SUPER_CLEAN_GROUP_JAVA" "java group disabled by apps only mode"
   assert_eq "0" "$SUPER_CLEAN_GROUP_HOOKS" "hooks group disabled by apps only mode"
+
+  superclean_reset_state
+  superclean_parse_args --assistants
+  assert_eq "1" "$SUPER_CLEAN_GROUP_ASSISTANTS" "assistants group enabled"
+  assert_eq "0" "$SUPER_CLEAN_GROUP_APPS" "assistants positive selection disables apps"
+
+  superclean_reset_state
+  superclean_parse_args --no-assistants
+  assert_eq "0" "$SUPER_CLEAN_GROUP_ASSISTANTS" "no-assistants flag"
 
   superclean_reset_state
   superclean_parse_args --downloads --desktop
@@ -289,6 +302,126 @@ test_discovery_and_heuristics() {
   rm -rf "$tmp_root"
 }
 
+test_assistant_cleanup_discovery_and_cutoff() {
+  local tmp_root=""
+  local original_home=""
+  local stale_rows=""
+  local aggressive_rows=""
+
+  superclean_reset_state
+  tmp_root="$(mktemp -d)"
+  original_home="$HOME"
+  HOME="$tmp_root/home"
+
+  mkdir -p \
+    "$HOME/.copilot/jb/alpha" \
+    "$HOME/.copilot/jb/bravo" \
+    "$HOME/.copilot/history-session-state" \
+    "$HOME/.config/github-copilot/iu/chat-agent-sessions/session-a" \
+    "$HOME/.claude/debug" \
+    "$HOME/.claude/shell-snapshots/snap-a" \
+    "$HOME/.claude/todos" \
+    "$HOME/.codex/archived_sessions" \
+    "$HOME/.codex/log" \
+    "$HOME/.codex/sessions/2026/03" \
+    "$HOME/.codex/sessions/2026/05" \
+    "$HOME/.codex/shell_snapshots" \
+    "$HOME/.cline/data/workspaces/work-a" \
+    "$HOME/.hermes/sessions/session-a" \
+    "$HOME/.codex/tmp/cache-a" \
+    "$HOME/.codex/log" \
+    "$HOME/.hermes/logs/log-a" \
+    "$HOME/.hermes/audio_cache/audio-a" \
+    "$HOME/.hermes/image_cache/image-a"
+
+  printf 'log\n' >"$HOME/.claude/debug/log.txt"
+  printf 'old\n' >"$HOME/.copilot/jb/alpha/partition-1.jsonl"
+  printf 'recent\n' >"$HOME/.copilot/jb/bravo/partition-1.jsonl"
+  printf 'old\n' >"$HOME/.copilot/history-session-state/session-old.json"
+  printf 'old\n' >"$HOME/.config/github-copilot/iu/chat-agent-sessions/session-a/session.json"
+  printf 'old\n' >"$HOME/.claude/history.jsonl"
+  printf 'old\n' >"$HOME/.claude/shell-snapshots/snap-a/snapshot.sh"
+  printf 'old\n' >"$HOME/.claude/todos/todo.json"
+  printf 'old\n' >"$HOME/.codex/archived_sessions/archive.jsonl"
+  printf 'log\n' >"$HOME/.codex/log/log.txt"
+  printf 'old\n' >"$HOME/.codex/sessions/2026/03/session.jsonl"
+  printf 'recent\n' >"$HOME/.codex/sessions/2026/05/session.jsonl"
+  printf 'old\n' >"$HOME/.codex/shell_snapshots/snap.sh"
+  printf 'old\n' >"$HOME/.cline/data/workspaces/work-a/state.json"
+  printf 'old\n' >"$HOME/.hermes/sessions/session-a/session.json"
+  printf 'recent\n' >"$HOME/.codex/tmp/cache-a/cache.bin"
+  printf 'recent\n' >"$HOME/.codex/log/log.txt"
+  printf 'recent\n' >"$HOME/.hermes/logs/log-a/log.txt"
+  printf 'recent\n' >"$HOME/.hermes/audio_cache/audio-a/audio.bin"
+  printf 'recent\n' >"$HOME/.hermes/image_cache/image-a/image.bin"
+
+  touch -t 202403010000 \
+    "$HOME/.copilot/jb/alpha" \
+    "$HOME/.copilot/history-session-state/session-old.json" \
+    "$HOME/.config/github-copilot/iu/chat-agent-sessions/session-a" \
+    "$HOME/.claude/debug" \
+    "$HOME/.claude/history.jsonl" \
+    "$HOME/.claude/shell-snapshots/snap-a" \
+    "$HOME/.claude/todos/todo.json" \
+    "$HOME/.codex/archived_sessions/archive.jsonl" \
+    "$HOME/.codex/log" \
+    "$HOME/.codex/sessions/2026/03" \
+    "$HOME/.codex/shell_snapshots/snap.sh" \
+    "$HOME/.cline/data/workspaces/work-a" \
+    "$HOME/.hermes/sessions/session-a" \
+    "$HOME/.codex/tmp/cache-a" \
+    "$HOME/.codex/log/log.txt" \
+    "$HOME/.hermes/logs/log-a" \
+    "$HOME/.hermes/audio_cache/audio-a" \
+    "$HOME/.hermes/image_cache/image-a"
+
+  touch -t 202605200000 \
+    "$HOME/.copilot/jb/bravo" \
+    "$HOME/.codex/sessions/2026/05" \
+    "$HOME/.codex/tmp/cache-a" \
+    "$HOME/.codex/log/log.txt" \
+    "$HOME/.hermes/logs/log-a" \
+    "$HOME/.hermes/audio_cache/audio-a" \
+    "$HOME/.hermes/image_cache/image-a"
+
+  SUPER_CLEAN_ASSISTANT_SESSION_STALE_DAYS=40
+  SUPER_CLEAN_AGGRESSIVE=0
+  stale_rows="$(superclean_emit_assistant_cleanup_rows)"
+  assert_contains "$stale_rows" "$HOME/.claude/debug" "normal assistant cleanup includes claude logs"
+  assert_contains "$stale_rows" "$HOME/.codex/log" "normal assistant cleanup includes codex logs"
+  assert_contains "$stale_rows" "$HOME/.hermes/logs/log-a" "normal assistant cleanup includes hermes logs"
+  assert_not_contains "$stale_rows" "$HOME/.copilot/jb/alpha" "normal assistant cleanup skips copilot conversations"
+  assert_not_contains "$stale_rows" "$HOME/.copilot/history-session-state/session-old.json" "normal assistant cleanup skips copilot history"
+  assert_not_contains "$stale_rows" "$HOME/.config/github-copilot/iu/chat-agent-sessions/session-a" "normal assistant cleanup skips vscode copilot sessions"
+  assert_not_contains "$stale_rows" "$HOME/.claude/history.jsonl" "normal assistant cleanup skips claude history"
+  assert_not_contains "$stale_rows" "$HOME/.codex/archived_sessions/archive.jsonl" "normal assistant cleanup skips codex archives"
+  assert_not_contains "$stale_rows" "$HOME/.codex/sessions/2026/03" "normal assistant cleanup skips old codex session month"
+  assert_not_contains "$stale_rows" "$HOME/.cline/data/workspaces/work-a" "normal assistant cleanup skips cline workspaces"
+  assert_not_contains "$stale_rows" "$HOME/.hermes/sessions/session-a" "normal assistant cleanup skips hermes sessions"
+  assert_not_contains "$stale_rows" "$HOME/.codex/tmp/cache-a" "normal assistant cleanup skips aggressive-only cache targets"
+
+  SUPER_CLEAN_AGGRESSIVE=1
+  aggressive_rows="$(superclean_emit_assistant_cleanup_rows)"
+  assert_contains "$aggressive_rows" "$HOME/.copilot/jb/alpha" "aggressive assistant cleanup includes copilot jetbrains sessions"
+  assert_contains "$aggressive_rows" "$HOME/.copilot/history-session-state/session-old.json" "aggressive assistant cleanup includes copilot history"
+  assert_contains "$aggressive_rows" "$HOME/.config/github-copilot/iu/chat-agent-sessions/session-a" "aggressive assistant cleanup includes vscode copilot sessions"
+  assert_contains "$aggressive_rows" "$HOME/.claude/history.jsonl" "aggressive assistant cleanup includes claude history"
+  assert_contains "$aggressive_rows" "$HOME/.codex/archived_sessions/archive.jsonl" "aggressive assistant cleanup includes codex archives"
+  assert_contains "$aggressive_rows" "$HOME/.codex/sessions/2026/03" "aggressive assistant cleanup includes stale codex sessions"
+  assert_not_contains "$aggressive_rows" "$HOME/.codex/sessions/2026/05" "aggressive assistant cleanup still skips recent codex sessions"
+  assert_contains "$aggressive_rows" "$HOME/.cline/data/workspaces/work-a" "aggressive assistant cleanup includes cline workspaces"
+  assert_contains "$aggressive_rows" "$HOME/.hermes/sessions/session-a" "aggressive assistant cleanup includes hermes sessions"
+  assert_contains "$aggressive_rows" "$HOME/.codex/tmp/cache-a" "aggressive assistant cleanup includes codex temp cache"
+  assert_contains "$aggressive_rows" "$HOME/.claude/debug" "aggressive assistant cleanup includes claude logs"
+  assert_contains "$aggressive_rows" "$HOME/.codex/log/log.txt" "aggressive assistant cleanup includes codex logs"
+  assert_contains "$aggressive_rows" "$HOME/.hermes/logs/log-a" "aggressive assistant cleanup includes hermes logs"
+  assert_contains "$aggressive_rows" "$HOME/.hermes/audio_cache/audio-a" "aggressive assistant cleanup includes hermes audio cache"
+  assert_contains "$aggressive_rows" "$HOME/.hermes/image_cache/image-a" "aggressive assistant cleanup includes hermes image cache"
+
+  HOME="$original_home"
+  rm -rf "$tmp_root"
+}
+
 test_interactive_main_flow() {
   local tmp_root=""
   local order_log=""
@@ -316,6 +449,8 @@ test_interactive_main_flow() {
   superclean_apply_installed_app_support_cache_cleanup() { printf 'apply_installed_app_support_cache_cleanup\n' >>"$order_log"; }
   superclean_apply_system_paths() { printf 'apply_system_paths\n' >>"$order_log"; }
   superclean_apply_review_paths() { printf 'apply_review_paths\n' >>"$order_log"; }
+  superclean_plan_assistant_paths() { printf 'plan_assistant_paths\n' >>"$order_log"; }
+  superclean_apply_assistant_paths() { printf 'apply_assistant_paths\n' >>"$order_log"; }
   superclean_plan_hooks() { printf 'plan_hooks\n' >>"$order_log"; }
   superclean_apply_hooks() { printf 'apply_hooks\n' >>"$order_log"; }
   superclean_plan_deep_scan() { printf 'plan_deep_scan\n' >>"$order_log"; }
@@ -339,6 +474,8 @@ test_interactive_main_flow() {
     apply_installed_app_support_cache_cleanup \
     apply_system_paths \
     apply_review_paths \
+    plan_assistant_paths \
+    apply_assistant_paths \
     plan_hooks \
     apply_hooks \
     plan_deep_scan \
@@ -361,6 +498,8 @@ test_interactive_main_flow() {
   unset -f superclean_apply_installed_app_support_cache_cleanup
   unset -f superclean_apply_system_paths
   unset -f superclean_apply_review_paths
+  unset -f superclean_plan_assistant_paths
+  unset -f superclean_apply_assistant_paths
   unset -f superclean_plan_hooks
   unset -f superclean_apply_hooks
   unset -f superclean_plan_deep_scan
@@ -387,6 +526,8 @@ test_interactive_main_flow() {
     superclean_apply_installed_app_support_cache_cleanup() { printf FAIL >&2; } && \
     superclean_apply_system_paths() { printf FAIL >&2; } && \
     superclean_apply_review_paths() { printf FAIL >&2; } && \
+    superclean_plan_assistant_paths() { printf FAIL >&2; } && \
+    superclean_apply_assistant_paths() { printf FAIL >&2; } && \
     superclean_plan_hooks() { printf FAIL >&2; } && \
     superclean_apply_hooks() { printf FAIL >&2; } && \
     superclean_plan_deep_scan() { printf FAIL >&2; } && \
