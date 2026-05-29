@@ -17,6 +17,7 @@ VERIFY_OLLAMA_VERBOSE=0
 # ANSI colors
 C_GREEN='\033[0;32m'
 C_RED='\033[0;31m'
+C_ORANGE="\e[38;5;202m"
 C_0='\033[0m'
 
 verify_ollama_usage() {
@@ -260,8 +261,8 @@ verify_ollama_sync_env_vars() {
     if verify_ollama_set_env_value "$env_name" "$desired_value" 2>/dev/null; then
       printf "${C_GREEN}[PASS]${C_0} Set %s=%s for this login session.\n" "$env_name" "$desired_value"
     else
-      printf "${COLOR_YELLOW}[WARN]${C_0} Could not set %s=%s for this login session.\n" "$env_name" "$desired_value" >&2
-      printf "${COLOR_YELLOW}next step: run bin/verify_ollama without sudo, or set it manually with launchctl${C_0}\n" >&2
+      printf "${C_ORANGE}[WARN]${C_0} Could not set %s=%s for this login session.\n" "$env_name" "$desired_value" >&2
+      printf "${C_ORANGE}next step: run bin/verify_ollama without sudo, or set it manually with launchctl${C_0}\n" >&2
     fi
   else
     printf "${C_GREEN}[PASS]${C_0} %s already set to %s for this login session.\n" "$env_name" "$desired_value"

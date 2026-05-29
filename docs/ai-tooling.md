@@ -5,8 +5,8 @@ This repo keeps the local Ollama runtime, model aliases, and agent launch path a
 Current pieces:
 
 - `Brewfile` installs `ollama`, `github.copilot-chat`, and `codex`.
-- `source/91_ai_tools.sh` exports `OLLAMA_KEEP_ALIVE=30m` for shell sessions.
-- `link-file/Library/LaunchAgents/com.jesperronn.ollama-keep-alive.plist` runs `bin/verify_ollama` at login so GUI apps inherit the same Ollama keep-alive env.
+- `source/91_ai_tools.sh` exports `OLLAMA_KEEP_ALIVE=30m` and `OLLAMA_CONTEXT_LENGTH=524288` for shell sessions.
+- `link-file/Library/LaunchAgents/com.jesperronn.ollama-keep-alive.plist` runs `bin/verify_ollama` at login so GUI apps inherit the same Ollama env.
 - `link-file/.ollama/modelfiles/*.Modelfile` defines repo-managed Ollama aliases with pinned context windows.
 - `bin/local_agent` is the launcher for Codex, VS Code local-agent setup, and optional terminal-first local agents.
 
@@ -53,9 +53,21 @@ If the Homebrew Ollama plist or running service is wrong, repair it with:
 bin/verify_ollama --fix
 ```
 
-That command checks the current `launchctl` value and sets it to the repo default when needed.
+That command checks the current `launchctl` values and sets them to the repo defaults when needed.
 
-If you change the value later, update it in `source/91_ai_tools.sh` and rerun your dotfiles link/init step so the LaunchAgent symlink stays current.
+If the service is already running, restart it with:
+
+```sh
+brew services restart ollama
+```
+
+If the service is stopped, start it with:
+
+```sh
+brew services start ollama
+```
+
+If you change either value later, update it in `source/91_ai_tools.sh` and rerun your dotfiles link/init step so the LaunchAgent symlink stays current.
 
 ## Shared model aliases
 

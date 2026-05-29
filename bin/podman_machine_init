@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTFILES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_MACHINE_NAME="podman-machine-default"
+IGNITION_PATH="${DOTFILES_DIR}/link-dir/.config/containers/podman/machine/applehv/podman-machine-default.ign"
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+print_usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [machine_name]
+
+Initializes the tracked Podman machine if it is missing and starts it.
+The tracked ignition file is reused when present so VM-local config is restored.
+See docs/podman-rootless-plan.md for the intended rootless end state.
+EOF
+}
+
+get_default_podman_machine_name() {
+  local machine_list
+
+  machine_list="$(podman machine list 2>/dev/null || true)"
+  [[ -n "$machine_list" ]] || return 1
+  printf '%s\n' "$machine_list" | awk '
+    NR > 1 {
+      name = $1
+      sub(/\*$/, "", name)
+      if ($1 ~ /\*$/) {
+        print name
+        exit
+      }
+      if (NR == 2 && name != "") {
+        single = name
+      }
+    }
+    END {
+      if (single != "") {
+        print single
+      }
+    }
+  '
+}
+
+resolve_machine_name() {
+  local machine_name="${1:-}"
+
+  if [[ -n "$machine_name" ]]; then
+    printf '%s\n' "$machine_name"
+    return 0
+  fi
+
+  machine_name="$(get_default_podman_machine_name)"
+  if [[ -n "$machine_name" ]]; then
+    printf '%s\n' "$machine_name"
+    return 0
+  fi
+
+  printf '%s\n' "$DEFAULT_MACHINE_NAME"
+}
+
+machine_rootful_state() {
+  local machine_name="$1"
+
+  podman machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true
+}
+
+machine_connection_name() {
+  local machine_name="$1"
+  local rootful
+
+  rootful="$(machine_rootful_state "$machine_name")"
+  if [[ "$rootful" == "true" ]]; then
+    printf '%s-root\n' "$machine_name"
+  else
+    printf '%s\n' "$machine_name"
+  fi
+}
+
+converge_machine_state() {
+  local machine_name="$1"
+  local rootful
+  local connection_name
+  local socket_path
+
+  rootful="$(machine_rootful_state "$machine_name")"
+  if [[ "$rootful" == "true" ]]; then
+    printf '🔧 Reconfiguring %s to rootless mode...\n' "$machine_name"
+    podman machine stop "$machine_name" >/dev/null 2>&1 || true
+    podman machine set --rootful=false "$machine_name"
+  fi
+
+  connection_name="$(machine_connection_name "$machine_name")"
+  printf '🚀 Starting Podman machine: %s\n' "$machine_name"
+  podman machine start "$machine_name" 2>/dev/null || printf 'ℹ️ Machine already running.\n'
+  socket_path="$(podman machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+  if [[ -n "$socket_path" ]]; then
+    mkdir -p "$HOME/.local/share/containers/podman/machine"
+    ln -sf "$socket_path" "$HOME/.local/share/containers/podman/machine/podman.sock"
+  fi
+  podman system connection default "$connection_name" >/dev/null 2>&1 || true
+}
+
+init_machine() {
+  local machine_name="$1"
+  local -a init_args
+  local connection_name
+
+  if podman machine inspect "$machine_name" >/dev/null 2>&1; then
+    printf '🚀 Starting Podman machine: %s\n' "$machine_name"
+  else
+    printf '🤖 Initializing fresh High-Performance Podman machine: %s\n' "$machine_name"
+    init_args=(
+      --cpus 6
+      --memory 9000
+      --disk-size 100
+      --rootful=false
+    )
+
+    if [[ -f "$IGNITION_PATH" ]]; then
+      init_args+=(--ignition-path "$IGNITION_PATH")
+    fi
+
+    podman machine init "${init_args[@]}" "$machine_name"
+    printf '🚀 Starting Podman machine: %s\n' "$machine_name"
+  fi
+
+  converge_machine_state "$machine_name"
+
+  connection_name="$(machine_connection_name "$machine_name")"
+  printf '🔗 Active Podman connection: %s\n' "$connection_name"
+}
+
+main() {
+  case "${1:-}" in
+    -h|--help)
+      print_usage
+      exit 0
+      ;;
+  esac
+
+  if ! have_command podman; then
+    printf '❌ podman is not installed or not on PATH\n' >&2
+    exit 1
+  fi
+
+  init_machine "$(resolve_machine_name "${1:-}")"
+}
+
+main "$@"

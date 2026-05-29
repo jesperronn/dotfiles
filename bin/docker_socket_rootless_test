@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+HOST_PORT=8080
+WHOAMI_HOST="whoami.docker.localhost"
+TRAEFIK_HOST="traefik.docker.localhost"
+WORK_DIR=""
+KEEP_WORK_DIR=0
+SOCKET_PATH=""
+MOUNT_SOCKET_PATH=""
+COMPOSE_CMD=()
+COMPOSE_FILE=""
+COMPOSE_PROJECT_NAME="traefik-label-test"
+FAILED=0
+
+usage() {
+  cat <<EOF
+Usage: $SCRIPT_NAME [options]
+
+Verifies a minimal Traefik setup that routes by Docker labels on a port above 443.
+
+Options:
+  -p, --port PORT            Host port to bind Traefik to (default: 8080)
+      --host HOST            Hostname for the whoami route (default: whoami.docker.localhost)
+      --traefik-host HOST    Hostname for the Traefik dashboard route (default: traefik.docker.localhost)
+      --socket PATH          Docker/Podman socket to mount into Traefik
+      --work-dir DIR         Use a specific work directory
+      --keep-work-dir        Keep the generated compose file and logs
+  -h, --help                 Show this help
+EOF
+}
+
+have_command() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+socket_path_is_vm_internal() {
+  [[ "$1" == /run/* ]]
+}
+
+default_vm_socket_path() {
+  local uid
+  uid="$(id -u)"
+
+  if have_command podman; then
+    local machine_name=""
+    local rootful=""
+
+    machine_name="$(podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+    if [[ -n "$machine_name" ]]; then
+      rootful="$(podman machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+      if [[ "$rootful" == "true" ]]; then
+        printf '/run/podman/podman.sock\n'
+        return 0
+      fi
+    fi
+  fi
+
+  printf '/run/user/%s/podman/podman.sock\n' "$uid"
+}
+
+choose_compose_command() {
+  if have_command podman && podman compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(podman compose)
+    return 0
+  fi
+
+  if have_command docker && docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker compose)
+    return 0
+  fi
+
+  if have_command docker-compose && docker-compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker-compose)
+    return 0
+  fi
+
+  return 1
+}
+
+parse_opts() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      -p|--port)
+        HOST_PORT="${2:-}"
+        shift 2
+        ;;
+      --host)
+        WHOAMI_HOST="${2:-}"
+        shift 2
+        ;;
+      --traefik-host)
+        TRAEFIK_HOST="${2:-}"
+        shift 2
+        ;;
+      --socket)
+        SOCKET_PATH="${2:-}"
+        shift 2
+        ;;
+      --work-dir)
+        WORK_DIR="${2:-}"
+        shift 2
+        ;;
+      --keep-work-dir)
+        KEEP_WORK_DIR=1
+        shift
+        ;;
+      *)
+        printf 'Unknown option: %s\n' "$1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+parse_prereqs() {
+  if ! have_command curl; then
+    printf '❌ curl is required\n' >&2
+    exit 1
+  fi
+
+  if ! have_command mktemp; then
+    printf '❌ mktemp is required\n' >&2
+    exit 1
+  fi
+
+  if ! choose_compose_command; then
+    printf "%s\n" "❌ neither \`podman compose\` nor \`docker compose\` is available" >&2
+    exit 1
+  fi
+
+  if [[ -z "$SOCKET_PATH" ]]; then
+    if [[ -n "${TRAEFIK_DOCKER_SOCKET:-}" ]]; then
+      SOCKET_PATH="${TRAEFIK_DOCKER_SOCKET}"
+    elif have_command podman; then
+      SOCKET_PATH="$(default_vm_socket_path)"
+    elif [[ -e "${HOME}/.local/share/containers/podman/machine/podman.sock" ]]; then
+      SOCKET_PATH="${HOME}/.local/share/containers/podman/machine/podman.sock"
+    elif [[ -e /var/run/docker.sock ]]; then
+      SOCKET_PATH="/var/run/docker.sock"
+    fi
+  fi
+
+  if [[ -z "$SOCKET_PATH" ]]; then
+    printf '❌ no Docker-compatible socket was found\n' >&2
+    printf '    next: run podman_troubleshoot --fix, or set --socket /path/to/docker.sock\n' >&2
+    exit 1
+  fi
+
+  if ! socket_path_is_vm_internal "$SOCKET_PATH" && [[ ! -e "$SOCKET_PATH" ]]; then
+    printf '❌ socket not found: %s\n' "$SOCKET_PATH" >&2
+    printf '    next: run podman_troubleshoot --fix, or point --socket at a live socket\n' >&2
+    exit 1
+  fi
+
+  MOUNT_SOCKET_PATH="$SOCKET_PATH"
+  if socket_path_is_vm_internal "$SOCKET_PATH"; then
+    MOUNT_SOCKET_PATH="$SOCKET_PATH"
+  elif have_command python3; then
+    MOUNT_SOCKET_PATH="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$SOCKET_PATH" 2>/dev/null || true)"
+  elif have_command realpath; then
+    MOUNT_SOCKET_PATH="$(realpath "$SOCKET_PATH" 2>/dev/null || true)"
+  elif have_command readlink; then
+    MOUNT_SOCKET_PATH="$(readlink "$SOCKET_PATH" 2>/dev/null || true)"
+  fi
+  if [[ -z "$MOUNT_SOCKET_PATH" ]]; then
+    MOUNT_SOCKET_PATH="$SOCKET_PATH"
+  fi
+  if [[ ! -e "$MOUNT_SOCKET_PATH" ]]; then
+    MOUNT_SOCKET_PATH="$SOCKET_PATH"
+  fi
+
+  if [[ -z "$WORK_DIR" ]]; then
+    WORK_DIR="$(mktemp -d)"
+  else
+    mkdir -p "$WORK_DIR"
+  fi
+
+  COMPOSE_FILE="${WORK_DIR}/compose.yml"
+}
+
+cleanup() {
+  if [[ "$FAILED" -eq 1 ]]; then
+    KEEP_WORK_DIR=1
+  fi
+
+  if [[ ${#COMPOSE_CMD[@]} -gt 0 && -f "$COMPOSE_FILE" ]]; then
+    "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT_NAME" down -v --remove-orphans >/dev/null 2>&1 || true
+  fi
+
+  if [[ "$KEEP_WORK_DIR" -ne 1 && -n "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+
+print_failure_diagnostics() {
+  FAILED=1
+
+  printf '\n❌ docker_socket_rootless_test failed\n' >&2
+  printf '    compose file: %s\n' "$COMPOSE_FILE" >&2
+  printf '    work dir kept for inspection: %s\n' "$WORK_DIR" >&2
+  printf '    socket path: %s\n' "$SOCKET_PATH" >&2
+  printf '    mounted socket path: %s\n' "$MOUNT_SOCKET_PATH" >&2
+
+  if [[ -f "$COMPOSE_FILE" ]]; then
+    printf '\n== compose.yml ==\n' >&2
+    sed 's/^/    /' "$COMPOSE_FILE" >&2 || true
+  fi
+
+  if [[ ${#COMPOSE_CMD[@]} -gt 0 && -f "$COMPOSE_FILE" ]]; then
+    printf '\n== compose ps ==\n' >&2
+    "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT_NAME" ps >&2 || true
+
+    printf '\n== traefik logs ==\n' >&2
+    "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT_NAME" logs --no-color --tail=10 traefik >&2 || true
+
+    printf '\n== whoami logs ==\n' >&2
+    "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT_NAME" logs --no-color --tail=10 whoami >&2 || true
+  fi
+
+  printf '\nnext:\n' >&2
+  printf '    rerun with: %s --keep-work-dir%s\n' "$SCRIPT_NAME" "${SOCKET_PATH:+ --socket $SOCKET_PATH}" >&2
+  printf '    inspect the kept workdir and the logs above\n' >&2
+}
+
+write_compose_file() {
+  cat >"$COMPOSE_FILE" <<EOF
+services:
+  traefik:
+    image: traefik:v3.0
+    user: "0:0"
+    security_opt:
+      - label=disable
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:8080
+    ports:
+      - "${HOST_PORT}:8080"
+    volumes:
+      - "${MOUNT_SOCKET_PATH}:/var/run/docker.sock"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.entrypoints=web
+      - traefik.http.routers.dashboard.rule=Host(\`${TRAEFIK_HOST}\`)
+      - traefik.http.routers.dashboard.service=api@internal
+
+  whoami:
+    image: traefik/whoami:v1.10.3
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.entrypoints=web
+      - traefik.http.routers.whoami.rule=Host(\`${WHOAMI_HOST}\`)
+      - traefik.http.services.whoami.loadbalancer.server.port=80
+EOF
+}
+
+wait_for_http() {
+  local host_header="$1"
+  local url="$2"
+  local expected="$3"
+  local attempt=1
+  local response=""
+
+  while [[ $attempt -le 30 ]]; do
+    response="$(curl -fsS -H "Host: ${host_header}" "$url" 2>/dev/null || true)"
+    if printf '%s\n' "$response" | grep -q "$expected"; then
+      printf '%s\n' "$response"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  printf '%s\n' "$response"
+  return 1
+}
+
+wait_for_dashboard() {
+  local host_header="$1"
+  local url="$2"
+  local response=""
+  local attempt=1
+
+  while [[ $attempt -le 30 ]]; do
+    response="$(curl -fsS -H "Host: ${host_header}" "$url" 2>/dev/null || true)"
+    if printf '%s\n' "$response" | grep -q 'whoami@docker'; then
+      printf '%s\n' "$response"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  printf '%s\n' "$response"
+  return 1
+}
+
+run_main() {
+  parse_opts "$@"
+  parse_prereqs
+  trap cleanup EXIT
+
+  write_compose_file
+
+  printf 'Using compose file: %s\n' "$COMPOSE_FILE"
+  "${COMPOSE_CMD[@]}" -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT_NAME" up -d --remove-orphans --quiet-pull
+
+  printf 'Checking whoami route on http://%s:%s/\n' "$WHOAMI_HOST" "$HOST_PORT"
+  if ! wait_for_http "$WHOAMI_HOST" "http://127.0.0.1:${HOST_PORT}/" "Hostname:"; then
+    print_failure_diagnostics
+    return 1
+  fi
+
+  printf 'Checking Traefik dashboard data on http://%s:%s/api/rawdata\n' "$TRAEFIK_HOST" "$HOST_PORT"
+  if ! wait_for_dashboard "$TRAEFIK_HOST" "http://127.0.0.1:${HOST_PORT}/api/rawdata"; then
+    print_failure_diagnostics
+    return 1
+  fi
+
+  printf '✅ Docker socket rootless routing is working on port %s\n' "$HOST_PORT"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi

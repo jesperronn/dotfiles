@@ -11,17 +11,19 @@
 #
 # PITFALLS COVERED:
 # - Alias Overlap: Script blocks execution if 'alias docker' is detected in dotfiles.
-# - Transient Sockets: Includes 'podman-fix' to re-sync links when the VM restarts.
+# - Transient Sockets: Includes 'podman_fix' to re-sync links when the VM restarts.
 # - Path Conflicts: Surgically removes legacy binaries while sparing Homebrew paths.
+#
+# ARCHITECTURE NOTE:
+# The maintained end-state plan for this setup lives in:
+#   docs/podman-rootless-plan.md
+# Read that doc before changing docker.sock mounts, Traefik socket access, or
+# the rootless/rootful machine assumptions in this script.
 
 # --- Configuration & Variables ---
-STABLE_USER_SOCK=".local/share/containers/podman/machine/podman.sock"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DOTFILES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-get_default_podman_machine_name() {
-    podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
-}
+STABLE_USER_SOCK=".local/share/containers/podman/machine/podman.sock"
 
 detect_shell() {
     if [[ "$SHELL" == *"zsh"* ]]; then
@@ -102,45 +104,51 @@ install_tooling() {
 }
 
 init_podman() {
-    local MACHINE_NAME
-    MACHINE_NAME="$(get_default_podman_machine_name)"
-    if [[ -z "$MACHINE_NAME" ]]; then
-        MACHINE_NAME="podman-machine-default"
-    fi
-
-    if ! podman machine inspect "$MACHINE_NAME" >/dev/null 2>&1; then
-        echo "🤖 Initializing fresh High-Performance Podman machine: ${MACHINE_NAME}"
-        # Simplified for Podman 5.7.1 compatibility
-        # Defaults to AppleHV + VirtioFS on M-series Macs
-        podman machine init \
-            --name "$MACHINE_NAME" \
-            --cpus 6 \
-            --memory 9000 \
-            --disk-size 100 \
-            --rootful=false
-    fi
-
-    echo "🚀 Starting Podman machine: ${MACHINE_NAME}"
-    podman machine start "$MACHINE_NAME" 2>/dev/null || echo "ℹ️ Machine already running."
+    "$DOTFILES_DIR/bin/podman_machine_init" "${1:-}"
 }
 configure_shell() {
     echo "📝 Injecting configuration into $CONF_FILE..."
 
-    # 1. Inject podman-fix function
-    if ! grep -q "podman-fix()" "$CONF_FILE"; then
+    # 1. Inject podman_fix function
+    if ! grep -q "podman_fix()" "$CONF_FILE"; then
         cat << 'EOF' >> "$CONF_FILE"
 
 # Returns the default Podman machine name so socket helpers and CLI defaults stay aligned.
-podman-default-machine-name() {
-    podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+podman_default_machine_name() {
+    local MACHINE_LIST
+    MACHINE_LIST="$(podman machine list 2>/dev/null || true)"
+    [ -n "${MACHINE_LIST}" ] || return 1
+    printf '%s\n' "${MACHINE_LIST}" | awk '
+        NR > 1 {
+            name = $1
+            sub(/\*$/, "", name)
+            if ($1 ~ /\*$/) {
+                print name
+                exit
+            }
+            if (NR == 2 && name != "") {
+                single = name
+            }
+        }
+        END {
+            if (single != "") {
+                print single
+            }
+        }
+    '
 }
 
 # Refreshes the user-space symlink to the transient Podman VM socket
-podman-fix() {
+podman_fix() {
     local MACHINE_NAME
-    MACHINE_NAME="$(podman-default-machine-name)"
+    MACHINE_NAME="$(podman_default_machine_name)"
     if [ -z "${MACHINE_NAME}" ]; then
-        echo "❌ No default Podman machine is configured."
+        MACHINE_NAME="$(podman system connection list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+        MACHINE_NAME="${MACHINE_NAME%-root}"
+    fi
+
+    if [ -z "${MACHINE_NAME}" ]; then
+        echo "❌ No current Podman machine is configured."
         return 0
     fi
 
@@ -153,8 +161,23 @@ podman-fix() {
     local STABLE_SOCK="${HOME}/.local/share/containers/podman/machine/podman.sock"
     mkdir -p "$(dirname "${STABLE_SOCK}")"
     ln -sf "${CURRENT_VM_SOCK}" "${STABLE_SOCK}"
-    podman system connection default "${MACHINE_NAME}" >/dev/null 2>&1 || true
+    local CONNECTION_NAME
+    CONNECTION_NAME="$(podman machine inspect "${MACHINE_NAME}" --format '{{.Rootful}}' 2>/dev/null)"
+    if [ "$CONNECTION_NAME" = "true" ]; then
+        CONNECTION_NAME="${MACHINE_NAME}-root"
+    else
+        CONNECTION_NAME="${MACHINE_NAME}"
+    fi
+    podman system connection default "${CONNECTION_NAME}" >/dev/null 2>&1 || true
     echo "🔗 Symlink refreshed: ${STABLE_SOCK} -> ${CURRENT_VM_SOCK}"
+}
+
+podman-default-machine-name() {
+    podman_default_machine_name "$@"
+}
+
+podman-fix() {
+    podman_fix "$@"
 }
 EOF
     fi
@@ -179,13 +202,17 @@ EOF
     fi
 
     # 5. Provide a helper function for port 443
-    if ! grep -q "podman-allow-port-443" "${CONF_FILE}"; then
+    if ! grep -q "podman_allow_port_443" "${CONF_FILE}"; then
         cat << 'EOF' >> "${CONF_FILE}"
 
 # Allows rootless Podman containers to listen on privileged ports like 443.
-podman-allow-port-443() {
+podman_allow_port_443() {
     echo "⚠️ Running sudo inside the Podman VM to open port 443 (one-time change)."
     podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+}
+
+podman-allow-port-443() {
+    podman_allow_port_443 "$@"
 }
 EOF
     fi
@@ -316,9 +343,12 @@ PY
 
 setup_binaries() {
     echo "🔗 Creating global binary shims for script compatibility..."
-    local PODMAN_BIN=$(which podman)
-    local COMPOSE_BIN="$(brew --prefix)/bin/docker-compose"
+    local PODMAN_BIN
+    local COMPOSE_BIN
     local TARGET_DIR="/usr/local/bin"
+
+    PODMAN_BIN=$(which podman)
+    COMPOSE_BIN="$(brew --prefix)/bin/docker-compose"
 
 
     # Link 'docker' -> 'podman'
@@ -342,7 +372,9 @@ setup_links() {
 
     echo "🔗 Linking stable user socket..."
     mkdir -p "$(dirname "${HOME}/${STABLE_USER_SOCK}")"
-    local CURRENT_VM_SOCK=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)
+    local CURRENT_VM_SOCK
+
+    CURRENT_VM_SOCK=$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)
     if [ -n "$CURRENT_VM_SOCK" ]; then
         ln -sf "$CURRENT_VM_SOCK" "${HOME}/${STABLE_USER_SOCK}"
     fi
@@ -367,7 +399,7 @@ ensure_privileged_ports() {
     if podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system" >/dev/null; then
         echo "🔓 Podman VM updated: containers can now bind to port 443."
     else
-        echo "❌ Failed to update the privileged port limit. Please rerun 'podman-allow-port-443' manually after starting the VM."
+        echo "❌ Failed to update the privileged port limit. Please rerun 'podman_allow_port_443' manually after starting the VM."
     fi
 }
 

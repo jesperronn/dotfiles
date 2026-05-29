@@ -4,8 +4,14 @@ set -u
 # shellcheck shell=bash
 
 SCRIPT_NAME="$(basename "$0")"
-IMAGE_NAME="${1:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME=""
+FIX_MODE=0
+FORCE_MODE=0
 FAILURES=0
+LOG_HEALTH_FAILURES=0
+LOG_EMERGENCY_FAILURES=0
+START_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_START_TIMEOUT_SECONDS:-90}"
 
 if [[ -n "${NO_COLOR:-}" ]]; then
   C_RESET=""
@@ -50,6 +56,7 @@ show_detail() {
   while IFS= read -r line; do
     printf '    %s\n' "$line"
   done <<<"$detail"
+  return 0
 }
 
 capture_command() {
@@ -61,8 +68,11 @@ capture_command() {
   local status=0
   output_file="$(mktemp)"
 
-  "$@" >"$output_file" 2>&1
-  status=$?
+  if "$@" >"$output_file" 2>&1; then
+    status=0
+  else
+    status=$?
+  fi
 
   printf -v "$output_var" '%s' "$(<"$output_file")"
   rm -f "$output_file"
@@ -98,16 +108,20 @@ run_check() {
 
 print_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME [image_name]
+Usage: $SCRIPT_NAME [--fix] [--force] [image_name]
 
 Examples:
   $SCRIPT_NAME
+  $SCRIPT_NAME --fix
+  $SCRIPT_NAME --fix --force
   $SCRIPT_NAME postgres:18.3-alpine
   $SCRIPT_NAME quay.io/libpod/alpine:latest
 
 Notes:
   - If no image is provided, only system and registry checks are run.
   - Image pull checks run only when an image name is provided.
+  - --fix prompts before each recovery step unless --force is also passed.
+  - For the intended rootless setup and docker.sock model, see docs/podman-rootless-plan.md.
   - Edit run_main() to comment checks in or out as needed.
 EOF
 }
@@ -120,6 +134,86 @@ have_jq() {
   have_command jq
 }
 
+PODMAN_BIN="$(type -P podman 2>/dev/null || true)"
+DOCKER_BIN="$(type -P docker 2>/dev/null || true)"
+
+podman() {
+  if [[ -n "$PODMAN_BIN" ]]; then
+    command "$PODMAN_BIN" "$@"
+  else
+    command podman "$@"
+  fi
+}
+
+docker() {
+  if [[ -n "$DOCKER_BIN" ]]; then
+    command "$DOCKER_BIN" "$@"
+  else
+    command docker "$@"
+  fi
+}
+
+podman_control() {
+  if [[ -n "$PODMAN_BIN" ]]; then
+    env -u DOCKER_HOST "$PODMAN_BIN" "$@"
+  else
+    env -u DOCKER_HOST podman "$@"
+  fi
+}
+
+stable_podman_socket_path() {
+  printf '%s/.local/share/containers/podman/machine/podman.sock' "$HOME"
+}
+
+trim_trailing_slash() {
+  local path="$1"
+  while [[ "$path" != "/" && "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  printf '%s\n' "$path"
+}
+
+podman_current_machine_name() {
+  local machine_list_json
+  local machine_name
+
+  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  if [[ -n "$machine_list_json" ]]; then
+    machine_name="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+    if [[ -n "$machine_name" ]]; then
+      printf '%s\n' "$machine_name"
+      return 0
+    fi
+
+    machine_name="$(printf '%s\n' "$machine_list_json" | jq -r 'if length == 1 then .[0].Name else empty end' 2>/dev/null | head -n1)"
+    if [[ -n "$machine_name" ]]; then
+      printf '%s\n' "$machine_name"
+      return 0
+    fi
+  fi
+
+  machine_name="$(podman_default_connection_name || true)"
+  if [[ -n "$machine_name" ]]; then
+    machine_name="${machine_name%-root}"
+    printf '%s\n' "$machine_name"
+    return 0
+  fi
+
+  return 1
+}
+
+podman_machine_connection_name() {
+  local machine_name="$1"
+  local rootful
+
+  rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+  if [[ "$rootful" == "true" ]]; then
+    printf '%s-root\n' "$machine_name"
+  else
+    printf '%s\n' "$machine_name"
+  fi
+}
+
 require_podman() {
   if ! have_command podman; then
     log_action "podman is not installed or not on PATH"
@@ -128,40 +222,372 @@ require_podman() {
   fi
 }
 
+print_rootless_socket_recovery_steps() {
+  cat <<'EOF'
+    next: run podman_troubleshoot --fix to converge the machine and socket state
+    next: if the machine still needs a manual reset, do this sequence:
+      podman_troubleshoot --fix
+      podman machine stop
+      podman machine set --rootful=false
+      podman machine start
+      podman_troubleshoot --fix
+      podman ps
+    next: if you need rootless Traefik or other Docker-compatible clients, point them at:
+      export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
+    next: if you need port 443 while staying rootless, run once after the VM starts:
+      podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        print_usage
+        exit 0
+        ;;
+      --fix)
+        FIX_MODE=1
+        ;;
+      --force)
+        FORCE_MODE=1
+        ;;
+      --)
+        shift
+        if [[ $# -gt 0 ]]; then
+          IMAGE_NAME="$1"
+          shift
+        fi
+        ;;
+      -*)
+        printf 'Unknown option: %s\n' "$1" >&2
+        print_usage >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "$IMAGE_NAME" ]]; then
+          printf 'Unexpected extra argument: %s\n' "$1" >&2
+          print_usage >&2
+          exit 1
+        fi
+        IMAGE_NAME="$1"
+        ;;
+    esac
+    shift
+  done
+}
+
+refresh_stable_podman_socket() {
+  local machine_name="$1"
+  local current_vm_sock
+  local stable_sock
+
+  current_vm_sock="$(podman_control machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+  [[ -n "$current_vm_sock" ]] || return 1
+
+  stable_sock="$(stable_podman_socket_path)"
+  mkdir -p "$(dirname "$stable_sock")"
+  ln -sf "$current_vm_sock" "$stable_sock"
+  printf 'stable socket: %s -> %s\n' "$stable_sock" "$current_vm_sock"
+}
+
+start_podman_machine() {
+  local machine_name="$1"
+  local output_file=""
+  local status=0
+  local waited=0
+  local pid=0
+
+  output_file="$(mktemp)"
+  podman_control machine start "$machine_name" >"$output_file" 2>&1 &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( waited >= START_TIMEOUT_SECONDS )); then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      cat "$output_file"
+      rm -f "$output_file"
+      printf 'start timed out after %ss\n' "$START_TIMEOUT_SECONDS"
+      return 124
+    fi
+
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  cat "$output_file"
+  rm -f "$output_file"
+  return "$status"
+}
+
+podman_machine_running() {
+  local machine_name="$1"
+  local machine_list_json
+
+  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  [[ -n "$machine_list_json" ]] || return 1
+  printf '%s\n' "$machine_list_json" | jq -e -r --arg name "$machine_name" '.[] | select(.Name == $name and .Running == true) | .Name' >/dev/null 2>&1
+}
+
+confirm_fix_step() {
+  local prompt="$1"
+  local reply=""
+
+  if [[ "$FORCE_MODE" == "1" ]]; then
+    return 0
+  fi
+
+  printf 'Run fix step: %s? [Y/n] ' "$prompt"
+  if ! IFS= read -r reply; then
+    printf '\n'
+    log_action "no confirmation received; skipping: $prompt"
+    printf '    next: rerun %s --fix --force to apply all fix steps non-interactively\n' "$SCRIPT_NAME"
+    return 1
+  fi
+
+  if [[ -z "$reply" || "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+    return 0
+  fi
+
+  log_action "skipped: $prompt"
+  return 1
+}
+
+run_fix_step() {
+  local ok_message="$1"
+  local prompt="$2"
+  shift 2
+
+  if ! confirm_fix_step "$prompt"; then
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status "$@"
+
+  if [[ $status -eq 0 ]] && ! podman_error_output "$output"; then
+    log_ok "$ok_message"
+    show_detail "$output"
+    return 0
+  fi
+
+  log_troubleshoot "$ok_message failed"
+  show_detail "$output"
+  return "$status"
+}
+
+verify_fix_result() {
+  local output=""
+  local status=0
+
+  log_section "Fix Verification"
+
+  capture_command output status podman ps
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|connection refused|failed to connect'; then
+    log_ok "podman ps succeeded after fix"
+    show_detail "$output"
+  else
+    log_troubleshoot "podman ps still failed after fix"
+    show_detail "$output"
+    return 1
+  fi
+
+  capture_command output status podman info
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|connection refused|failed to connect'; then
+    log_ok "podman info succeeded after fix"
+    return 0
+  fi
+
+  log_troubleshoot "podman info still failed after fix"
+  show_detail "$output"
+  return 1
+}
+
+run_fix_mode() {
+  log_section "Podman Fix"
+
+  if ! have_jq; then
+    log_troubleshoot "jq is required for --fix"
+    printf '    next: install jq and rerun %s --fix\n' "$SCRIPT_NAME"
+    return 1
+  fi
+
+  local machine_name
+  local connection_name
+  local rootful
+
+  machine_name="$(podman_current_machine_name || true)"
+  if [[ -z "$machine_name" ]]; then
+    log_troubleshoot "no Podman machine could be resolved"
+    printf '    next: run podman machine list\n'
+    printf '    next: if nothing is configured yet, run podman machine init && podman machine start\n'
+    return 1
+  fi
+
+  rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+  connection_name="$(podman_machine_connection_name "$machine_name")"
+
+  show_detail "machine: $machine_name
+rootful: ${rootful:-unknown}
+connection: $connection_name"
+
+  if [[ "$rootful" == "true" ]]; then
+    run_fix_step \
+      "machine switched to rootless mode" \
+      "stop $machine_name and run podman machine set --rootful=false" \
+      bash -lc "podman machine stop '$machine_name' && podman machine set --rootful=false '$machine_name'"
+    connection_name="$machine_name"
+  fi
+
+  if ! podman_machine_running "$machine_name"; then
+    if ! run_fix_step \
+      "Podman machine started" \
+      "start $machine_name" \
+      start_podman_machine "$machine_name"; then
+      check_machine_log_health
+      return 1
+    fi
+  else
+    log_ok "Podman machine is already running"
+  fi
+
+  run_fix_step \
+    "stable Podman socket refreshed" \
+    "refresh the stable Podman socket symlink" \
+    refresh_stable_podman_socket "$machine_name" || return 1
+
+  run_fix_step \
+    "default Podman connection aligned" \
+    "set the default Podman connection to $connection_name" \
+    podman_control system connection default "$connection_name" || return 1
+
+  verify_fix_result
+}
+
+check_podman_socket_connection() {
+  log_section "Podman Socket Connection"
+
+  local output=""
+  local status=0
+  capture_command output status podman ps
+
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|connection refused|failed to connect'; then
+    log_ok "podman ps succeeded; socket connection is healthy"
+    return 0
+  fi
+
+  FAILURES=$((FAILURES + 1))
+  if printf '%s\n' "$output" | grep -Eq 'connection refused|Cannot connect to Podman|failed to connect'; then
+    log_troubleshoot "Podman socket connection refused"
+    print_rootless_socket_recovery_steps
+    printf '    next: inspect current connection targets with: podman system connection list\n'
+    printf '    next: if start fails, inspect the vfkit log under /private/var/folders/.../podman/<machine>.log\n'
+    printf '    next: if Docker-compatible clients still fail, inspect /var/run/docker.sock ownership separately\n'
+  else
+    log_troubleshoot "podman ps failed"
+    printf '    next: run: podman info\n'
+    printf '    next: run: podman system connection list\n'
+  fi
+  show_detail "$output"
+  return 0
+}
+
 have_image_name() {
   [[ -n "$IMAGE_NAME" ]]
 }
 
+podman_error_output() {
+  local text="$1"
+  printf '%s\n' "$text" | grep -Eq 'Error:|Cannot connect to Podman|operation not permitted|vfkit exited unexpectedly|podman helper is installed, but was not able to claim the global docker sock'
+}
+
 podman_default_machine_name() {
-  podman machine list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+  local machine_list_json
+  local machine_name
+
+  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  [[ -n "$machine_list_json" ]] || return 1
+
+  machine_name="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+  if [[ -n "$machine_name" ]]; then
+    printf '%s\n' "$machine_name"
+    return 0
+  fi
+
+  machine_name="$(printf '%s\n' "$machine_list_json" | jq -r 'if length == 1 then .[0].Name else empty end' 2>/dev/null | head -n1)"
+  if [[ -n "$machine_name" ]]; then
+    printf '%s\n' "$machine_name"
+    return 0
+  fi
+
+  return 1
 }
 
 podman_default_connection_name() {
-  podman system connection list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
+  local connection_json
+
+  connection_json="$(podman_control system connection list --format json 2>/dev/null || true)"
+  [[ -n "$connection_json" ]] || return 1
+  printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
 }
 
 podman_machine_inventory_report() {
-  local machine_json
+  local machine_list_json
   local connection_json
   local default_machine
+  local current_machine
   local default_connection
+  local expected_connection
   local machine_count
   local default_connection_count
+  local status=0
 
-  machine_json="$(podman machine list --format json)"
-  connection_json="$(podman system connection list --format json)"
+  machine_list_json="$(podman_control machine list --format json 2>&1)"
+  status=$?
+  if [[ $status -ne 0 ]] || podman_error_output "$machine_list_json"; then
+    printf '%s\n' "$machine_list_json"
+    return 1
+  fi
 
-  default_machine="$(printf '%s\n' "$machine_json" | jq -r '.[] | select(.Default == true) | .Name' | head -n1)"
+  connection_json="$(podman_control system connection list --format json 2>&1)"
+  status=$?
+  if [[ $status -ne 0 ]] || podman_error_output "$connection_json"; then
+    printf '%s\n' "$connection_json"
+    return 1
+  fi
+
+  default_machine="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+  current_machine="$default_machine"
+  if [[ -z "$current_machine" ]]; then
+    current_machine="$(printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+    current_machine="${current_machine%-root}"
+  fi
   default_connection="$(printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' | head -n1)"
-  machine_count="$(printf '%s\n' "$machine_json" | jq 'length')"
+  machine_count="$(printf '%s\n' "$machine_list_json" | jq -r 'length' 2>/dev/null | head -n1)"
   default_connection_count="$(printf '%s\n' "$connection_json" | jq '[.[] | select(.Default == true)] | length')"
+  expected_connection="$default_machine"
+  if [[ -z "$expected_connection" ]]; then
+    expected_connection="$current_machine"
+  fi
+  if [[ -n "$expected_connection" ]]; then
+    expected_connection="$(podman_machine_connection_name "$expected_connection" 2>/dev/null || printf '%s\n' "$expected_connection")"
+  fi
 
   printf 'default machine: %s\n' "${default_machine:-<none>}"
+  printf 'current machine: %s\n' "${current_machine:-<none>}"
   printf 'default connection: %s\n' "${default_connection:-<none>}"
   printf 'machine count: %s\n' "$machine_count"
   printf 'default connection entries: %s\n' "$default_connection_count"
 
-  if [[ -z "$default_machine" || -z "$default_connection" || "$default_machine" != "$default_connection" ]]; then
+  if [[ -z "$expected_connection" || -z "$default_connection" || "$expected_connection" != "$default_connection" ]]; then
     return 1
   fi
 
@@ -183,6 +609,177 @@ podman_machine_start_lock_report() {
   printf 'owner: %s\n' "${owner:-<unknown>}"
 
   [[ "$permissions" == -rw-------* ]]
+}
+
+podman_machine_running_state_report() {
+  local machine_list_json
+  local connection_json
+  local default_machine
+  local current_machine
+  local machine_name
+  local running=""
+  local starting=""
+  local state=""
+  local status=0
+  local machine_count="0"
+  local default_connection=""
+
+  machine_list_json="$(podman_control machine list --format json 2>&1)"
+  status=$?
+  if [[ $status -ne 0 ]] || podman_error_output "$machine_list_json"; then
+    printf '%s\n' "$machine_list_json"
+    return 1
+  fi
+
+  connection_json="$(podman_control system connection list --format json 2>&1)"
+  status=$?
+  if [[ $status -ne 0 ]] || podman_error_output "$connection_json"; then
+    printf '%s\n' "$connection_json"
+    return 1
+  fi
+
+  default_machine="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+  current_machine="$default_machine"
+  if [[ -z "$current_machine" ]]; then
+    current_machine="$(printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+    current_machine="${current_machine%-root}"
+  fi
+
+  machine_count="$(printf '%s\n' "$machine_list_json" | jq -r 'length' 2>/dev/null | head -n1)"
+  if [[ -n "$default_machine" ]]; then
+    machine_name="$default_machine"
+  else
+    machine_name="$current_machine"
+  fi
+
+  if [[ -n "$machine_name" ]]; then
+    running="$(printf '%s\n' "$machine_list_json" | jq -r --arg name "$machine_name" '.[] | select(.Name == $name) | .Running' 2>/dev/null | head -n1)"
+    starting="$(printf '%s\n' "$machine_list_json" | jq -r --arg name "$machine_name" '.[] | select(.Name == $name) | .Starting' 2>/dev/null | head -n1)"
+    if [[ "$starting" == "true" ]]; then
+      state="starting"
+    elif [[ "$running" == "true" ]]; then
+      state="running"
+    else
+      state="stopped"
+    fi
+  fi
+
+  default_connection="$(printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
+
+  printf 'default machine: %s\n' "${default_machine:-<none>}"
+  printf 'current machine: %s\n' "${current_machine:-<none>}"
+  printf 'resolved machine: %s\n' "$machine_name"
+  printf 'state: %s\n' "${state:-<unknown>}"
+  printf 'running: %s\n' "${running:-<unknown>}"
+  printf 'starting: %s\n' "${starting:-<unknown>}"
+  printf 'machine count: %s\n' "${machine_count:-0}"
+  printf 'default connection: %s\n' "${default_connection:-<none>}"
+
+  [[ "$running" == "true" && "$starting" != "true" && "$state" == "running" ]]
+}
+
+check_host_loopback_443() {
+  log_section "Host Loopback 443"
+
+  if ! have_command lsof; then
+    log_action "lsof is not installed; skipping host port 443 listener inspection"
+    printf '    next: install lsof and re-run %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status lsof -nP -iTCP:443 -sTCP:LISTEN
+
+  if [[ $status -ne 0 || -z "$output" ]]; then
+    log_action "nothing is listening on host port 443"
+    printf '    next: if Traefik or another local service should be reachable, start the host-side listener or the Podman machine that provides it\n'
+    show_detail "$output"
+    return 0
+  fi
+
+  if printf '%s\n' "$output" | grep -q 'gvproxy'; then
+    log_ok "host port 443 is being served by Podman gvproxy"
+    printf '    next: that explains why localhost services can work even while podman ps fails; the host listener is separate from Podman CLI health\n'
+  else
+    log_action "host port 443 is occupied by a non-gvproxy listener"
+    printf '    next: inspect the listener before assuming Traefik is coming from Podman\n'
+  fi
+
+  show_detail "$output"
+}
+
+check_docker_socket_rootless() {
+  log_section "Docker Socket Rootless Test"
+
+  if ! have_command curl; then
+    log_action "curl is not installed; skipping the Traefik label-routing smoke check"
+    printf '    next: install curl and run %s to verify Docker-label routing on a high port\n' "bin/docker_socket_rootless_test"
+    return 0
+  fi
+
+  if [[ -x "$SCRIPT_DIR/docker_socket_rootless_test" ]]; then
+    log_ok "docker_socket_rootless_test is available"
+    printf '    next: run: bin/docker_socket_rootless_test --port 8080\n'
+    printf '    next: if you need a different port or socket, pass --port and --socket explicitly\n'
+  else
+    log_action "docker_socket_rootless_test is not present in this checkout"
+    printf '    next: add bin/docker_socket_rootless_test from the dotfiles repo or run the equivalent compose smoke test manually\n'
+  fi
+}
+
+podman_machine_log_health_report() {
+  local log_file="$1"
+  local suspicious_lines
+
+  suspicious_lines="$(
+    strings "$log_file" 2>/dev/null |
+      rg -n -i 'vfkit exited unexpectedly|input/output error|operation not permitted|failed to rotate|failed to open|not able to claim the global docker sock|failed to claim the global docker sock|panic|fatal|ignition has failed|entering emergency mode|press enter for system maintenance|systemd-fsck-root|coreos-ignition-unique-boot' -N || true
+  )"
+
+  printf 'log file: %s\n' "$log_file"
+
+  if [[ -z "$suspicious_lines" ]]; then
+    printf 'recent vfkit log entries look clean\n'
+    return 0
+  fi
+
+  printf 'suspicious log entries:\n%s\n' "$suspicious_lines"
+  return 1
+}
+
+docker_sock_report() {
+  local docker_sock="/var/run/docker.sock"
+  local stable_sock
+  local resolved_target
+  local stable_target
+
+  stable_sock="$(stable_podman_socket_path)"
+
+  if [[ ! -e "$docker_sock" && ! -L "$docker_sock" ]]; then
+    printf 'docker sock: %s\n' "$docker_sock"
+    printf 'state: missing\n'
+    printf 'expected stable podman socket: %s\n' "$stable_sock"
+    return 1
+  fi
+
+  printf 'docker sock: %s\n' "$docker_sock"
+  stat -f 'type=%HT mode=%Sp owner=%Su:%Sg target=%Y' "$docker_sock" 2>/dev/null || true
+
+  resolved_target="$(readlink "$docker_sock" 2>/dev/null || true)"
+  stable_target="$(readlink "$stable_sock" 2>/dev/null || true)"
+
+  if [[ -n "$resolved_target" ]]; then
+    printf 'resolved target: %s\n' "$resolved_target"
+  fi
+
+  if [[ -L "$stable_sock" ]]; then
+    printf 'stable podman socket: %s -> %s\n' "$stable_sock" "$stable_target"
+  else
+    printf 'stable podman socket: %s\n' "$stable_sock"
+  fi
+
+  [[ "$resolved_target" == "$stable_sock" || "$resolved_target" == "$stable_target" ]]
 }
 
 check_local_client_versions() {
@@ -207,14 +804,35 @@ check_local_client_versions() {
     podman version --format 'Client {{.Client.Version}}'
 }
 
+check_global_docker_socket() {
+  log_section "Global Docker Socket"
+
+  local output=""
+  local status=0
+  capture_command output status docker_sock_report
+
+  if [[ $status -eq 0 ]]; then
+    log_ok "/var/run/docker.sock points at the Podman user-space socket"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "/var/run/docker.sock does not point at the Podman user-space socket"
+    printf "%s\n" "    next: decide whether you need \`/var/run/docker.sock\` at all; \`DOCKER_HOST\` is preferred for this setup"
+    printf "%s\n" "    next: for rootless Podman clients, export:"
+    printf "%s\n" "      export DOCKER_HOST=\"unix://\${HOME}/.local/share/containers/podman/machine/podman.sock\""
+    printf "%s\n" "    next: if a client hardcodes \`/var/run/docker.sock\`, inspect what owns the current target before replacing it"
+  fi
+
+  show_detail "$output"
+}
+
 check_podman_machine_list() {
   log_section "Podman Machine List"
   run_check \
     "podman machine list is readable" \
     "action" \
     "podman machine list failed" \
-    "run: podman machine init && podman machine start" \
-    podman machine list
+    "run: podman machine start && retry podman machine list" \
+    podman_control machine list
 }
 
 check_podman_machine_inspect() {
@@ -224,7 +842,7 @@ check_podman_machine_inspect() {
     "troubleshoot" \
     "podman machine inspect failed" \
     "run: podman machine list, then inspect the active machine name manually" \
-    podman machine inspect
+    podman_control machine inspect
 }
 
 check_podman_machine_alignment() {
@@ -240,13 +858,50 @@ check_podman_machine_alignment() {
   local status=0
   capture_command output status podman_machine_inventory_report
 
-  if [[ $status -eq 0 ]]; then
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|operation not permitted|vfkit exited unexpectedly'; then
     log_ok "podman machine default and system connection are aligned"
   else
     FAILURES=$((FAILURES + 1))
     log_troubleshoot "podman machine default and system connection are out of sync"
-    printf "    next: run: podman system connection default \"\$(podman machine list --format json | jq -r '.[] | select(.Default == true) | .Name')\"\n"
-    printf '    next: rerun podman-fix after the connection default is updated\n'
+    printf '    next: rerun podman_troubleshoot --fix after the connection default is updated\n'
+  fi
+
+  show_detail "$output"
+}
+
+check_podman_machine_running_state() {
+  log_section "Podman Machine Running State"
+
+  if ! have_jq; then
+    log_action "jq is not installed; running-state checks were skipped"
+    printf '    next: install jq and re-run %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status podman_machine_running_state_report
+
+  if printf '%s\n' "$output" | grep -Eq 'starting: true|state: starting'; then
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "default Podman machine is still starting"
+    printf '    next: wait for startup to complete, or inspect the vfkit log if it never becomes running\n'
+  elif printf '%s\n' "$output" | grep -Eq 'running: true|state: running'; then
+    log_ok "default Podman machine is running"
+  elif printf '%s\n' "$output" | grep -Eq 'running: false|state: stopped'; then
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "default Podman machine is not running"
+    print_rootless_socket_recovery_steps
+    printf '    next: if start fails, inspect the vfkit log for the exact error\n'
+  elif printf '%s\n' "$output" | grep -Eq 'state: <unknown>|Error:|default machine: <none>'; then
+    log_action "Podman machine state could not be confirmed"
+    printf '    next: run: podman machine info\n'
+    printf '    next: run: podman machine list\n'
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "default Podman machine is not running"
+    print_rootless_socket_recovery_steps
+    printf '    next: if start fails, inspect the vfkit log for the exact error\n'
   fi
 
   show_detail "$output"
@@ -271,6 +926,78 @@ check_machine_start_lock() {
     FAILURES=$((FAILURES + 1))
     log_troubleshoot "machine-start.lock is not in the expected state"
     printf '    next: if podman machine start still fails, inspect or remove the stale lock file before retrying\n'
+  fi
+
+  show_detail "$output"
+}
+
+check_machine_log_health() {
+  log_section "Machine Log Health"
+
+  local default_machine
+  local current_machine
+  local machine_name
+
+  default_machine="$(podman_default_machine_name || true)"
+  current_machine="$(podman_current_machine_name || true)"
+  machine_name="$default_machine"
+  if [[ -z "$machine_name" ]]; then
+    machine_name="$current_machine"
+  fi
+
+  if [[ -z "$machine_name" ]]; then
+    log_action "no machine could be resolved; skipping VM log inspection"
+    return 0
+  fi
+
+  if [[ -z "$default_machine" && -n "$current_machine" ]]; then
+    printf '    note: using current machine %s for log inspection because no default machine is configured\n' "$current_machine"
+  fi
+
+  local tmpdir_base
+  tmpdir_base="$(trim_trailing_slash "${TMPDIR:-/private/var/folders}")"
+  local log_file="${tmpdir_base}/podman/${machine_name}.log"
+  if [[ ! -f "$log_file" ]]; then
+    log_action "machine log was not found at $log_file"
+    printf '    next: rerun after starting the machine so vfkit can write its log\n'
+    return 0
+  fi
+
+  local output=""
+  local status=0
+  capture_command output status podman_machine_log_health_report "$log_file"
+
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eqi 'Input/output error|operation not permitted|vfkit exited unexpectedly|failed to claim the global docker sock|failed to rotate|failed to open|Ignition has failed|Entering emergency mode|Press Enter for system maintenance|systemd-fsck-root'; then
+    log_ok "vfkit log does not show obvious startup errors"
+  else
+    FAILURES=$((FAILURES + 1))
+    LOG_HEALTH_FAILURES=$((LOG_HEALTH_FAILURES + 1))
+    if printf '%s\n' "$output" | grep -qi 'Input/output error'; then
+      log_action "vfkit log shows repeated journald I/O errors"
+      printf '    next: back up anything important from inside the VM first; this recreates the machine and discards VM-local customizations, images, volumes, and container state:\n'
+      printf '      podman_troubleshoot --fix\n'
+      printf '      podman machine stop\n'
+      printf '      podman machine rm -f %s\n' "$machine_name"
+      printf '      podman machine init\n'
+      printf '      podman machine start\n'
+      printf '      podman_troubleshoot --fix\n'
+      printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
+    elif printf '%s\n' "$output" | grep -Eqi 'Ignition has failed|Entering emergency mode|Press Enter for system maintenance|systemd-fsck-root'; then
+      LOG_EMERGENCY_FAILURES=$((LOG_EMERGENCY_FAILURES + 1))
+      log_action "vfkit log shows the VM booted into emergency mode"
+      printf '    next: inspect the failed boot details in %s before rebuilding if you need to preserve evidence\n' "$log_file"
+      printf '    next: after backing up anything important from inside the VM, rebuild it because startup is blocked in initramfs emergency mode:\n'
+      printf '      podman machine stop\n'
+      printf '      podman machine rm -f %s\n' "$machine_name"
+      printf '      podman machine init\n'
+      printf '      podman machine start\n'
+      printf '      podman_troubleshoot --fix\n'
+      printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
+    else
+      log_troubleshoot "vfkit log contains startup errors"
+      printf '    next: inspect the highlighted log lines above\n'
+      printf '    next: if start fails with vfkit exit 1, rebuild the machine after preserving anything important\n'
+    fi
   fi
 
   show_detail "$output"
@@ -312,8 +1039,8 @@ check_system_connections() {
     "podman system connection list is readable" \
     "troubleshoot" \
     "podman system connection list failed" \
-    "run: podman system connection list --format json" \
-    podman system connection list
+    "run: podman_control system connection list --format json" \
+    podman_control system connection list
 }
 
 check_host_registry_connectivity() {
@@ -361,6 +1088,7 @@ check_vm_dns_and_registry() {
 check_vm_registry_ips() {
   log_section "VM Registry IP Probes"
 
+  # shellcheck disable=SC2016
   run_check \
     "VM IP-level probes to registry-1.docker.io completed" \
     "troubleshoot" \
@@ -372,6 +1100,7 @@ check_vm_registry_ips() {
 check_vm_runtime_state() {
   log_section "VM Runtime State"
 
+  # shellcheck disable=SC2016
   run_check \
     "VM boot ID is readable" \
     "troubleshoot" \
@@ -398,7 +1127,7 @@ check_registry_auth_state() {
       "run: grep -n 'docker.io\\|registry-1.docker.io\\|auths\\|credsStore\\|credHelpers' ~/.docker/config.json" \
       grep -n 'docker.io\|registry-1.docker.io\|auths\|credsStore\|credHelpers' "$HOME/.docker/config.json"
   else
-    log_ok "~/.docker/config.json not found; no Docker auth override to inspect"
+    log_ok "$HOME/.docker/config.json not found; no Docker auth override to inspect"
   fi
 }
 
@@ -452,37 +1181,74 @@ print_recovery_hints() {
   fi
 
   log_action "$FAILURES check(s) need attention"
+
+  # Show specific next step for journald I/O errors
+  if [[ $LOG_EMERGENCY_FAILURES -ge 1 ]]; then
+    printf '    next: the VM booted into initramfs emergency mode; after preserving anything important, rebuild it:\n'
+    printf '      podman machine stop\n'
+    printf '      podman machine rm -f podman-machine-default\n'
+    printf '      podman machine init\n'
+    printf '      podman machine start\n'
+    printf '      podman_troubleshoot --fix\n'
+    printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
+  elif [[ $LOG_HEALTH_FAILURES -eq 1 ]]; then
+    printf '    next: if you see repeated journald I/O errors, back up anything important from inside the VM first; rebuilding discards VM-local customizations, images, volumes, and container state:\n'
+    printf '      podman machine stop\n'
+    printf '      podman machine rm -f podman-machine-default\n'
+    printf '      podman machine init\n'
+    printf '      podman machine start\n'
+    printf '      podman system connection default podman-machine-default\n'
+    printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
+  fi
+
   cat <<'EOF'
 common next steps:
-      1. Restart the Podman machine:
-         podman machine stop
-         podman machine start
-         podman system connection default "$(podman machine list --format json | jq -r '.[] | select(.Default == true) | .Name')"
-         podman-fix
-      2. Retry the failing command shown above.
-      3. If multiple machines are present, confirm the default machine and default connection point at the same name.
-      4. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
-      5. If Podman client and VM feel out of sync, update Podman and restart the machine.
-      6. If you see "current system boot ID differs from cached boot ID", clear stale runtime state in the VM or rebuild the machine after preserving anything important.
-      7. If `podman machine start` fails with `machine-start.lock`, inspect the lock file state before retrying.
+      1. Re-establish the rootless socket path in this order:
+          podman_troubleshoot --fix
+          podman machine stop
+          podman machine set --rootful=false
+          podman machine start
+          podman_troubleshoot --fix
+       2. Verify the engine itself before debugging `/var/run/docker.sock`:
+          podman ps
+          podman info
+       3. If localhost services like Traefik work but `podman ps` fails, inspect the host 443 listener with `lsof -nP -iTCP:443 -sTCP:LISTEN`.
+       4. For Docker-compatible clients such as Traefik, export the stable rootless socket:
+          export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
+       5. To verify Traefik label routing on a port above 443, run:
+          bin/docker_socket_rootless_test --port 8080
+       6. If you need port 443 while staying rootless, run once after the VM starts:
+          podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+       7. Retry the failing command shown above.
+       8. If `podman machine start` fails but `podman info` still works, inspect the vfkit log under `$TMPDIR/podman/<machine>.log`.
+       9. If the log shows repeated `Input/output error` entries from `systemd-journald`, back up anything important from inside the VM first; rebuilding discards VM-local customizations, images, volumes, and container state.
+      10. If multiple machines are present, confirm the default machine and default connection point at the same name.
+      11. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
+      12. If Podman client and VM feel out of sync, update Podman and restart the machine.
+      13. If `podman machine start` fails with `machine-start.lock`, inspect the lock file state before retrying.
 EOF
 }
 
 run_main() {
   require_podman
+  parse_args "$@"
 
-  case "${1:-}" in
-    -h|--help)
-      print_usage
-      exit 0
-      ;;
-  esac
+  if [[ "$FIX_MODE" == "1" ]]; then
+    run_fix_mode
+    return $?
+  fi
 
+  check_podman_socket_connection
   check_local_client_versions
+  check_host_loopback_443
+  check_global_docker_socket
+  check_docker_socket_rootless
   check_podman_machine_list
   check_podman_machine_inspect
   check_podman_machine_alignment
+  check_podman_machine_running_state
   check_machine_start_lock
+  check_machine_log_health
   check_engine_info
   check_system_connections
   check_host_registry_connectivity

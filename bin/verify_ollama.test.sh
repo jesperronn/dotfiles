@@ -255,6 +255,8 @@ test_run_main_fix_repairs_homebrew_plist_and_restarts() {
   <dict>
     <key>OLLAMA_KEEP_ALIVE</key>
     <string>5m</string>
+    <key>OLLAMA_CONTEXT_LENGTH</key>
+    <string>131072</string>
   </dict>
 </dict>
 </plist>
@@ -337,13 +339,120 @@ EOF
     capture_command output status run_main --fix
 
   assert_status "0" "$status" "verify_ollama --fix succeeds"
-  assert_contains "$output" "FATAL: Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
+  assert_contains "$output" "[FAIL] Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
   assert_contains "$output" "editing: adding \"OLLAMA_KEEP_ALIVE=30m\"" "verify_ollama --fix reports the edit"
   assert_contains "$output" "editing: adding \"OLLAMA_CONTEXT_LENGTH=524288\"" "verify_ollama --fix reports the context edit"
   assert_contains "$output" "done, edit successful" "verify_ollama --fix confirms the edit"
   assert_contains "$output" "next step: brew services restart ollama" "verify_ollama --fix gives the restart next step"
   assert_contains "$(cat "$plist_path")" "30m" "verify_ollama --fix repairs the plist"
   assert_contains "$(cat "$plist_path")" "524288" "verify_ollama --fix repairs the context length"
+}
+
+test_run_main_fix_survives_launchctl_setenv_failure() {
+  local tmp_dir=""
+  local plist_path=""
+  local output=""
+  local status=0
+
+  tmp_dir="$(mktemp -d)"
+  plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
+  cat >"$plist_path" <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>OLLAMA_KEEP_ALIVE</key>
+    <string>5m</string>
+    <key>OLLAMA_CONTEXT_LENGTH</key>
+    <string>131072</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
+  mkdir -p "$tmp_dir/bin"
+  cat >"$tmp_dir/bin/uname" <<'EOF'
+#!/usr/bin/env bash
+printf 'Darwin\n'
+EOF
+  cat >"$tmp_dir/bin/pgrep" <<'EOF'
+#!/usr/bin/env bash
+printf '61055\n'
+EOF
+  cat >"$tmp_dir/bin/ps" <<'EOF'
+#!/usr/bin/env bash
+printf '/opt/homebrew/opt/ollama/bin/ollama serve\n'
+EOF
+  cat >"$tmp_dir/bin/launchctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == "getenv" ]]; then
+  exit 0
+fi
+
+if [[ "$1" == "setenv" ]]; then
+  printf 'Could not set environment: 150: Operation not permitted while System Integrity Protection is engaged\n' >&2
+  exit 1
+fi
+
+printf 'unexpected launchctl invocation: %s\n' "$*" >&2
+exit 1
+EOF
+  cat >"$tmp_dir/bin/PlistBuddy" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+plist_path="${@: -1}"
+
+case "$2" in
+  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")
+    if rg -n '<string>30m</string>' "$plist_path" >/dev/null 2>&1; then
+      printf '30m\n'
+    else
+      printf '5m\n'
+    fi
+    exit 0
+    ;;
+  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")
+    if rg -n '<string>524288</string>' "$plist_path" >/dev/null 2>&1; then
+      printf '524288\n'
+    else
+      printf '131072\n'
+    fi
+    exit 0
+    ;;
+esac
+
+if [[ "$1" == "-c" && $2 == Set* ]]; then
+  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+  exit 0
+fi
+
+if [[ "$1" == "-c" && $2 == Add* ]]; then
+  exit 0
+fi
+
+printf 'unexpected PlistBuddy invocation: %s\n' "$*" >&2
+exit 1
+EOF
+  chmod +x "$tmp_dir/bin/uname" "$tmp_dir/bin/pgrep" "$tmp_dir/bin/ps" "$tmp_dir/bin/launchctl" "$tmp_dir/bin/PlistBuddy"
+
+  TEST_LAUNCHCTL_LOG="$tmp_dir/launchctl.log" \
+    OLLAMA_HOMEBREW_PLIST="$plist_path" \
+    OLLAMA_PLIST_BUDDY="$tmp_dir/bin/PlistBuddy" \
+    OLLAMA_BREW_CMD="$tmp_dir/bin/brew" \
+    OLLAMA_PROCESS_NAME=ollama \
+    PATH="$tmp_dir/bin:$PATH" \
+    capture_command output status run_main --fix
+
+  assert_status "0" "$status" "verify_ollama --fix ignores launchctl setenv failure"
+  assert_contains "$output" "Could not set OLLAMA_KEEP_ALIVE=30m for this login session." "verify_ollama warns about the session env failure"
+  assert_contains "$output" "next step: run bin/verify_ollama without sudo, or set it manually with launchctl" "verify_ollama explains the fallback"
+  assert_contains "$output" "done, edit successful" "verify_ollama still completes the plist repair"
+  assert_contains "$(cat "$plist_path")" "30m" "verify_ollama still repairs the plist"
 }
 
 test_sourcing_ai_tools_exports_keep_alive() {
