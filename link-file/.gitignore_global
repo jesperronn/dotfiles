@@ -69,3 +69,5 @@ node_modules
 .swo
 .*.swp
 .*.swo
+
+**/.claude/settings.local.json
