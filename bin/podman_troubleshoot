@@ -8,10 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_NAME=""
 FIX_MODE=0
 FORCE_MODE=0
+VERBOSE_MODE=0
 FAILURES=0
 LOG_HEALTH_FAILURES=0
 LOG_EMERGENCY_FAILURES=0
 START_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_START_TIMEOUT_SECONDS:-90}"
+VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS:-30}"
 
 if [[ -n "${NO_COLOR:-}" ]]; then
   C_RESET=""
@@ -50,6 +52,12 @@ log_troubleshoot() {
   status_line "$C_RED" "[TROUBLESHOOT]" "$1"
 }
 
+log_verbose() {
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    status_line "$C_CYAN" "[VERBOSE]" "$1"
+  fi
+}
+
 show_detail() {
   local detail="$1"
   [[ -n "$detail" ]] || return 0
@@ -79,6 +87,50 @@ capture_command() {
   printf -v "$status_var" '%s' "$status"
 }
 
+capture_command_with_timeout() {
+  local output_var="$1"
+  local status_var="$2"
+  local timeout_seconds="$3"
+  shift 3
+
+  local output_file
+  local pid=""
+  local waited=0
+  local status=0
+
+  output_file="$(mktemp)"
+
+  "$@" >"$output_file" 2>&1 &
+  pid=$!
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$VERBOSE_MODE" == "1" ]] && (( waited == 0 || waited % 5 == 0 )); then
+      log_verbose "still waiting (${waited}s/${timeout_seconds}s)"
+    fi
+    if (( waited >= timeout_seconds )); then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      printf -v "$output_var" '%s' "$(<"$output_file")"$'\n'"timed out after ${timeout_seconds}s"
+      rm -f "$output_file"
+      printf -v "$status_var" '%s' "124"
+      return 0
+    fi
+
+    sleep 1
+    waited=$((waited + 1))
+  done
+
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  printf -v "$output_var" '%s' "$(<"$output_file")"
+  rm -f "$output_file"
+  printf -v "$status_var" '%s' "$status"
+}
+
 run_check() {
   local ok_message="$1"
   local fail_marker="$2"
@@ -88,6 +140,9 @@ run_check() {
 
   local output=""
   local status=0
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    log_verbose "running: $(printf '%q ' "$@")"
+  fi
   capture_command output status "$@"
 
   if [[ $status -eq 0 ]]; then
@@ -108,12 +163,13 @@ run_check() {
 
 print_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--fix] [--force] [image_name]
+Usage: $SCRIPT_NAME [--fix] [--force] [--verbose] [image_name]
 
 Examples:
   $SCRIPT_NAME
   $SCRIPT_NAME --fix
   $SCRIPT_NAME --fix --force
+  $SCRIPT_NAME --verbose
   $SCRIPT_NAME postgres:18.3-alpine
   $SCRIPT_NAME quay.io/libpod/alpine:latest
 
@@ -121,6 +177,7 @@ Notes:
   - If no image is provided, only system and registry checks are run.
   - Image pull checks run only when an image name is provided.
   - --fix prompts before each recovery step unless --force is also passed.
+  - --verbose prints progress for long-running checks.
   - For the intended rootless setup and docker.sock model, see docs/podman-rootless-plan.md.
   - Edit run_main() to comment checks in or out as needed.
 EOF
@@ -163,6 +220,22 @@ podman_control() {
 
 stable_podman_socket_path() {
   printf '%s/.local/share/containers/podman/machine/podman.sock' "$HOME"
+}
+
+port_443_sysctl_value() {
+  podman_control machine ssh 'sysctl -n net.ipv4.ip_unprivileged_port_start' 2>/dev/null | tr -d '\r'
+}
+
+port_443_sysctl_allows_rootless() {
+  local value
+
+  value="$(port_443_sysctl_value)"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value <= 443 ))
+}
+
+configure_rootless_port_443() {
+  podman_control machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
 }
 
 trim_trailing_slash() {
@@ -235,7 +308,7 @@ print_rootless_socket_recovery_steps() {
     next: if you need rootless Traefik or other Docker-compatible clients, point them at:
       export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
     next: if you need port 443 while staying rootless, run once after the VM starts:
-      podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+      podman-allow-port-443
 EOF
 }
 
@@ -251,6 +324,9 @@ parse_args() {
         ;;
       --force)
         FORCE_MODE=1
+        ;;
+      --verbose)
+        VERBOSE_MODE=1
         ;;
       --)
         shift
@@ -303,6 +379,9 @@ start_podman_machine() {
   pid=$!
 
   while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$VERBOSE_MODE" == "1" ]] && (( waited == 0 || waited % 5 == 0 )); then
+      log_verbose "waiting for podman machine start (${waited}s/${START_TIMEOUT_SECONDS}s)"
+    fi
     if (( waited >= START_TIMEOUT_SECONDS )); then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -411,6 +490,25 @@ verify_fix_result() {
   return 1
 }
 
+privileged_port_policy_report() {
+  local value
+
+  value="$(port_443_sysctl_value)"
+  if [[ -z "$value" ]]; then
+    printf 'vm sysctl: <unavailable>\n'
+    return 1
+  fi
+
+  printf 'vm sysctl: net.ipv4.ip_unprivileged_port_start=%s\n' "$value"
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value <= 443 )); then
+    printf 'rootless host port 443: allowed\n'
+    return 0
+  fi
+
+  printf 'rootless host port 443: blocked\n'
+  return 1
+}
+
 run_fix_mode() {
   log_section "Podman Fix"
 
@@ -468,6 +566,15 @@ connection: $connection_name"
     "default Podman connection aligned" \
     "set the default Podman connection to $connection_name" \
     podman_control system connection default "$connection_name" || return 1
+
+  if ! port_443_sysctl_allows_rootless; then
+    run_fix_step \
+      "rootless privileged port floor updated for port 443" \
+      "allow rootless port 443 inside the Podman VM" \
+      configure_rootless_port_443 || return 1
+  else
+    log_ok "rootless privileged port floor already allows port 443"
+  fi
 
   verify_fix_result
 }
@@ -734,7 +841,7 @@ podman_machine_log_health_report() {
 
   suspicious_lines="$(
     strings "$log_file" 2>/dev/null |
-      rg -n -i 'vfkit exited unexpectedly|input/output error|operation not permitted|failed to rotate|failed to open|not able to claim the global docker sock|failed to claim the global docker sock|panic|fatal|ignition has failed|entering emergency mode|press enter for system maintenance|systemd-fsck-root|coreos-ignition-unique-boot' -N || true
+      rg -n -i 'vfkit exited unexpectedly|input/output error|operation not permitted|failed to rotate|failed to open|not able to claim the global docker sock|failed to claim the global docker sock|panic|fatal|ignition has failed|entering emergency mode|press enter for system maintenance|systemd-fsck-root' -N || true
   )"
 
   printf 'log file: %s\n' "$log_file"
@@ -902,6 +1009,54 @@ check_podman_machine_running_state() {
     log_troubleshoot "default Podman machine is not running"
     print_rootless_socket_recovery_steps
     printf '    next: if start fails, inspect the vfkit log for the exact error\n'
+  fi
+
+  show_detail "$output"
+}
+
+check_rootless_privileged_port_policy() {
+  log_section "Rootless Privileged Port Policy"
+
+  if ! have_jq; then
+    log_action "jq is not installed; privileged-port policy checks were skipped"
+    printf '    next: install jq and re-run %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  local machine_name=""
+  local rootful=""
+  local output=""
+  local status=0
+
+  machine_name="$(podman_current_machine_name || true)"
+  if [[ -z "$machine_name" ]]; then
+    log_action "no Podman machine could be resolved; skipping privileged-port policy inspection"
+    printf '    next: run: podman machine list\n'
+    return 0
+  fi
+
+  rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+  if [[ "$rootful" == "true" ]]; then
+    log_ok "machine is rootful; rootless port 443 policy is not required"
+    printf '    next: if you switch back to rootless mode, rerun %s to confirm port 443 is still allowed\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  if ! podman_machine_running "$machine_name"; then
+    log_action "machine is not running; skipping privileged-port policy inspection"
+    printf '    next: start the machine first, then rerun %s to confirm host port 443 is allowed for rootless containers\n' "$SCRIPT_NAME"
+    return 0
+  fi
+
+  capture_command output status privileged_port_policy_report
+
+  if [[ $status -eq 0 ]] && printf '%s\n' "$output" | grep -q 'rootless host port 443: allowed'; then
+    log_ok "rootless host port 443 is allowed inside the Podman VM"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "rootless host port 443 is still blocked inside the Podman VM"
+    printf '    next: run podman-allow-port-443, or rerun %s --fix to apply it automatically\n' "$SCRIPT_NAME"
+    printf '    next: this is the setting behind: rootlessport cannot expose privileged port 443\n'
   fi
 
   show_detail "$output"
@@ -1088,13 +1243,35 @@ check_vm_dns_and_registry() {
 check_vm_registry_ips() {
   log_section "VM Registry IP Probes"
 
+  local output=""
+  local status=0
+
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    log_verbose "probing registry-1.docker.io by resolved IP inside the VM (timeout ${VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS}s)"
+  fi
+
   # shellcheck disable=SC2016
-  run_check \
-    "VM IP-level probes to registry-1.docker.io completed" \
-    "troubleshoot" \
-    "VM IP-level probes to registry-1.docker.io failed" \
-    "run: podman machine ssh 'getent hosts registry-1.docker.io'" \
+  capture_command_with_timeout \
+    output \
+    status \
+    "$VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS" \
     podman machine ssh 'for ip in $(getent hosts registry-1.docker.io | awk "{print \$1}"); do echo "== ${ip} =="; curl -I --connect-timeout 8 --max-time 12 --resolve registry-1.docker.io:443:${ip} https://registry-1.docker.io/v2/ || true; echo; done'
+
+  if [[ $status -eq 0 ]] && ! podman_error_output "$output"; then
+    log_ok "VM IP-level probes to registry-1.docker.io completed"
+    return 0
+  fi
+
+  FAILURES=$((FAILURES + 1))
+  if [[ $status -eq 124 ]]; then
+    log_troubleshoot "VM IP-level probes to registry-1.docker.io timed out"
+    printf '    next: rerun after the VM is responsive, or raise PODMAN_TROUBLESHOOT_VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS if you need a longer network probe window\n'
+  else
+    log_troubleshoot "VM IP-level probes to registry-1.docker.io failed"
+    printf "    next: run: podman machine ssh 'getent hosts registry-1.docker.io'\n"
+  fi
+
+  show_detail "$output"
 }
 
 check_vm_runtime_state() {
@@ -1218,7 +1395,7 @@ common next steps:
        5. To verify Traefik label routing on a port above 443, run:
           bin/docker_socket_rootless_test --port 8080
        6. If you need port 443 while staying rootless, run once after the VM starts:
-          podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+          podman-allow-port-443
        7. Retry the failing command shown above.
        8. If `podman machine start` fails but `podman info` still works, inspect the vfkit log under `$TMPDIR/podman/<machine>.log`.
        9. If the log shows repeated `Input/output error` entries from `systemd-journald`, back up anything important from inside the VM first; rebuilding discards VM-local customizations, images, volumes, and container state.
@@ -1247,6 +1424,7 @@ run_main() {
   check_podman_machine_inspect
   check_podman_machine_alignment
   check_podman_machine_running_state
+  check_rootless_privileged_port_policy
   check_machine_start_lock
   check_machine_log_health
   check_engine_info

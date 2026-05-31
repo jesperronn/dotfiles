@@ -107,10 +107,6 @@ podman_fix() {
 export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
 export PODMAN_COMPOSE_PROVIDER="/opt/homebrew/bin/docker-compose"
 export PODMAN_ADVISORY_MODE=false
-PODMAN_UID="$(id -u)"
-export PODMAN_UID
-export PODMAN_SOCKET_DIR="/run/user/${PODMAN_UID}/podman"
-export TRAEFIK_DOCKER_SOCKET="${PODMAN_SOCKET_DIR}/podman.sock"
 
 # Allows rootless Podman containers to listen on privileged ports like 443.
 # Warns that sudo will be invoked inside the Podman VM during the one-time change.

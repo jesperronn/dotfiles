@@ -82,6 +82,28 @@ machine_connection_name() {
   fi
 }
 
+rootless_port_443_value() {
+  podman machine ssh 'sysctl -n net.ipv4.ip_unprivileged_port_start' 2>/dev/null | tr -d '\r'
+}
+
+rootless_port_443_allowed() {
+  local value
+
+  value="$(rootless_port_443_value)"
+  [[ "$value" =~ ^[0-9]+$ ]] || return 1
+  (( value <= 443 ))
+}
+
+ensure_rootless_port_443() {
+  if rootless_port_443_allowed; then
+    printf '🔓 Rootless host port 443 is already allowed inside the Podman VM\n'
+    return 0
+  fi
+
+  printf '🔧 Allowing rootless host port 443 inside the Podman VM...\n'
+  podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system" >/dev/null
+}
+
 converge_machine_state() {
   local machine_name="$1"
   local rootful
@@ -104,6 +126,7 @@ converge_machine_state() {
     ln -sf "$socket_path" "$HOME/.local/share/containers/podman/machine/podman.sock"
   fi
   podman system connection default "$connection_name" >/dev/null 2>&1 || true
+  ensure_rootless_port_443
 }
 
 init_machine() {

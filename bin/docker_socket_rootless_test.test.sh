@@ -87,8 +87,10 @@ esac
   assert_contains "$(cat "$work_dir/compose.yml")" "$socket_target:/var/run/docker.sock" "compose file mounts the resolved socket target"
   assert_contains "$(cat "$work_dir/compose.yml")" 'user: "0:0"' "compose file runs Traefik as root"
   assert_contains "$(cat "$work_dir/compose.yml")" 'label=disable' "compose file disables SELinux labeling for the mounted socket"
-  assert_contains "$(cat "$work_dir/compose.yml")" "traefik.http.routers.whoami.rule=Host(\`whoami.docker.localhost\`)" "compose file includes the whoami router label"
-  assert_contains "$(cat "$work_dir/compose.yml")" "traefik.http.routers.dashboard.rule=Host(\`traefik.docker.localhost\`)" "compose file includes the Traefik dashboard router label"
+  assert_contains "$(cat "$work_dir/compose.yml")" 'providers.docker.constraints=Label(`traefik.rootless-test`,`true`)' "compose file restricts discovery to the test containers"
+  assert_contains "$(cat "$work_dir/compose.yml")" "traefik.http.routers.rootless-test-whoami.rule=Host(\`whoami.docker.localhost\`)" "compose file includes the whoami router label"
+  assert_contains "$(cat "$work_dir/compose.yml")" "traefik.http.routers.rootless-test-dashboard.rule=Host(\`traefik.docker.localhost\`)" "compose file includes the Traefik dashboard router label"
+  assert_contains "$(cat "$work_dir/compose.yml")" "traefik.rootless-test=true" "compose file marks the test containers with an isolation label"
 
   rm -rf "$work_dir"
 }
@@ -163,7 +165,6 @@ esac
   capture_command output status env \
     CALL_LOG="$call_log" \
     PATH="$stub_dir:$PATH" \
-    TRAEFIK_DOCKER_SOCKET="/run/user/503/podman/podman.sock" \
     "$SCRIPT_UNDER_TEST" \
     --work-dir "$work_dir" \
     --keep-work-dir \

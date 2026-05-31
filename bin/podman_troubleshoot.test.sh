@@ -341,6 +341,163 @@ EOF
   rm -rf "$work_dir"
 }
 
+test_benign_ignition_boot_lines_do_not_mark_log_unhealthy() {
+  local work_dir=""
+  local stub_dir=""
+  local output=""
+  local status=0
+
+  work_dir="$(mktemp -d)"
+  stub_dir="$work_dir/stub-bin"
+  make_stub_dir "$stub_dir"
+  mkdir -p "$work_dir/home" "$work_dir/podman"
+
+  write_stub "$stub_dir/podman" '
+case "$1" in
+  ps)
+    exit 0
+    ;;
+  version)
+    printf "Client 5.6.1\n"
+    exit 0
+    ;;
+  info)
+    printf "host: ok\n"
+    exit 0
+    ;;
+  machine)
+    case "$2" in
+      list)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
+        ;;
+      inspect)
+        printf "{\"Name\":\"podman-machine-default\"}\n"
+        ;;
+      ssh)
+        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
+          printf "443\n"
+        else
+          exit 0
+        fi
+        ;;
+      connection)
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  system)
+    case "$2" in
+      connection)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'
+
+  write_stub "$stub_dir/docker" '
+case "$1" in
+  version)
+    printf "Client 27.0.0\n"
+    ;;
+  info)
+    printf "Docker Engine: ok\n"
+    ;;
+  system)
+    exit 0
+    ;;
+  context)
+    exit 0
+    ;;
+esac
+exit 0
+'
+
+  write_stub "$stub_dir/curl" '
+exit 0
+'
+
+  write_stub "$stub_dir/jq" '
+query="${*: -1}"
+case "$query" in
+  *"select(.Default == true) | .Name"*)
+    printf "podman-machine-default\n"
+    ;;
+  *"[.[] | select(.Default == true)] | length"*)
+    printf "1\n"
+    ;;
+  *".Running"*)
+    printf "true\n"
+    ;;
+  *".Starting"*)
+    printf "false\n"
+    ;;
+  *".State // \"unknown\""*)
+    printf "running\n"
+    ;;
+  *"length"*)
+    printf "1\n"
+    ;;
+  *)
+    cat
+    ;;
+esac
+'
+
+  write_stub "$stub_dir/strings" '
+cat "$1"
+'
+
+  write_stub "$stub_dir/rg" '
+pattern=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|-i|-N)
+      shift
+      ;;
+    *)
+      pattern="$1"
+      shift
+      break
+      ;;
+  esac
+done
+
+grep -Ein "$pattern"
+'
+
+  cat >"$work_dir/podman/podman-machine-default.log" <<'EOF'
+systemd[1]: Starting coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem...
+systemd[1]: Finished coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
+[    4.102150] systemd[1]: coreos-ignition-unique-boot.service: Deactivated successfully.
+systemd[1]: Stopped coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
+EOF
+
+  capture_command output status env \
+    NO_COLOR=1 \
+    HOME="$work_dir/home" \
+    TMPDIR="$work_dir" \
+    PATH="$stub_dir:$PATH" \
+    bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
+
+  assert_status "0" "$status" "podman_troubleshoot completes successfully with benign ignition log lines"
+  assert_contains "$output" "[OK] vfkit log does not show obvious startup errors" "benign ignition boot lines keep the log health section green"
+  assert_not_contains "$output" "suspicious log entries:" "benign ignition boot lines are not printed as suspicious"
+
+  rm -rf "$work_dir"
+}
+
 test_fix_force_starts_machine_refreshes_socket_and_verifies() {
   local work_dir=""
   local stub_dir=""
@@ -391,6 +548,18 @@ case "$1" in
           printf "%s/podman/podman-machine-default-api.sock\n" "${TMPDIR:-/tmp}"
         else
           printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
+        fi
+        ;;
+      ssh)
+        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
+          if [[ -f "$state_dir/port443" ]]; then
+            printf "443\n"
+          else
+            printf "1024\n"
+          fi
+        else
+          : >"$state_dir/port443"
+          printf "net.ipv4.ip_unprivileged_port_start = 443\n"
         fi
         ;;
       start)
@@ -486,8 +655,138 @@ esac
   assert_contains "$output" "[OK] Podman machine started" "fix mode starts the stopped machine"
   assert_contains "$output" "[OK] stable Podman socket refreshed" "fix mode refreshes the stable socket"
   assert_contains "$output" "[OK] default Podman connection aligned" "fix mode sets the default connection"
+  assert_contains "$output" "[OK] rootless privileged port floor updated for port 443" "fix mode applies the rootless port 443 sysctl"
   assert_contains "$output" "[OK] podman ps succeeded after fix" "fix mode verifies podman ps"
   assert_contains "$output" "[OK] podman info succeeded after fix" "fix mode verifies podman info"
+
+  rm -rf "$work_dir"
+}
+
+test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
+  local work_dir=""
+  local stub_dir=""
+  local output=""
+  local status=0
+
+  work_dir="$(mktemp -d)"
+  stub_dir="$work_dir/stub-bin"
+  make_stub_dir "$stub_dir"
+  mkdir -p "$work_dir/home"
+
+  write_stub "$stub_dir/podman" '
+case "$1" in
+  ps)
+    printf "CONTAINER ID  IMAGE\n"
+    exit 0
+    ;;
+  version)
+    printf "Client 5.6.1\n"
+    exit 0
+    ;;
+  info)
+    printf "host: ok\n"
+    exit 0
+    ;;
+  machine)
+    case "$2" in
+      list)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false}]\n"
+        ;;
+      inspect)
+        if [[ "$4" == "{{.Rootful}}" ]]; then
+          printf "false\n"
+        else
+          printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
+        fi
+        ;;
+      ssh)
+        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
+          printf "1024\n"
+        else
+          exit 0
+        fi
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  system)
+    case "$2" in
+      connection)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'
+
+  write_stub "$stub_dir/docker" '
+case "$1" in
+  version)
+    printf "Client 27.0.0\n"
+    ;;
+  info)
+    printf "Docker Engine: ok\n"
+    ;;
+  system)
+    exit 0
+    ;;
+  context)
+    exit 0
+    ;;
+esac
+exit 0
+'
+
+  write_stub "$stub_dir/curl" '
+exit 0
+'
+
+  write_stub "$stub_dir/jq" '
+query="${*: -1}"
+case "$query" in
+  *"select(.Default == true) | .Name"*)
+    printf "podman-machine-default\n"
+    ;;
+  *"[.[] | select(.Default == true)] | length"*)
+    printf "1\n"
+    ;;
+  *".[] | select(.Name == \$name) | .Running"*)
+    printf "true\n"
+    ;;
+  *".[] | select(.Name == \$name) | .Starting"*)
+    printf "false\n"
+    ;;
+  *"length"*)
+    printf "1\n"
+    ;;
+  *)
+    cat
+    ;;
+esac
+'
+
+  capture_command output status env \
+    NO_COLOR=1 \
+    HOME="$work_dir/home" \
+    TMPDIR="$work_dir" \
+    PATH="$stub_dir:$PATH" \
+    bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
+
+  assert_status "0" "$status" "podman_troubleshoot completes successfully when port 443 policy is blocked"
+  assert_contains "$output" "Rootless Privileged Port Policy" "script reaches the privileged port policy section"
+  assert_contains "$output" "[TROUBLESHOOT] rootless host port 443 is still blocked inside the Podman VM" "blocked rootless port 443 is surfaced as a troubleshooting issue"
+  assert_contains "$output" "podman-allow-port-443" "script points to the runnable helper for port 443"
+  assert_contains "$output" "net.ipv4.ip_unprivileged_port_start=1024" "script shows the current VM sysctl value"
 
   rm -rf "$work_dir"
 }
@@ -608,6 +907,136 @@ esac
   assert_status "0" "$status" "podman_troubleshoot completes successfully with a starting machine"
   assert_contains "$output" "[TROUBLESHOOT] default Podman machine is still starting" "starting machines are surfaced as an issue"
   assert_not_contains "$output" "[OK] default Podman machine is running" "starting machines are not reported as healthy"
+
+  rm -rf "$work_dir"
+}
+
+test_verbose_flag_prints_progress_lines() {
+  local work_dir=""
+  local stub_dir=""
+  local output=""
+  local status=0
+
+  work_dir="$(mktemp -d)"
+  stub_dir="$work_dir/stub-bin"
+  make_stub_dir "$stub_dir"
+  mkdir -p "$work_dir/home"
+
+  write_stub "$stub_dir/podman" '
+case "$1" in
+  ps)
+    printf "CONTAINER ID  IMAGE\n"
+    exit 0
+    ;;
+  version)
+    printf "Client 5.6.1\n"
+    exit 0
+    ;;
+  info)
+    printf "host: ok\n"
+    exit 0
+    ;;
+  machine)
+    case "$2" in
+      list)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
+        ;;
+      inspect)
+        if [[ "$4" == "{{.Rootful}}" ]]; then
+          printf "false\n"
+        else
+          printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
+        fi
+        ;;
+      ssh)
+        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
+          printf "443\n"
+        else
+          exit 0
+        fi
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  system)
+    case "$2" in
+      connection)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'
+
+  write_stub "$stub_dir/docker" '
+case "$1" in
+  version)
+    printf "Client 27.0.0\n"
+    ;;
+  info)
+    printf "Docker Engine: ok\n"
+    ;;
+  system)
+    exit 0
+    ;;
+  context)
+    exit 0
+    ;;
+esac
+exit 0
+'
+
+  write_stub "$stub_dir/curl" '
+exit 0
+'
+
+  write_stub "$stub_dir/jq" '
+query="${*: -1}"
+case "$query" in
+  *"select(.Default == true) | .Name"*)
+    printf "podman-machine-default\n"
+    ;;
+  *"[.[] | select(.Default == true)] | length"*)
+    printf "1\n"
+    ;;
+  *".Running"*)
+    printf "true\n"
+    ;;
+  *".Starting"*)
+    printf "false\n"
+    ;;
+  *".State // \"unknown\""*)
+    printf "running\n"
+    ;;
+  *"length"*)
+    printf "1\n"
+    ;;
+  *)
+    cat
+    ;;
+esac
+'
+
+  capture_command output status env \
+    NO_COLOR=1 \
+    HOME="$work_dir/home" \
+    TMPDIR="$work_dir" \
+    PATH="$stub_dir:$PATH" \
+    bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --verbose"
+
+  assert_status "0" "$status" "podman_troubleshoot completes successfully with --verbose"
+  assert_contains "$output" "[VERBOSE] running: podman version --format" "verbose mode shows executed commands"
+  assert_contains "$output" "[VERBOSE] probing registry-1.docker.io by resolved IP inside the VM" "verbose mode shows long-running probe context"
 
   rm -rf "$work_dir"
 }

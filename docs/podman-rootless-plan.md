@@ -21,6 +21,8 @@ Concretely, the target state is:
   - `DOCKER_HOST=unix://${HOME}/.local/share/containers/podman/machine/podman.sock`
 - containers running inside the Podman VM mount the VM-internal socket path, not the macOS host socket path:
   - `/run/user/<uid>/podman/podman.sock`
+- if rootless containers need host port `443`, the Podman VM must be configured with:
+  - `net.ipv4.ip_unprivileged_port_start=443`
 
 ## Verified Constraints
 
@@ -95,6 +97,12 @@ If a real deployment needs host port `443` while staying rootless, use the VM sy
 podman-allow-port-443
 ```
 
+Without that VM change, a compose stack that publishes `443:...` will fail with an error like:
+
+```text
+rootlessport cannot expose privileged port 443
+```
+
 ### 5. Traefik probe requests must send a clean Host header
 
 Traefik `Host(...)` rules match the hostname, not `hostname:port`.
@@ -132,7 +140,12 @@ Important values:
 
 - `DOCKER_HOST=unix://${HOME}/.local/share/containers/podman/machine/podman.sock`
 - `PODMAN_COMPOSE_PROVIDER=/opt/homebrew/bin/docker-compose`
-- `TRAEFIK_DOCKER_SOCKET=/run/user/${PODMAN_UID}/podman/podman.sock`
+
+If this machine needs rootless services on host port `443`, run once after the VM starts:
+
+```sh
+podman-allow-port-443
+```
 
 ### Traefik-style container setup
 
@@ -224,6 +237,12 @@ Likely problem area:
 - SELinux labeling
 - privileged container port binding
 - Traefik Host-rule probe mismatch
+
+If the error mentions `rootlessport cannot expose privileged port 443`, the issue is not the socket mount. The VM still needs:
+
+```sh
+podman-allow-port-443
+```
 
 Use:
 
