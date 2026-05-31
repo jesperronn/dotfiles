@@ -1,0 +1,15 @@
+{
+  "providers": {
+    "ollama": {
+      "api": "openai-completions",
+      "baseUrl": "http://localhost:11434/v1",
+      "apiKey": "ollama",
+      "models": [
+        {
+          "id": "qwen3.6:35b-a3b-coding-mxfp8",
+          "name": "Qwen 3.6 35B Coding (Ollama)"
+        }
+      ]
+    }
+  }
+}

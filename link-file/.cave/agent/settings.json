@@ -1,0 +1,19 @@
+{
+  "telemetry": {
+    "enabled": false
+  },
+  "defaultProvider": "ollama",
+  "defaultModel": "qwen3.6:35b-a3b-coding-mxfp8",
+  "defaultThinkingLevel": "medium",
+  "favoriteModels": [
+    {
+      "provider": "ollama",
+      "id": "qwen3.6:35b-a3b-coding-mxfp8"
+    }
+  ],
+  "steeringMode": "all",
+  "transport": "auto",
+  "compaction": {
+    "enabled": true
+  }
+}
