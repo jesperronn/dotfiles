@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Sync LM Studio models to cave and hermes configs.
+"""Sync LM Studio models to cave, hermes, and opencode configs.
 
 Reads `lms ls --json`, then rewrites the lmstudio model lists in:
   ~/.cave/agent/models.json   (JSON — full models array replaced)
   ~/.hermes/config.yaml       (YAML — providers.lmstudio section upserted via yq)
-
-opencode is intentionally skipped — it auto-discovers models from LM Studio's
-/v1/models endpoint at runtime when LM Studio is running.
+  ./link-dir/.config/opencode/opencode.jsonc  (JSON — provider.lmstudio.models replaced)
 
 Run after downloading or removing models in LM Studio.
 """
@@ -19,6 +17,7 @@ from pathlib import Path
 
 CAVE_MODELS = Path.home() / ".cave/agent/models.json"
 HERMES_CONFIG = Path.home() / ".hermes/config.yaml"
+OPENCODE_CONFIG = Path(__file__).parent.parent / "link-dir/.config/opencode/opencode.jsonc"
 
 
 def fetch_lms_models():
@@ -71,6 +70,20 @@ def sync_hermes(models):
     print(f"hermes: wrote {len(models)} models → {HERMES_CONFIG}")
 
 
+def sync_opencode(models):
+    if not OPENCODE_CONFIG.exists():
+        print(f"opencode: skipped (config not found at {OPENCODE_CONFIG})", file=sys.stderr)
+        return
+
+    config = json.loads(OPENCODE_CONFIG.read_text())
+    config.setdefault("provider", {}).setdefault("lmstudio", {})["models"] = {
+        m["modelKey"]: {"name": m["displayName"]}
+        for m in models
+    }
+    OPENCODE_CONFIG.write_text(json.dumps(config, indent=2) + "\n")
+    print(f"opencode: wrote {len(models)} models → {OPENCODE_CONFIG}")
+
+
 def main():
     try:
         models = fetch_lms_models()
@@ -88,6 +101,7 @@ def main():
     print(f"found {len(models)} LLM models")
     sync_cave(models)
     sync_hermes(models)
+    sync_opencode(models)
 
 
 if __name__ == "__main__":
