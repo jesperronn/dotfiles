@@ -12,3 +12,7 @@
 /link-dir/.tmux/plugins
 
 bin/cloud_sql_proxy
+link-dir/.config/github-copilot/
+.aider*
+session-*.md
+link-dir/.obsidian-wiki/
