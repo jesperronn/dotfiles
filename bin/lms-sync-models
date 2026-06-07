@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Sync LM Studio models to cave and hermes configs.
+
+Reads `lms ls --json`, then rewrites the lmstudio model lists in:
+  ~/.cave/agent/models.json   (JSON — full models array replaced)
+  ~/.hermes/config.yaml       (YAML — providers.lmstudio section upserted via yq)
+
+opencode is intentionally skipped — it auto-discovers models from LM Studio's
+/v1/models endpoint at runtime when LM Studio is running.
+
+Run after downloading or removing models in LM Studio.
+"""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+CAVE_MODELS = Path.home() / ".cave/agent/models.json"
+HERMES_CONFIG = Path.home() / ".hermes/config.yaml"
+
+
+def fetch_lms_models():
+    result = subprocess.run(
+        ["lms", "ls", "--json", "--llm"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    models = json.loads(result.stdout)
+    return [m for m in models if m.get("type") == "llm"]
+
+
+def sync_cave(models):
+    config = json.loads(CAVE_MODELS.read_text())
+    config["providers"]["lmstudio"]["models"] = [
+        {"id": m["modelKey"], "name": m["displayName"]}
+        for m in models
+    ]
+    CAVE_MODELS.write_text(json.dumps(config, indent=2) + "\n")
+    print(f"cave: wrote {len(models)} models → {CAVE_MODELS}")
+
+
+def sync_hermes(models):
+    if not HERMES_CONFIG.exists():
+        print(f"hermes: skipped (config not found at {HERMES_CONFIG})", file=sys.stderr)
+        return
+
+    model_keys = [m["modelKey"] for m in models]
+    default = model_keys[0] if model_keys else ""
+
+    # Build the YAML fragment for providers.lmstudio using yq expressions.
+    # yq -i upserts the section, preserving everything else in the file.
+    models_expr = " | ".join(
+        f'.providers.lmstudio.models[{i}] = "{key}"'
+        for i, key in enumerate(model_keys)
+    )
+    expr = (
+        f'.providers.lmstudio.name = "LM Studio"'
+        f' | .providers.lmstudio.api = "http://127.0.0.1:1234/v1"'
+        f' | .providers.lmstudio.api_key = "lm-studio"'
+        f' | .providers.lmstudio.default_model = "{default}"'
+        f' | .providers.lmstudio.models = []'
+        f" | {models_expr}"
+    )
+    subprocess.run(
+        ["yq", "-i", expr, str(HERMES_CONFIG)],
+        check=True,
+    )
+    print(f"hermes: wrote {len(models)} models → {HERMES_CONFIG}")
+
+
+def main():
+    try:
+        models = fetch_lms_models()
+    except subprocess.CalledProcessError as e:
+        print(f"error: lms ls failed: {e.stderr}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("error: lms not found — is LM Studio CLI installed?", file=sys.stderr)
+        sys.exit(1)
+
+    if not models:
+        print("no LLM models found in LM Studio", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"found {len(models)} LLM models")
+    sync_cave(models)
+    sync_hermes(models)
+
+
+if __name__ == "__main__":
+    main()
