@@ -1,0 +1,11 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "model": "opus[1m]",
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "medium",
+  "theme": "auto",
+  "verbose": true
+}
