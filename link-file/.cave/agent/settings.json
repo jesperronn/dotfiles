@@ -2,18 +2,29 @@
   "telemetry": {
     "enabled": false
   },
-  "defaultProvider": "ollama",
-  "defaultModel": "qwen3.6:35b-a3b-coding-mxfp8",
+  "lmstudio": "ollama",
+  "defaultModel": "google/gemma-4-26b-a4b-qat",
   "defaultThinkingLevel": "medium",
-  "favoriteModels": [
-    {
-      "provider": "ollama",
-      "id": "qwen3.6:35b-a3b-coding-mxfp8"
-    }
-  ],
+  "favoriteModels": [],
   "steeringMode": "all",
   "transport": "auto",
   "compaction": {
     "enabled": true
-  }
+  },
+  "onboarding": {
+    "hasCompletedOnboarding": true,
+    "completedAt": "2026-05-31T21:54:21.859Z",
+    "completedVersion": "0.65.2"
+  },
+  "lastChangelogVersion": "0.65.2",
+  "update": {
+    "lastCheckedAt": "2026-06-06T18:15:31.862Z"
+  },
+  "recentModels": [
+    {
+      "provider": "lmstudio",
+      "id": "google/gemma-4-e4b"
+    }
+  ],
+  "defaultProvider": "lmstudio"
 }
