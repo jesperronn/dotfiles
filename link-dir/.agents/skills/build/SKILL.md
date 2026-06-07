@@ -1,5 +1,7 @@
 ---
 name: build
+group: spec-build
+summary: "Executes §T tasks top-to-bottom, flips status (·→~→x), commits per task. Auto-backprop on failure."
 description: |
   Plan-then-execute implementation against SPEC.md. Native single-thread
   loop, no sub-agents. On test or build failure, auto-invokes the backprop

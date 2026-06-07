@@ -1,5 +1,7 @@
 ---
 name: summarizer
+group: memory-session
+summary: "9-section conversation summary: request/concepts/files/errors/problem-solving/messages/pending/current/next."
 description: 'Use for summarizing a conversation, debugging session, or task thread. Produces a concise consolidated markdown summary with primary intent, technical context, file references, errors, fixes, problem solving, verbatim user messages, pending tasks, current work, and the next step.'
 argument-hint: 'Summarize the current task or conversation'
 user-invocable: true

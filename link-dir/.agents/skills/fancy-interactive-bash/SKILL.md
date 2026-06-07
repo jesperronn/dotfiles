@@ -1,5 +1,7 @@
 ---
 name: fancy-interactive-bash
+group: shell-bash
+summary: "Quality Bash pattern: parse_opts/parse_prereqs/run_main, sourceable functions, color UX, testable by function."
 description: Use when creating or refactoring interactive Bash scripts that should be composable, sourceable, color-aware, testable by function, and structured around parse_opts, parse_prereqs, and a sequential run_main orchestration.
 ---
 

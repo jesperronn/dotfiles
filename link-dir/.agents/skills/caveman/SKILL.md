@@ -1,5 +1,7 @@
 ---
 name: caveman
+group: spec-build
+summary: "Compression codec for spec writes: drops filler, uses symbols (→ ∴ ∀). ~75% token cut. Used by spec/build/check."
 description: |
   Caveman encoding for SPEC.md and spec-adjacent writes. Loaded by /spec, /build,
   /check. Cuts tokens ~75% vs prose while staying precise. Triggers on any write

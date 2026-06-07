@@ -1,5 +1,7 @@
 ---
 name: pagy-v9-to-v43-migration-expert
+group: domain
+summary: "Rails Pagy v9→v43: initializer, framework integration, helper calls, option renames, extras."
 description: Migrate Ruby on Rails projects from Pagy v9 legacy APIs to Pagy v43 modern APIs. Use when a codebase still uses `Pagy::Backend`, `Pagy::Frontend`, legacy helpers such as `pagy_nav(@pagy)`, old initializer settings, old extras-specific entrypoints, or Pagy v9 option names and needs a systematic upgrade to Pagy v43.
 ---
 

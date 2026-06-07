@@ -1,5 +1,7 @@
 ---
 name: backprop
+group: spec-build
+summary: "Bug/test failure → §B entry + optional §V invariant to prevent recurrence. Auto-called by build."
 description: |
   Bug → spec protocol. When a bug is found or a test fails, trace the cause,
   decide whether a new §V invariant would catch recurrence, append to §B.

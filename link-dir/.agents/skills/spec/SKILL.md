@@ -1,5 +1,7 @@
 ---
 name: spec
+group: spec-build
+summary: "Sole mutator of SPEC.md. Modes: NEW/DISTILL/BACKPROP/AMEND. Sections: §G §C §I §V §T §B."
 description: |
   Create, amend, or backprop bugs into SPEC.md at repo root. Sole mutator
   of the project spec. Triggers when the user asks to write a spec, start

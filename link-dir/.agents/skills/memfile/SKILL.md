@@ -1,5 +1,7 @@
 ---
 name: memfile
+group: memory-session
+summary: "Creates/updates structured session file: task spec, state, files, workflow, errors, learnings, worklog."
 description: 'Use for creating or updating a session memfile that captures task state, workflow, errors, learnings, and worklog for an active conversation or project thread.'
 argument-hint: 'Create or update the current memfile'
 user-invocable: true

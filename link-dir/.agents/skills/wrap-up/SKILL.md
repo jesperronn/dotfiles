@@ -1,5 +1,7 @@
 ---
 name: wrap-up
+group: memory-session
+summary: "Session close-out: deferred items, open questions, decisions, next action, next-session opener prompt."
 description: >
   Scan the current conversation and produce a structured session close-out: deferred items,
   open questions, decisions made, and the single clearest next action. Ends with a ready-to-paste

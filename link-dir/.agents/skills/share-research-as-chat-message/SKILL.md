@@ -1,5 +1,7 @@
 ---
 name: share-research-as-chat-message
+group: writing-format
+summary: "Rewrites research into forwardable chat message (default Danish): sharp opener, compressed answer, sources."
 description: Rewrite a researched answer, findings summary, or another model's output into a chat message that is easy to forward. Use when the user wants a sharper intro framed like "Jeg tænkte på ...", a short divider such as "Her er hvad Gemini fandt ud af", a shorter and less chatty answer, selectable output language, and strict fact-checking with current sources for every factual point.
 ---
 

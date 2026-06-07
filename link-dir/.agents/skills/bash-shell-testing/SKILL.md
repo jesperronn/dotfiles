@@ -1,5 +1,7 @@
 ---
 name: bash-shell-testing
+group: shell-bash
+summary: "Colocated *.test.sh structure, bin/test + bin/lint templates, colored [PASS]/[FAIL] output."
 description: Use when creating or refactoring Bash test files, repository shell test runners, or shell lint runners. Covers colocated `*.test.sh` structure, direct-execution test files, colored `[PASS]` and `[FAIL]` output, and reusable `bin/test` and `bin/lint` templates.
 ---
 

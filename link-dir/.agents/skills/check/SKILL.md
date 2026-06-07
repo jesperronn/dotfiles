@@ -1,5 +1,7 @@
 ---
 name: check
+group: spec-build
+summary: "Read-only drift detector. Diffs SPEC.md vs code, reports HOLD/VIOLATE/DRIFT/MISSING with file:line."
 description: |
   Read-only drift detector. Diffs SPEC.md against current code and reports
   violations grouped by severity. Writes nothing — suggests remedies via

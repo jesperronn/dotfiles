@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Regenerate link-dir/.agents/skills/README.md from SKILL.md frontmatter.
+
+Each skill's SKILL.md must have:
+  group:   one of the GROUP_ORDER keys below
+  summary: one-line description for the table
+
+Run manually or via the pre-commit hook (bin/git-hooks/pre-commit).
+"""
+
+import datetime
+import os
+import re
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT   = os.path.dirname(SCRIPT_DIR)
+SKILLS_DIR  = os.path.join(REPO_ROOT, "link-dir", ".agents", "skills")
+README_PATH = os.path.join(SKILLS_DIR, "README.md")
+
+GROUP_ORDER = [
+    ("spec-build",     "Spec / Build Loop"),
+    ("shell-bash",     "Shell / Bash"),
+    ("wiki-obsidian",  "Wiki / Obsidian"),
+    ("memory-session", "Memory / Session"),
+    ("writing-format", "Writing / Format"),
+    ("skills-meta",    "Skills Meta"),
+    ("domain",         "Domain-Specific"),
+]
+
+
+def parse_frontmatter(path):
+    """Extract scalar key:value pairs from the first YAML frontmatter block."""
+    with open(path, encoding="utf-8") as f:
+        content = f.read()
+    if not content.startswith("---"):
+        return {}
+    try:
+        end = content.index("---", 3)
+    except ValueError:
+        return {}
+    fm = {}
+    for line in content[3:end].splitlines():
+        m = re.match(r'^(\w[\w-]*):\s*(.*)', line)
+        if not m:
+            continue
+        key, val = m.group(1), m.group(2).strip()
+        # Strip surrounding quotes
+        if (val.startswith('"') and val.endswith('"')) or \
+           (val.startswith("'") and val.endswith("'")):
+            val = val[1:-1]
+        # Skip multiline indicators and empty values
+        if val in ('|', '>', '>-', '|-', ''):
+            continue
+        fm[key] = val
+    return fm
+
+
+def load_skills():
+    skills = []
+    for entry in sorted(os.scandir(SKILLS_DIR), key=lambda e: e.name):
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        skill_file = os.path.join(entry.path, "SKILL.md")
+        if not os.path.exists(skill_file):
+            continue
+        fm = parse_frontmatter(skill_file)
+        skills.append({
+            "name":    fm.get("name") or entry.name,
+            "group":   fm.get("group", "unknown"),
+            "summary": fm.get("summary", "—"),
+        })
+    return skills
+
+
+def render(skills):
+    grouped = {}
+    for s in skills:
+        grouped.setdefault(s["group"], []).append(s)
+
+    lines = [
+        "# Skills Index",
+        "",
+        f"{len(skills)} skills — grouped by domain.",
+        "",
+        "> **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.",
+        "> The pre-commit hook regenerates this file automatically on commit.",
+        "> To regenerate manually: `bin/gen-skills-readme`",
+        "",
+        "---",
+        "",
+    ]
+
+    for key, label in GROUP_ORDER:
+        entries = grouped.get(key)
+        if not entries:
+            continue
+        lines += [
+            f"## {label}",
+            "",
+            "| Skill | Does |",
+            "|-------|------|",
+        ]
+        for s in sorted(entries, key=lambda x: x["name"]):
+            lines.append(f"| **{s['name']}** | {s['summary']} |")
+        lines += ["", "---", ""]
+
+    unknowns = grouped.get("unknown", [])
+    if unknowns:
+        lines += [
+            "## Uncategorized",
+            "",
+            "| Skill | Does |",
+            "|-------|------|",
+        ]
+        for s in sorted(unknowns, key=lambda x: x["name"]):
+            lines.append(f"| **{s['name']}** | {s['summary']} |")
+        lines += ["", "---", ""]
+
+    today = datetime.date.today().isoformat()
+    lines.append(f"*Last updated: {today} · {len(skills)} skills*")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def main():
+    skills = load_skills()
+    if not skills:
+        print(f"No SKILL.md files found in {SKILLS_DIR}", file=sys.stderr)
+        sys.exit(1)
+    readme = render(skills)
+    with open(README_PATH, "w", encoding="utf-8") as f:
+        f.write(readme)
+    print(f"Wrote {os.path.relpath(README_PATH)} ({len(skills)} skills)")
+
+
+if __name__ == "__main__":
+    main()

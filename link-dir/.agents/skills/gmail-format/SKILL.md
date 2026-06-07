@@ -1,5 +1,7 @@
 ---
 name: gmail-format
+group: writing-format
+summary: "Parses Gmail threads into clean chronological Markdown with frontmatter and deduplicated content."
 description: Use this skill when the user provides a raw Gmail thread or email correspondence and asks to format, clean up, or convert it into a structured, chronological Markdown document.
 ---
 

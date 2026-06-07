@@ -1,5 +1,7 @@
 ---
 name: memory-during-chat
+group: memory-session
+summary: "Keeps running in-session memory of constraints and goals. Consulted before each answer."
 description: Keep a running memory during the chat and use it before answering.
 ---
 
