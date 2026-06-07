@@ -5,7 +5,8 @@ Each skill's SKILL.md must have:
   group:   one of the GROUP_ORDER keys below
   summary: one-line description for the table
 
-Run manually or via the pre-commit hook (bin/git-hooks/pre-commit).
+Run manually: bin/gen_skills_readme
+Or via the pre-commit hook (bin/git-hooks/pre-commit).
 Exits 1 and prints paste-ready AI prompts for any skills missing required fields.
 """
 
@@ -104,7 +105,7 @@ def render(skills):
         "",
         "> **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.",
         "> The pre-commit hook regenerates this file automatically on commit.",
-        "> To regenerate manually: `bin/gen-skills-readme`",
+        "> To regenerate manually: `bin/gen_skills_readme`",
         "",
         "---",
         "",

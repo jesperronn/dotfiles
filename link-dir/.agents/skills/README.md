@@ -4,7 +4,7 @@
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
-> To regenerate manually: `bin/gen-skills-readme`
+> To regenerate manually: `bin/gen_skills_readme`
 
 ---
 

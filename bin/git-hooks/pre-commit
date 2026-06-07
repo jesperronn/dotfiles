@@ -4,7 +4,7 @@ set -uo pipefail
 
 if git diff --cached --name-only | grep -q 'link-dir/\.agents/skills/.*/SKILL\.md'; then
     root="$(git rev-parse --show-toplevel)"
-    python3 "$root/bin/gen-skills-readme"
+    python3 "$root/bin/gen_skills_readme"
     exit_code=$?
     git add link-dir/.agents/skills/README.md
     exit $exit_code
