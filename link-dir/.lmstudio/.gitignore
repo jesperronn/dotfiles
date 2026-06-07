@@ -1,0 +1,5 @@
+# Ignore all LM Studio runtime data; only track config files.
+*
+!.gitignore
+!settings.json
+!mcp.json
