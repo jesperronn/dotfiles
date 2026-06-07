@@ -53,3 +53,6 @@ case ":$PATH:" in
   *) export PATH="$PNPM_HOME/bin:$PATH" ;;
 esac
 # pnpm end
+
+# Added by LM Studio CLI tool (lms)
+export PATH="$PATH:/Users/jesper/.lmstudio/bin"
