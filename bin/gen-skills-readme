@@ -6,6 +6,7 @@ Each skill's SKILL.md must have:
   summary: one-line description for the table
 
 Run manually or via the pre-commit hook (bin/git-hooks/pre-commit).
+Exits 1 and prints paste-ready AI prompts for any skills missing required fields.
 """
 
 import datetime
@@ -18,6 +19,8 @@ REPO_ROOT   = os.path.dirname(SCRIPT_DIR)
 SKILLS_DIR  = os.path.join(REPO_ROOT, "link-dir", ".agents", "skills")
 README_PATH = os.path.join(SKILLS_DIR, "README.md")
 
+REQUIRED = ("group", "summary")
+
 GROUP_ORDER = [
     ("spec-build",     "Spec / Build Loop"),
     ("shell-bash",     "Shell / Bash"),
@@ -27,10 +30,11 @@ GROUP_ORDER = [
     ("skills-meta",    "Skills Meta"),
     ("domain",         "Domain-Specific"),
 ]
+VALID_GROUPS = " | ".join(k for k, _ in GROUP_ORDER)
 
 
 def parse_frontmatter(path):
-    """Extract scalar key:value pairs from the first YAML frontmatter block."""
+    """Extract scalar and multiline key:value pairs from the first YAML block."""
     with open(path, encoding="utf-8") as f:
         content = f.read()
     if not content.startswith("---"):
@@ -39,20 +43,31 @@ def parse_frontmatter(path):
         end = content.index("---", 3)
     except ValueError:
         return {}
+
     fm = {}
-    for line in content[3:end].splitlines():
-        m = re.match(r'^(\w[\w-]*):\s*(.*)', line)
+    lines = content[3:end].splitlines()
+    i = 0
+    while i < len(lines):
+        m = re.match(r'^(\w[\w-]*):\s*(.*)', lines[i])
         if not m:
+            i += 1
             continue
         key, val = m.group(1), m.group(2).strip()
-        # Strip surrounding quotes
-        if (val.startswith('"') and val.endswith('"')) or \
-           (val.startswith("'") and val.endswith("'")):
-            val = val[1:-1]
-        # Skip multiline indicators and empty values
-        if val in ('|', '>', '>-', '|-', ''):
-            continue
-        fm[key] = val
+        if val in ('|', '>', '>-', '|-', '>+', '|+'):
+            # Collect indented continuation lines
+            parts = []
+            i += 1
+            while i < len(lines) and (lines[i].startswith(' ') or lines[i].startswith('\t')):
+                parts.append(lines[i].strip())
+                i += 1
+            fm[key] = ' '.join(parts)
+        else:
+            if (val.startswith('"') and val.endswith('"')) or \
+               (val.startswith("'") and val.endswith("'")):
+                val = val[1:-1]
+            if val:
+                fm[key] = val
+            i += 1
     return fm
 
 
@@ -65,10 +80,14 @@ def load_skills():
         if not os.path.exists(skill_file):
             continue
         fm = parse_frontmatter(skill_file)
+        missing = [f for f in REQUIRED if not fm.get(f)]
         skills.append({
-            "name":    fm.get("name") or entry.name,
-            "group":   fm.get("group", "unknown"),
-            "summary": fm.get("summary", "—"),
+            "name":        fm.get("name") or entry.name,
+            "group":       fm.get("group", "unknown"),
+            "summary":     fm.get("summary", "—"),
+            "description": fm.get("description", ""),
+            "path":        os.path.relpath(skill_file, REPO_ROOT),
+            "missing":     missing,
         })
     return skills
 
@@ -124,15 +143,56 @@ def render(skills):
     return "\n".join(lines)
 
 
+def next_step_prompt(skill):
+    """Return a paste-ready AI prompt for a skill missing required fields."""
+    missing = ", ".join(skill["missing"])
+    desc = skill["description"]
+    if len(desc) > 120:
+        desc = desc[:117] + "..."
+    sep = "─" * 64
+    lines = [
+        f"── {skill['name']} (missing: {missing}) ──",
+        "Paste into your AI:",
+        "",
+        f"  Skill `{skill['name']}` in `{skill['path']}`",
+        f"  is missing frontmatter fields: {missing}.",
+    ]
+    if desc:
+        lines.append(f"  Description: \"{desc}\"")
+    lines += [
+        "",
+        "  Add after `name: " + skill["name"] + "`:",
+    ]
+    if "group" in skill["missing"]:
+        lines.append(f"    group: <one of: {VALID_GROUPS}>")
+    if "summary" in skill["missing"]:
+        lines.append( "    summary: \"One-line: what it does + key behaviour.\"")
+    lines += [
+        "",
+        "  Then run: bin/gen-skills-readme",
+        sep,
+    ]
+    return "\n".join(lines)
+
+
 def main():
     skills = load_skills()
     if not skills:
         print(f"No SKILL.md files found in {SKILLS_DIR}", file=sys.stderr)
         sys.exit(1)
+
     readme = render(skills)
     with open(README_PATH, "w", encoding="utf-8") as f:
         f.write(readme)
     print(f"Wrote {os.path.relpath(README_PATH)} ({len(skills)} skills)")
+
+    broken = [s for s in skills if s["missing"]]
+    if broken:
+        n = len(broken)
+        print(f"\n⚠  {n} skill{'s' if n > 1 else ''} missing required frontmatter:\n")
+        for s in broken:
+            print(next_step_prompt(s))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

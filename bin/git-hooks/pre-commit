@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Regenerate skills README when any skill's SKILL.md is staged.
-set -euo pipefail
+set -uo pipefail
 
 if git diff --cached --name-only | grep -q 'link-dir/\.agents/skills/.*/SKILL\.md'; then
-    python3 "$(git rev-parse --show-toplevel)/bin/gen-skills-readme"
+    root="$(git rev-parse --show-toplevel)"
+    python3 "$root/bin/gen-skills-readme"
+    exit_code=$?
     git add link-dir/.agents/skills/README.md
+    exit $exit_code
 fi
