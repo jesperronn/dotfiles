@@ -17,6 +17,12 @@ palette = 2=#8ecf7a
 #### tab layouts #####
 #macos-titlebar-style = native
 
+# Disable Ghostty's built-in title shell integration so it does not override
+# the tab title with the running process name (e.g. "hermes").
+# Title is managed entirely by 50_ghostty_prompt.sh via PROMPT_COMMAND, which
+# sets a git-aware CWD title at each prompt and lets it persist during commands.
+shell-integration-features = cursor,no-sudo,no-title,no-ssh-env,no-ssh-terminfo,path
+
 #### keyboard bindings #####
 
 keybind = super+shift+right=next_tab
