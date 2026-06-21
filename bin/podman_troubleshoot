@@ -14,6 +14,8 @@ LOG_HEALTH_FAILURES=0
 LOG_EMERGENCY_FAILURES=0
 START_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_START_TIMEOUT_SECONDS:-90}"
 VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS:-30}"
+PODMAN_PS_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS:-30}"
+VM_CLOCK_DRIFT_THRESHOLD_SECONDS="${PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SECONDS:-10}"
 
 if [[ -n "${NO_COLOR:-}" ]]; then
   C_RESET=""
@@ -576,6 +578,22 @@ connection: $connection_name"
     log_ok "rootless privileged port floor already allows port 443"
   fi
 
+  local host_epoch vm_epoch clock_drift
+  host_epoch="$(date +%s)"
+  vm_epoch="$(podman machine ssh 'date +%s' 2>/dev/null | tr -d '\r' || true)"
+  if [[ -n "$vm_epoch" && "$vm_epoch" =~ ^[0-9]+$ ]]; then
+    clock_drift=$(( vm_epoch - host_epoch ))
+    if (( clock_drift < 0 )); then clock_drift=$(( -clock_drift )); fi
+    if (( clock_drift > VM_CLOCK_DRIFT_THRESHOLD_SECONDS )); then
+      run_fix_step \
+        "VM clock synced to host (drift was ${clock_drift}s)" \
+        "sync VM clock via chronyc makestep (drift ${clock_drift}s)" \
+        podman machine ssh 'sudo chronyc makestep' || true
+    else
+      log_ok "VM clock is in sync with host (drift ${clock_drift}s)"
+    fi
+  fi
+
   verify_fix_result
 }
 
@@ -584,7 +602,16 @@ check_podman_socket_connection() {
 
   local output=""
   local status=0
-  capture_command output status podman ps
+  capture_command_with_timeout output status "$PODMAN_PS_TIMEOUT_SECONDS" podman ps
+
+  if [[ $status -eq 124 ]]; then
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "podman ps timed out after ${PODMAN_PS_TIMEOUT_SECONDS}s"
+    printf '    next: the VM socket is sluggish — this is common right after host hibernation\n'
+    printf '    next: wait 10-20s and retry, or run: podman machine stop && podman machine start\n'
+    printf '    next: raise the timeout with: PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS=90 %s\n' "$SCRIPT_NAME"
+    return 0
+  fi
 
   if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|connection refused|failed to connect'; then
     log_ok "podman ps succeeded; socket connection is healthy"
@@ -841,7 +868,7 @@ podman_machine_log_health_report() {
 
   suspicious_lines="$(
     strings "$log_file" 2>/dev/null |
-      rg -n -i 'vfkit exited unexpectedly|input/output error|operation not permitted|failed to rotate|failed to open|not able to claim the global docker sock|failed to claim the global docker sock|panic|fatal|ignition has failed|entering emergency mode|press enter for system maintenance|systemd-fsck-root' -N || true
+      rg -n -i 'vfkit exited unexpectedly|input/output error|operation not permitted|failed to rotate|failed to open|not able to claim the global docker sock|failed to claim the global docker sock|panic|fatal|ignition has failed|entering emergency mode|press enter for system maintenance' -N || true
   )"
 
   printf 'log file: %s\n' "$log_file"
@@ -1122,7 +1149,7 @@ check_machine_log_health() {
   local status=0
   capture_command output status podman_machine_log_health_report "$log_file"
 
-  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eqi 'Input/output error|operation not permitted|vfkit exited unexpectedly|failed to claim the global docker sock|failed to rotate|failed to open|Ignition has failed|Entering emergency mode|Press Enter for system maintenance|systemd-fsck-root'; then
+  if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eqi 'Input/output error|operation not permitted|vfkit exited unexpectedly|failed to claim the global docker sock|failed to rotate|failed to open|Ignition has failed|Entering emergency mode|Press Enter for system maintenance'; then
     log_ok "vfkit log does not show obvious startup errors"
   else
     FAILURES=$((FAILURES + 1))
@@ -1137,7 +1164,7 @@ check_machine_log_health() {
       printf '      podman machine start\n'
       printf '      podman_troubleshoot --fix\n'
       printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
-    elif printf '%s\n' "$output" | grep -Eqi 'Ignition has failed|Entering emergency mode|Press Enter for system maintenance|systemd-fsck-root'; then
+    elif printf '%s\n' "$output" | grep -Eqi 'Ignition has failed|Entering emergency mode|Press Enter for system maintenance'; then
       LOG_EMERGENCY_FAILURES=$((LOG_EMERGENCY_FAILURES + 1))
       log_action "vfkit log shows the VM booted into emergency mode"
       printf '    next: inspect the failed boot details in %s before rebuilding if you need to preserve evidence\n' "$log_file"
@@ -1406,6 +1433,58 @@ common next steps:
 EOF
 }
 
+check_vm_clock_sync() {
+  log_section "VM Clock Sync"
+
+  local host_epoch=""
+  local vm_epoch=""
+  local vm_date=""
+  local drift=0
+
+  host_epoch="$(date +%s)"
+
+  local ssh_output=""
+  local ssh_status=0
+  # shellcheck disable=SC2016
+  capture_command_with_timeout ssh_output ssh_status 15 \
+    podman machine ssh 'printf "%s %s\n" "$(date +%s)" "$(date)"'
+
+  if [[ $ssh_status -eq 124 || -z "$ssh_output" ]]; then
+    log_action "VM did not respond in time; skipping clock drift check"
+    printf '    next: run: podman machine ssh date\n'
+    return 0
+  fi
+
+  vm_epoch="$(printf '%s\n' "$ssh_output" | awk '{print $1}')"
+  vm_date="$(printf '%s\n' "$ssh_output" | cut -d' ' -f2-)"
+
+  if [[ -z "$vm_epoch" || ! "$vm_epoch" =~ ^[0-9]+$ ]]; then
+    log_action "could not parse VM clock output; skipping drift check"
+    show_detail "$ssh_output"
+    return 0
+  fi
+
+  drift=$(( vm_epoch - host_epoch ))
+  if (( drift < 0 )); then drift=$(( -drift )); fi
+
+  printf 'host time: %s\n' "$(date)"
+  printf 'vm time:   %s\n' "$vm_date"
+  printf 'drift:     %ss\n' "$drift"
+
+  if (( drift <= VM_CLOCK_DRIFT_THRESHOLD_SECONDS )); then
+    log_ok "VM clock is in sync with host (drift ${drift}s)"
+    return 0
+  fi
+
+  FAILURES=$((FAILURES + 1))
+  log_troubleshoot "VM clock is out of sync with host (drift ${drift}s)"
+  printf '    next: this is common after host hibernation — the VM clock freezes while NTP slews slowly\n'
+  printf '    next: force an immediate NTP step correction inside the VM:\n'
+  printf '      podman machine ssh '"'"'sudo chronyc makestep'"'"'\n'
+  printf '    next: or run: podman_troubleshoot --fix  (applies makestep automatically)\n'
+  printf '    next: to prevent this after future hibernations, run: podman-install-wake-handler\n'
+}
+
 run_main() {
   require_podman
   parse_args "$@"
@@ -1424,6 +1503,7 @@ run_main() {
   check_podman_machine_inspect
   check_podman_machine_alignment
   check_podman_machine_running_state
+  check_vm_clock_sync
   check_rootless_privileged_port_policy
   check_machine_start_lock
   check_machine_log_health
