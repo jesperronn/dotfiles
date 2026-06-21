@@ -1,0 +1,41 @@
+for dir in $(echo "$PATH" | tr ':' ' '); do
+    # Ensure it's a valid directory and skip relative dot paths
+    if [ -d "$dir" ] && [ "$dir" != "." ] && [ "$dir" != ".." ]; then
+        # Using a universal wildcard loop works perfectly on both Mac and Linux
+        # without worrying about conflicting BSD/GNU 'find' flags
+        for file in "$dir"/*; do
+            if [ -f "$file" ] || [ -L "$file" ]; then
+                if [ -x "$file" ]; then
+                    echo "$file"
+                fi
+            fi
+        done 2>/dev/null
+    fi
+done | awk -F/ '{print $NF}' | sort -u | while read -r cmd; do
+    # Skip standard shell built-ins to prevent messy local flag errors
+    case "$cmd" in
+        echo|kill|pwd|sh|true|false|test|[|printf) 
+            printf "%s: Shell Built-in\n" "$cmd"
+            continue ;;
+        *chkpwd|*update)
+            printf "%s: Skipped (PAM Helper)\n" "$cmd"
+            continue ;;
+        "*") 
+            # Catch edge cases where a directory might have been empty
+            continue ;;
+    esac
+
+    # Run the command with no standard input to prevent hangs
+    ver=$(command -v "$cmd" >/dev/null && "$cmd" --version </dev/null 2>&1 | head -n 1)
+    
+    # Clean up output if the command threw a flag/syntax error
+    case "$ver" in
+        *invalid*|*unrecognized*|*Illegal*|*Unknown*|*Usage*) ver="Version unknown" ;;
+    esac
+
+    if [ -z "$ver" ]; then
+        ver="Version unknown"
+    fi
+
+    printf "%s: %s\n" "$cmd" "$ver"
+done
