@@ -1,6 +1,6 @@
 # Skills Index
 
-20 skills — grouped by domain.
+21 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -56,6 +56,7 @@
 | Skill | Does |
 |-------|------|
 | **gmail-format** | Parses Gmail threads into clean chronological Markdown with frontmatter and deduplicated content. |
+| **save-plan-docs** | Turn a suggestion into a plan doc with metadata and a tool-tagged filename. |
 | **share-research-as-chat-message** | Rewrites research into forwardable chat message (default Danish): sharp opener, compressed answer, sources. |
 
 ---
@@ -77,4 +78,4 @@
 
 ---
 
-*Last updated: 2026-06-07 · 20 skills*
+*Last updated: 2026-06-21 · 21 skills*

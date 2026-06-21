@@ -1,4 +1,6 @@
 [user]
+	name = 
+	email = 
   # These values are set in ~/.gitconfig_local
   # see https://stackoverflow.com/a/42571751/109305
 [include]

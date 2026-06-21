@@ -7,7 +7,7 @@ description: >
   open questions, decisions made, and the single clearest next action. Ends with a ready-to-paste
   "next session opener" prompt.
   Use this skill whenever the user says "/wrap-up", "/deferred", "wrap up this session",
-  "what did we defer", "what's left", "close out this session", "end of session summary",
+  "what did we defer", "what's left", "end of session summary",
   or asks what to pick up next time.
 user-invocable: true
 argument-hint: 'Wrap up the current session'
