@@ -6,12 +6,28 @@
       "apiKey": "lm-studio",
       "models": [
         {
-          "id": "google/gemma-4-31b-qat",
-          "name": "Gemma 4 31B Qat"
+          "id": "ibm/granite-4.1-30b",
+          "name": "Granite 4.1 30B"
+        },
+        {
+          "id": "google/gemma-4-26b-a4b",
+          "name": "Gemma 4 26B A4B"
+        },
+        {
+          "id": "qwen/qwen3.6-27b",
+          "name": "Qwen3.6 27B"
+        },
+        {
+          "id": "qwen/qwen3-coder-next",
+          "name": "Qwen3 Coder Next"
         },
         {
           "id": "google/gemma-4-e4b-qat",
           "name": "Gemma 4 E4B Qat"
+        },
+        {
+          "id": "gemma-4-e4b-it-qat",
+          "name": "Gemma 4 E4B Instruct QAT"
         },
         {
           "id": "google/gemma-4-e2b",
@@ -20,6 +36,10 @@
         {
           "id": "google/gemma-4-e2b-qat",
           "name": "Gemma 4 E2B Qat"
+        },
+        {
+          "id": "gemma-4-e2b-it-qat",
+          "name": "Gemma 4 E2B Instruct QAT"
         },
         {
           "id": "qwen/qwen3-coder-30b",
@@ -34,16 +54,8 @@
           "name": "Gemma 4 12B Qat"
         },
         {
-          "id": "google/gemma-4-12b",
-          "name": "Gemma 4 12B"
-        },
-        {
           "id": "google/gemma-4-e4b",
           "name": "Gemma 4 E4B"
-        },
-        {
-          "id": "google/gemma-4-31b",
-          "name": "Gemma 4 31B"
         },
         {
           "id": "qwen/qwen3.5-9b",

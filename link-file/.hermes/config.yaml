@@ -1,41 +1,53 @@
 model:
   api_key: ollama
   base_url: http://127.0.0.1:1234/v1
-  default: google/gemma-4-26b-a4b-qat
+  default: qwen/qwen3.6-35b-a3b
   provider: lmstudio
 providers:
+  mlx:
+    name: MLX
+    api: http://localhost:8080/v1
+    api_key: not-needed
+    default_model: ''
+    models: []
   ollama-launch:
     api: http://127.0.0.1:11434/v1
     default_model: qwen3.6:35b-a3b-coding-mxfp8
     models:
-      - qwen3.6:35b-a3b-coding-mxfp8
-      - qwen3.6:latest
-      - gemma4:e4b-mxfp8
-      - gemma4:e4b-mlx
+    - qwen3.6:35b-a3b-coding-mxfp8
+    - qwen3.6:latest
+    - gemma4:e4b-mxfp8
+    - gemma4:e4b-mlx
     name: Ollama
   lmstudio:
     name: LM Studio
     api: http://127.0.0.1:1234/v1
     api_key: lm-studio
-    default_model: google/gemma-4-31b-qat
+    default_model: ibm/granite-4.1-30b
     models:
-      - google/gemma-4-31b-qat
-      - google/gemma-4-e4b-qat
-      - google/gemma-4-e2b
-      - google/gemma-4-e2b-qat
-      - qwen/qwen3-coder-30b
-      - google/gemma-4-26b-a4b-qat
-      - google/gemma-4-12b-qat
-      - google/gemma-4-12b
-      - google/gemma-4-e4b
-      - google/gemma-4-31b
-      - qwen/qwen3.5-9b
-      - qwen/qwen3.6-35b-a3b
+    - ibm/granite-4.1-30b
+    - google/gemma-4-26b-a4b
+    - qwen/qwen3.6-27b
+    - qwen/qwen3-coder-next
+    - google/gemma-4-e4b-qat
+    - gemma-4-e4b-it-qat
+    - google/gemma-4-e2b
+    - google/gemma-4-e2b-qat
+    - gemma-4-e2b-it-qat
+    - qwen/qwen3-coder-30b
+    - google/gemma-4-26b-a4b-qat
+    - google/gemma-4-12b-qat
+    - google/gemma-4-e4b
+    - qwen/qwen3.5-9b
+    - qwen/qwen3.6-35b-a3b
 fallback_providers: []
 credential_pool_strategies: {}
 toolsets:
-  - hermes-cli
-  - web
+- hermes-cli
+- web
+- file
+- terminal
+max_concurrent_sessions: null
 agent:
   max_turns: 150
   gateway_timeout: 1800
@@ -44,8 +56,10 @@ agent:
   service_tier: ''
   tool_use_enforcement: auto
   task_completion_guidance: true
+  parallel_tool_call_guidance: true
   environment_probe: true
   environment_hint: ''
+  coding_context: auto
   gateway_timeout_warning: 900
   clarify_timeout: 600
   gateway_notify_interval: 180
@@ -58,6 +72,7 @@ terminal:
   cwd: .
   timeout: 180
   env_passthrough: []
+  home_mode: auto
   shell_init_files: []
   auto_source_bashrc: true
   docker_image: nikolaik/python-nodejs:python3.11-nodejs20
@@ -109,7 +124,9 @@ checkpoints:
   retention_days: 7
   delete_orphans: true
   min_interval_hours: 24
+context_file_max_chars: null
 file_read_max_chars: 100000
+mcp_discovery_timeout: 1.5
 tool_output:
   max_bytes: 50000
   max_lines: 2000
@@ -133,6 +150,19 @@ compression:
   hygiene_hard_message_limit: 400
   protect_first_n: 3
   abort_on_summary_failure: false
+  codex_gpt55_autoraise: true
+kanban:
+  dispatch_in_gateway: true
+  dispatch_interval_seconds: 60
+  failure_limit: 2
+  worker_log_rotate_bytes: 2097152
+  worker_log_backup_count: 1
+  orchestrator_profile: ''
+  default_assignee: ''
+  max_in_progress_per_profile: null
+  auto_decompose: true
+  auto_decompose_per_tick: 3
+  dispatch_stale_timeout_seconds: 14400
 prompt_caching:
   cache_ttl: 5m
 openrouter:
@@ -185,7 +215,7 @@ auxiliary:
     model: ''
     base_url: ''
     api_key: ''
-    timeout: 30
+    timeout: 120
     extra_body: {}
   mcp:
     provider: auto
@@ -195,6 +225,13 @@ auxiliary:
     timeout: 30
     extra_body: {}
   title_generation:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 30
+    extra_body: {}
+  tts_audio_tags:
     provider: auto
     model: ''
     base_url: ''
@@ -229,6 +266,13 @@ auxiliary:
     api_key: ''
     timeout: 600
     extra_body: {}
+  monitor:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 60
+    extra_body: {}
   session_search:
     api_key: ''
     base_url: ''
@@ -252,18 +296,22 @@ display:
   tui_agents_nudge: true
   bell_on_complete: false
   show_reasoning: false
+  memory_notifications: 'on'
   streaming: false
   timestamps: false
   final_response_markdown: strip
   persistent_output: true
   persistent_output_max_lines: 200
+  persist_prompts: true
   inline_diffs: true
   file_mutation_verifier: true
+  credits_notices: true
   turn_completion_explainer: true
   show_cost: false
   skin: default
   language: en
   tui_status_indicator: kaomoji
+  cli_refresh_interval: 1.0
   user_message_preview:
     first_lines: 2
     last_lines: 2
@@ -271,6 +319,7 @@ display:
   tool_progress_command: false
   tool_progress_overrides: {}
   tool_preview_length: 0
+  tool_progress_grouping: accumulate
   ephemeral_system_ttl: 0
   platforms:
     telegram:
@@ -280,9 +329,9 @@ display:
   runtime_footer:
     enabled: false
     fields:
-      - model
-      - context_pct
-      - cwd
+    - model
+    - context_pct
+    - cwd
   copy_shortcut: auto
   tool_progress: all
 dashboard:
@@ -310,6 +359,11 @@ tts:
   openai:
     model: gpt-4o-mini-tts
     voice: alloy
+  gemini:
+    model: gemini-2.5-flash-preview-tts
+    voice: Kore
+    audio_tags: false
+    persona_prompt_file: ''
   xai:
     voice_id: eve
     language: en
@@ -357,6 +411,7 @@ context:
 memory:
   memory_enabled: true
   user_profile_enabled: true
+  write_approval: false
   memory_char_limit: 2200
   user_char_limit: 1375
   provider: ''
@@ -371,6 +426,7 @@ delegation:
   child_timeout_seconds: 600
   reasoning_effort: ''
   max_concurrent_children: 3
+  max_async_children: 3
   max_spawn_depth: 1
   orchestrator_enabled: true
   subagent_auto_approve: false
@@ -383,12 +439,14 @@ skills:
   inline_shell: false
   inline_shell_timeout: 10
   guard_agent_created: false
+  write_approval: false
 curator:
   enabled: true
   interval_hours: 168
   min_idle_hours: 2
   stale_after_days: 30
   archive_after_days: 90
+  consolidate: false
   prune_builtins: true
   backup:
     enabled: true
@@ -423,16 +481,18 @@ discord:
     speech_gain: 1.0
     ack_enabled: true
     ack_phrases:
-      - Let me look into that.
-      - One moment.
-      - Checking on that now.
-      - Give me a sec.
-      - On it.
+    - Let me look into that.
+    - One moment.
+    - Checking on that now.
+    - Give me a sec.
+    - On it.
 whatsapp: {}
 telegram:
   reactions: false
   channel_prompts: {}
   allowed_chats: ''
+  extra:
+    rich_messages: true
 mattermost:
   require_mention: true
   free_response_channels: ''
@@ -450,6 +510,7 @@ approvals:
   destructive_slash_confirm: true
 command_allowlist: []
 quick_commands: {}
+platform_hints: {}
 hooks: {}
 hooks_auto_accept: false
 personalities: {}
@@ -467,20 +528,14 @@ security:
   acked_advisories: []
   allow_lazy_installs: true
 cron:
+  provider: ''
+  chronos:
+    portal_url: https://portal.nousresearch.com
+    callback_url: ''
+    expected_audience: ''
+    nas_jwks_url: ''
   wrap_response: true
   max_parallel_jobs: null
-kanban:
-  dispatch_in_gateway: true
-  dispatch_interval_seconds: 60
-  failure_limit: 2
-  worker_log_rotate_bytes: 2097152
-  worker_log_backup_count: 1
-  orchestrator_profile: ''
-  default_assignee: ''
-  max_in_progress_per_profile: null
-  auto_decompose: true
-  auto_decompose_per_tick: 3
-  dispatch_stale_timeout_seconds: 14400
 code_execution:
   mode: project
 tools:
@@ -504,6 +559,8 @@ model_catalog:
 network:
   force_ipv4: false
 gateway:
+  message_timestamps:
+    enabled: false
   strict: false
   media_delivery_allow_dirs: []
   trust_recent_files: true
@@ -513,7 +570,7 @@ streaming:
   transport: auto
   edit_interval: 0.8
   buffer_threshold: 24
-  cursor: " ▉"
+  cursor: " \u2589"
   fresh_final_after_seconds: 60.0
 sessions:
   auto_prune: false
@@ -522,7 +579,11 @@ sessions:
   min_interval_hours: 24
   write_json_snapshots: false
 onboarding:
-  seen: {}
+  seen:
+    openclaw_residue_cleanup: true
+    busy_input_prompt: true
+    tool_progress_prompt: true
+  profile_build: ask
 updates:
   pre_update_backup: false
   backup_keep: 5
@@ -556,26 +617,28 @@ session_reset:
   mode: none
 platform_toolsets:
   cli:
-    - browser
-    - clarify
-    - code_execution
-    - computer_use
-    - cronjob
-    - delegation
-    - file
-    - image_gen
-    - memory
-    - messaging
-    - session_search
-    - skills
-    - terminal
-    - todo
-    - tts
-    - vision
-    - web
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - kanban
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
 known_plugin_toolsets:
   cli:
-    - spotify
+  - spotify
+
 # ── Fallback Model ────────────────────────────────────────────────────
 # Automatic provider failover when primary is unavailable.
 # Uncomment and configure to enable. Triggers on rate limits (429),

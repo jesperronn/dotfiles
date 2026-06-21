@@ -3,7 +3,7 @@
     "enabled": false
   },
   "lmstudio": "ollama",
-  "defaultModel": "google/gemma-4-26b-a4b-qat",
+  "defaultModel": "qwen/qwen3.5-9b",
   "defaultThinkingLevel": "medium",
   "favoriteModels": [],
   "steeringMode": "all",
@@ -18,9 +18,13 @@
   },
   "lastChangelogVersion": "0.65.2",
   "update": {
-    "lastCheckedAt": "2026-06-06T18:15:31.862Z"
+    "lastCheckedAt": "2026-06-10T21:41:59.720Z"
   },
   "recentModels": [
+    {
+      "provider": "lmstudio",
+      "id": "qwen/qwen3.5-9b"
+    },
     {
       "provider": "lmstudio",
       "id": "google/gemma-4-e4b"

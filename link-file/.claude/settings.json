@@ -3,9 +3,11 @@
     "commit": "",
     "pr": ""
   },
-  "model": "opus[1m]",
+  "model": "sonnet",
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
+  "skipWorkflowUsageWarning": true,
   "theme": "auto",
-  "verbose": true
+  "verbose": true,
+  "switchModelsOnFlag": false
 }

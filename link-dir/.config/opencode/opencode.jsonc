@@ -8,17 +8,35 @@
         "baseURL": "http://127.0.0.1:1234/v1"
       },
       "models": {
-        "google/gemma-4-31b-qat": {
-          "name": "Gemma 4 31B Qat"
+        "microsoft/phi-4-mini": {
+          "name": "Phi-4 Mini"
+        },
+        "ibm/granite-4.1-30b": {
+          "name": "Granite 4.1 30B"
+        },
+        "google/gemma-4-26b-a4b": {
+          "name": "Gemma 4 26B A4B"
+        },
+        "qwen/qwen3.6-27b": {
+          "name": "Qwen3.6 27B"
+        },
+        "qwen/qwen3-coder-next": {
+          "name": "Qwen3 Coder Next"
         },
         "google/gemma-4-e4b-qat": {
           "name": "Gemma 4 E4B Qat"
+        },
+        "gemma-4-e4b-it-qat": {
+          "name": "Gemma 4 E4B Instruct QAT"
         },
         "google/gemma-4-e2b": {
           "name": "Gemma 4 E2B"
         },
         "google/gemma-4-e2b-qat": {
           "name": "Gemma 4 E2B Qat"
+        },
+        "gemma-4-e2b-it-qat": {
+          "name": "Gemma 4 E2B Instruct QAT"
         },
         "qwen/qwen3-coder-30b": {
           "name": "Qwen3 Coder 30B"
@@ -29,14 +47,8 @@
         "google/gemma-4-12b-qat": {
           "name": "Gemma 4 12B Qat"
         },
-        "google/gemma-4-12b": {
-          "name": "Gemma 4 12B"
-        },
         "google/gemma-4-e4b": {
           "name": "Gemma 4 E4B"
-        },
-        "google/gemma-4-31b": {
-          "name": "Gemma 4 31B"
         },
         "qwen/qwen3.5-9b": {
           "name": "Qwen3.5 9B"
@@ -44,6 +56,39 @@
         "qwen/qwen3.6-35b-a3b": {
           "name": "Qwen3.6 35B A3B"
         }
+      }
+    },
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3.6:35b-mlx": { "name": "Qwen3.6 35B MLX" },
+        "gemma4:26b-mlx": { "name": "Gemma 4 26B MLX" },
+        "gemma4:26b": { "name": "Gemma 4 26B" },
+        "gemma4-claude:latest": { "name": "Gemma 4 Claude" },
+        "qwen3.6:35b-a3b-coding-mxfp8": { "name": "Qwen3.6 35B A3B" },
+        "gpt-oss:20b": { "name": "GPT-OSS 20B" },
+        "phi4:latest": { "name": "Phi-4" },
+        "phi4-mini:latest": { "name": "Phi-4 Mini" },
+        "qwen2.5-coder:7b": { "name": "Qwen2.5 Coder 7B" },
+        "qwen3.5:9b": { "name": "Qwen3.5 9B" }
+      }
+    },
+    // Proxy provider for models that emit JSON text tool calls (e.g. qwen2.5-coder).
+    // Routes through bin/tool-call-proxy (port 11435) which converts the text
+    // JSON to structured tool_calls. Start proxy first: bin/tool-call-proxy &
+    "ollama_proxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (proxy)",
+      "options": {
+        "baseURL": "http://localhost:11435/v1"
+      },
+      "models": {
+        "qwen2.5-coder:7b": { "name": "Qwen2.5 Coder 7B" },
+        "qwen2.5-coder-7b:latest": { "name": "Qwen2.5 Coder 7B (patched)" }
       }
     }
   },
