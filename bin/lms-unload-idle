@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Unload LM Studio models that have been idle for more than TTL_HOURS."""
+
+import json
+import subprocess
+import sys
+import time
+
+TTL_HOURS = 1
+
+
+def main():
+    try:
+        result = subprocess.run(
+            ["lms", "ps", "--json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"error: lms ps failed: {e.stderr}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("error: lms not found — is LM Studio CLI installed?", file=sys.stderr)
+        sys.exit(1)
+
+    models = json.loads(result.stdout)
+    now_ms = time.time() * 1000
+    cutoff_ms = now_ms - TTL_HOURS * 3600 * 1000
+
+    to_unload = [
+        m for m in models
+        if m.get("status") == "idle"
+        and m.get("lastUsedTime") is not None
+        and m["lastUsedTime"] < cutoff_ms
+    ]
+
+    if not to_unload:
+        print(f"no idle models older than {TTL_HOURS}h")
+        return
+
+    for model in to_unload:
+        idle_hours = (now_ms - model["lastUsedTime"]) / (3600 * 1000)
+        identifier = model["identifier"]
+        print(f"unloading {identifier} (idle {idle_hours:.1f}h)")
+        subprocess.run(["lms", "unload", identifier], check=True)
+
+
+if __name__ == "__main__":
+    main()
