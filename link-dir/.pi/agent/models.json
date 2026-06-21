@@ -1,0 +1,30 @@
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        { "id": "qwen3.6:35b-a3b-coding-mxfp8" },
+        { "id": "qwen3.6:35b-mlx" },
+        { "id": "qwen3.5:9b" },
+        { "id": "gemma4:26b" }
+      ]
+    },
+    "lmstudio": {
+      "baseUrl": "http://localhost:1234/v1",
+      "api": "openai-completions",
+      "apiKey": "lm-studio",
+      "models": [
+        { "id": "qwen/qwen3.5-9b" },
+        { "id": "google/gemma-4-e4b" },
+        { "id": "google/gemma-4-12b-qat" },
+        { "id": "google/gemma-4-12b" },
+        { "id": "google/gemma-4-26b-a4b-qat" },
+        { "id": "qwen/qwen3-coder-30b" },
+        { "id": "qwen/qwen3.6-35b-a3b" },
+        { "id": "google/gemma-4-31b" }
+      ]
+    }
+  }
+}

@@ -16,3 +16,12 @@ link-dir/.config/github-copilot/
 .aider*
 session-*.md
 link-dir/.obsidian-wiki/
+
+# AI tool directories with secrets or runtime state
+link-dir/.codexbar/
+link-dir/.cline/
+link-dir/.cave/agent/sessions/
+link-dir/.pi/agent/sessions/
+link-dir/.config/kilo/node_modules/
+link-dir/.config/kilo/package-lock.json
+link-dir/.config/kilo/package.json
