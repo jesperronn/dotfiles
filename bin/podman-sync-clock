@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Force NTP step correction in the Podman VM. Run after host hibernation to
+# fix clock drift that makes Prometheus, JWT tokens, and TLS certs appear stale.
+
+set -euo pipefail
+
+SCRIPT_NAME="$(basename "$0")"
+
+if ! command -v podman >/dev/null 2>&1; then
+  printf '%s: podman not found\n' "$SCRIPT_NAME" >&2
+  exit 1
+fi
+
+machine_running() {
+  podman machine list --format json 2>/dev/null |
+    command -p jq -e -r '.[] | select(.Running == true) | .Name' >/dev/null 2>&1
+}
+
+if ! machine_running; then
+  printf '%s: no running Podman machine found\n' "$SCRIPT_NAME" >&2
+  printf '  start it first: podman machine start\n' >&2
+  exit 1
+fi
+
+host_epoch="$(date +%s)"
+vm_epoch="$(podman machine ssh 'date +%s' 2>/dev/null | tr -d '\r' || true)"
+
+if [[ -n "$vm_epoch" && "$vm_epoch" =~ ^[0-9]+$ ]]; then
+  drift=$(( vm_epoch - host_epoch ))
+  if (( drift < 0 )); then drift=$(( -drift )); fi
+  printf 'clock drift before: %ss\n' "$drift"
+fi
+
+podman machine ssh 'sudo chronyc makestep'
+
+printf '\nhost time: %s\n' "$(date)"
+printf 'vm time:   %s\n' "$(podman machine ssh 'date' 2>/dev/null | tr -d '\r' || echo '<unavailable>')"
