@@ -1,5 +1,13 @@
 {
   "providers": {
+    "mlx": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "mlx",
+      "models": [
+        { "id": "/Users/jesper/.lmstudio/models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit" }
+      ]
+    },
     "ollama": {
       "baseUrl": "http://localhost:11434/v1",
       "api": "openai-completions",

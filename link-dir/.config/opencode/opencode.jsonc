@@ -80,6 +80,19 @@
     // Proxy provider for models that emit JSON text tool calls (e.g. qwen2.5-coder).
     // Routes through bin/tool-call-proxy (port 11435) which converts the text
     // JSON to structured tool_calls. Start proxy first: bin/tool-call-proxy &
+    // mlx_lm.server — start with: python -m mlx_lm.server --model <path> --port 8080
+    "mlx": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "MLX LM Server",
+      "options": {
+        "baseURL": "http://localhost:8080/v1"
+      },
+      "models": {
+        "/Users/jesper/.lmstudio/models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit": {
+          "name": "Qwen3-Coder 30B MLX"
+        }
+      }
+    },
     "ollama_proxy": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama (proxy)",
