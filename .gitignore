@@ -20,7 +20,11 @@ link-dir/.obsidian-wiki/
 # AI tool directories with secrets or runtime state
 link-dir/.codexbar/
 link-dir/.cline/
+link-file/.cave/
 link-dir/.cave/agent/sessions/
+link-dir/.cave/checkpoints/
+link-dir/.cave/cost-totals.json
+link-file/.claude.json
 link-dir/.pi/agent/sessions/
 link-dir/.config/kilo/node_modules/
 link-dir/.config/kilo/package-lock.json
