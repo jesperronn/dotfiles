@@ -287,15 +287,7 @@ async function runForOrg(key) {
         }
       };
 
-      // Try concurrency=10, fall back to 2 on first batch failure
-      let concurrency = 10;
-      try {
-        await pMap(missing, fetchDay, concurrency);
-      } catch {
-        process.stderr.write(`Parallel fetch failed, retrying with concurrency=2...\n`);
-        concurrency = 2;
-        await pMap(missing, fetchDay, concurrency);
-      }
+      await pMap(missing, fetchDay, 1);
     } else {
       // Regular --update: fetch rolling 28-day snapshot
       process.stderr.write(`GET ${apiUrl}\n`);
