@@ -12,7 +12,7 @@
 #   Token must be created by an enterprise owner or billing manager.
 #   Tokens are stored in 1Password and fetched via `op item get ... --reveal`.
 #     nine:      GITHUB_COPILOT_TOKEN_JRJ_NINE   (enterprise: nine)
-#     buvm-stil: GITHUB_COPILOT_TOKEN_JRJ_STIL   (enterprise: buvm-stil)
+#     buvm-stil: GITHUB_COPILOT_BUVM_STIL_USAGE   (enterprise: buvm-stil)
 #
 # ── Endpoint in use ───────────────────────────────────────────────────────────
 #
@@ -81,9 +81,9 @@ ${C_BLD}Usage:${C_RST}
 
 ${C_BLD}Options:${C_RST}
   --nine             Fetch for enterprise "nine"    (token: GITHUB_COPILOT_TOKEN_JRJ_NINE)
-  --stil             Fetch for enterprise "buvm-stil" (token: GITHUB_COPILOT_TOKEN_JRJ_STIL)
+  --stil             Fetch for enterprise "buvm-stil" (token: GITHUB_COPILOT_BUVM_STIL_USAGE)
   --all              Fetch for both enterprises
-  --day YYYY-MM-DD   Day to query (default: yesterday)
+  --day YYYY-MM-DD   Day to query for --nine (default: yesterday; not used by --stil)
   --dry-run          Print the curl command(s) without executing
   --help, -h         Show this help
 
@@ -93,8 +93,7 @@ EOF
 }
 
 fetch_metrics() {
-  local enterprise="$1" op_item="$2" day="$3" dry_run="$4"
-  local url="https://api.github.com/enterprises/${enterprise}/copilot/metrics/reports/enterprise-1-day?day=${day}"
+  local op_item="$1" url="$2" dry_run="$3"
 
   if [ "$dry_run" = "1" ]; then
     printf 'curl -fsSL \\\n'
@@ -112,11 +111,24 @@ fetch_metrics() {
   [ -n "$token" ] || die "Token was empty — check the 1Password item '$op_item'."
 
   info "GET ${url}"
-  curl -fsSL \
+  local response download_url
+  response="$(curl -fsSL \
     -H "Accept: application/vnd.github+json" \
     -H "Authorization: Bearer ${token}" \
     -H "X-GitHub-Api-Version: 2026-03-10" \
-    "$url"
+    "$url")"
+
+  # Follow all download_links if present; otherwise print raw response
+  local link_count
+  link_count="$(printf '%s' "$response" | jq '.download_links | length' 2>/dev/null || echo 0)"
+  if [ "${link_count:-0}" -gt 0 ]; then
+    info "Downloading ${link_count} data file(s)..."
+    printf '%s' "$response" | jq -r '.download_links[]' | while read -r download_url; do
+      curl -fsSL "$download_url"
+    done
+  else
+    printf '%s\n' "$response"
+  fi
 }
 
 DAY="$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d yesterday +%Y-%m-%d)"
@@ -140,5 +152,13 @@ done
 
 [ $((DO_NINE + DO_STIL)) -gt 0 ] || die "Specify at least one of --nine, --stil, or --all."
 
-if [ "$DO_NINE" = "1" ]; then fetch_metrics "nine"      "GITHUB_COPILOT_TOKEN_JRJ_NINE" "$DAY" "$DRY_RUN"; fi
-if [ "$DO_STIL" = "1" ]; then fetch_metrics "buvm-stil" "GITHUB_COPILOT_TOKEN_JRJ_STIL" "$DAY" "$DRY_RUN"; fi
+if [ "$DO_NINE" = "1" ]; then
+  fetch_metrics "GITHUB_COPILOT_TOKEN_JRJ_NINE" \
+    "https://api.github.com/enterprises/nine/copilot/metrics/reports/enterprise-1-day?day=${DAY}" \
+    "$DRY_RUN"
+fi
+if [ "$DO_STIL" = "1" ]; then
+  fetch_metrics "GITHUB_COPILOT_BUVM_STIL_USAGE" \
+    "https://api.github.com/orgs/buvm-stil/copilot/metrics/reports/organization-28-day/latest" \
+    "$DRY_RUN"
+fi

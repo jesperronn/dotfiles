@@ -1,0 +1,340 @@
+#!/usr/bin/env node
+// copilot-leaderboard — archive GitHub Copilot per-user metrics, generate monthly leaderboard
+//
+// Docs:     https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics
+// Endpoint: https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest
+//
+// Archive layout:
+//   ~/src/copilot-leaderboard-{slug}/
+//     archive/YYYY-MM-DD.ndjson   raw per-user-day NDJSON fetched that day
+//     YYYY-MM-report.md           generated monthly leaderboard
+//
+// Metric per cell: user_initiated_interaction_count + code_acceptance_activity_count
+//
+// Usage:
+//   copilot-leaderboard (--stil | --nine | --all) [--month YYYY-MM] [--report-only] [--dry-run]
+//   copilot-leaderboard --stil --archive-dir DIR --report-only   (testing / manual override)
+
+import { execSync } from 'node:child_process';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+// ── Org config ────────────────────────────────────────────────────────────────
+
+const ORG_CONFIGS = {
+  stil: {
+    label:      'buvm-stil',
+    opItem:     'GITHUB_COPILOT_BUVM_STIL_USAGE',
+    apiPath:    'orgs/buvm-stil',
+    archiveDir: join(homedir(), 'src', 'copilot-leaderboard-stil'),
+  },
+  nine: {
+    label:      'nine',
+    opItem:     'GITHUB_COPILOT_TOKEN_JRJ_NINE',
+    apiPath:    'enterprises/nine',
+    archiveDir: join(homedir(), 'src', 'copilot-leaderboard-nine'),
+  },
+};
+
+// ── Argument parsing ──────────────────────────────────────────────────────────
+
+const argv = process.argv.slice(2);
+
+let doStil = false, doNine = false, skipFetch = true, dryRun = false;
+let month = null;
+let archiveDirOverride = null;
+let backfillDays = 0;
+
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if      (a === '--stil')         doStil = true;
+  else if (a === '--nine')         doNine = true;
+  else if (a === '--all')          { doStil = true; doNine = true; }
+  else if (a === '--update')       skipFetch = false;
+  else if (a === '--report-only')  skipFetch = true;   // kept as alias
+  else if (a === '--dry-run')      dryRun = true;
+  else if (a === '--month')        month = argv[++i];
+  else if (a === '--archive-dir')  archiveDirOverride = argv[++i];
+  else if (a === '--backfill') {
+    skipFetch = false;
+    backfillDays = Number(argv[i + 1]) > 0 ? Number(argv[++i]) : 28;
+  }
+  else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
+  else { process.stderr.write(`Unknown option: ${a}\n`); process.exit(1); }
+}
+
+if (!doStil && !doNine) { printHelp(); process.exit(1); }
+
+if (!month) {
+  const now = new Date();
+  month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function printHelp() {
+  process.stdout.write(`\
+Usage:
+  copilot-leaderboard (--stil | --nine | --all) [options]
+
+Options:
+  --stil              Fetch/report for buvm-stil  (token: GITHUB_COPILOT_BUVM_STIL_USAGE)
+  --nine              Fetch/report for nine       (token: GITHUB_COPILOT_TOKEN_JRJ_NINE)
+  --all               Both orgs
+  --month YYYY-MM     Month to report (default: current month)
+  --update            Fetch fresh data from GitHub API (default: use existing archive)
+  --backfill [N]      Fetch last N days of per-day data via users-1-day endpoint (default N=28)
+  --archive-dir DIR   Override archive root directory (useful for testing)
+  --dry-run           Print API calls without executing
+  --help, -h          Show this help
+
+Archive layout:
+  ~/src/copilot-leaderboard-{slug}/
+    archive/YYYY-MM-DD.ndjson   raw NDJSON snapshot fetched that day
+    YYYY-MM-report.md           generated monthly leaderboard
+
+API reference:
+  https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics
+`);
+}
+
+// ── Network helpers ───────────────────────────────────────────────────────────
+
+function fetchToken(opItem) {
+  const token = execSync(
+    `op item get "${opItem}" --fields label=token --reveal`,
+    { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
+  ).trim();
+  if (!token) throw new Error(`Empty token from 1Password item '${opItem}'`);
+  return token;
+}
+
+function fetchMeta(token, apiPath) {
+  const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest`;
+  const raw = execSync(
+    `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
+    { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+  );
+  const json = JSON.parse(raw);
+  if (!json.download_links?.length) throw new Error(`No download_links in response: ${raw}`);
+  return { raw, json };
+}
+
+function downloadAllNdjson(links) {
+  return links
+    .map(url => execSync(`curl -fsSL "${url}"`, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 }))
+    .join('');
+}
+
+// Run up to `concurrency` async tasks at a time
+async function pMap(items, fn, concurrency) {
+  const results = [];
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return results;
+}
+
+function fetchOneDayMeta(token, apiPath, day) {
+  const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-1-day?day=${day}`;
+  const raw = execSync(
+    `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
+    { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+  );
+  const json = JSON.parse(raw);
+  return { raw, json };
+}
+
+// ── Archive helpers ───────────────────────────────────────────────────────────
+
+function parseNdjson(content) {
+  return content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+}
+
+function loadArchive(archiveDir) {
+  const dir = join(archiveDir, 'archive');
+  if (!existsSync(dir)) return [];
+  const files = readdirSync(dir).filter(f => f.endsWith('.ndjson')).sort();
+  // later files overwrite earlier ones for same user+day (values are stable; this handles re-fetches)
+  const seen = new Map();
+  for (const file of files) {
+    const records = parseNdjson(readFileSync(join(dir, file), 'utf8'));
+    for (const r of records) seen.set(`${r.user_login}:${r.day}`, r);
+  }
+  return [...seen.values()];
+}
+
+// ── Report generation ─────────────────────────────────────────────────────────
+
+// Primary metric: AI credits used, floored. Falls back to 0 when null/absent.
+function activity(r) {
+  return Math.floor(r.ai_credits_used ?? 0);
+}
+
+export function buildLeaderboard(records, month) {
+  const monthRecords = records.filter(r => r.day.startsWith(month));
+  const days = [...new Set(monthRecords.map(r => r.day))].sort();
+
+  // user -> day -> activity
+  const byUser = {};
+  for (const r of monthRecords) {
+    (byUser[r.user_login] ??= {})[r.day] = ((byUser[r.user_login][r.day] || 0) + activity(r));
+  }
+
+  const users = Object.entries(byUser)
+    .map(([login, dayData]) => ({ login, dayData, total: Object.values(dayData).reduce((a, b) => a + b, 0) }))
+    .sort((a, b) => b.total - a.total);
+
+  const allDayTotals = Object.fromEntries(
+    days.map(d => [d, users.reduce((sum, u) => sum + (u.dayData[d] || 0), 0)])
+  );
+  const grandTotal = Object.values(allDayTotals).reduce((a, b) => a + b, 0);
+
+  return { days, users, allDayTotals, grandTotal, month };
+}
+
+export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
+  const { days, users, allDayTotals, grandTotal, month } = leaderboard;
+  const [year, mon] = month.split('-');
+  const monthName = new Date(Number(year), Number(mon) - 1, 1)
+    .toLocaleString('en', { month: 'long', year: 'numeric' });
+  const seatCount = users.length;
+  const avg = seatCount > 0 ? (grandTotal / seatCount).toFixed(1) : '0';
+  const stamp = generatedDate ?? new Date().toISOString().slice(0, 10);
+
+  // day column headers: just day-of-month number, no leading zero
+  const dayNums = days.map(d => String(parseInt(d.slice(8), 10)));
+
+  // column widths
+  const colW = [
+    Math.max(4, ...users.map(u => u.login.length)),                    // User
+    Math.max(11, String(grandTotal).length),                           // Month total
+    ...dayNums.map((h, i) => Math.max(h.length, String(allDayTotals[days[i]]).length)),
+  ];
+
+  const pad  = (s, w) => String(s).padEnd(w);
+  const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(' | ') + ' |';
+  const mkSep = ()    => '|' + colW.map(w => '-'.repeat(w + 2)).join('|') + '|';
+
+  const lines = [
+    `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
+    '',
+    `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avg}_`,
+    '',
+    mkRow(['User', 'Month total', ...dayNums]),
+    mkSep(),
+    mkRow(['**All**', String(grandTotal), ...days.map(d => String(allDayTotals[d] || 0))]),
+    ...users.map(u => mkRow([u.login, String(u.total), ...days.map(d => String(u.dayData[d] || ''))])),
+    '',
+    `_metric: AI credits used (floored) | generated ${stamp}_`,
+    '',
+  ];
+
+  return lines.join('\n');
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function runForOrg(key) {
+  const cfg = { ...ORG_CONFIGS[key] };
+  if (archiveDirOverride) cfg.archiveDir = archiveDirOverride;
+
+  const archivePath = join(cfg.archiveDir, 'archive');
+  const today = new Date().toISOString().slice(0, 10);
+  const archiveFile = join(archivePath, `${today}.ndjson`);
+  const apiUrl = `https://api.github.com/${cfg.apiPath}/copilot/metrics/reports/users-28-day/latest`;
+
+  if (dryRun) {
+    process.stderr.write(`[dry-run] Would fetch: ${apiUrl}\n`);
+    process.stderr.write(`[dry-run] Would save to: ${archiveFile}\n`);
+    process.stderr.write(`[dry-run] Would write: ${join(cfg.archiveDir, `${month}-report.md`)}\n`);
+    return;
+  }
+
+  if (!skipFetch) {
+    process.stderr.write(`Fetching token from 1Password (${cfg.opItem})...\n`);
+    const token = fetchToken(cfg.opItem);
+    mkdirSync(archivePath, { recursive: true });
+
+    if (backfillDays > 0) {
+      // Build list of dates to backfill, skip days already archived
+      const dates = [];
+      for (let d = backfillDays - 1; d >= 0; d--) {
+        const dt = new Date();
+        dt.setDate(dt.getDate() - d);
+        dates.push(dt.toISOString().slice(0, 10));
+      }
+      const missing = dates.filter(day => !existsSync(join(archivePath, `${day}-1day-meta.json`)));
+      process.stderr.write(`Backfilling ${missing.length}/${dates.length} days (${backfillDays - missing.length} already cached)...\n`);
+
+      const fetchDay = async (day) => {
+        try {
+          const { raw: metaRaw, json: meta } = fetchOneDayMeta(token, cfg.apiPath, day);
+          writeFileSync(join(archivePath, `${day}-1day-meta.json`), metaRaw);
+          if (!meta.download_links?.length) {
+            process.stderr.write(`  - ${day} (no data)\n`);
+            return;
+          }
+          const ndjson = downloadAllNdjson(meta.download_links);
+          writeFileSync(join(archivePath, `${day}-1day.ndjson`), ndjson);
+          process.stderr.write(`  ✓ ${day}\n`);
+        } catch (e) {
+          process.stderr.write(`  ✗ ${day} (${e.message.split('\n')[0]})\n`);
+        }
+      };
+
+      // Try concurrency=10, fall back to 2 on first batch failure
+      let concurrency = 10;
+      try {
+        await pMap(missing, fetchDay, concurrency);
+      } catch {
+        process.stderr.write(`Parallel fetch failed, retrying with concurrency=2...\n`);
+        concurrency = 2;
+        await pMap(missing, fetchDay, concurrency);
+      }
+    } else {
+      // Regular --update: fetch rolling 28-day snapshot
+      process.stderr.write(`GET ${apiUrl}\n`);
+      const { raw: metaRaw, json: meta } = fetchMeta(token, cfg.apiPath);
+      writeFileSync(join(archivePath, `${today}-meta.json`), metaRaw);
+      const linkCount = meta.download_links.length;
+      process.stderr.write(`Downloading ${linkCount} NDJSON shard(s)...\n`);
+      const ndjson = downloadAllNdjson(meta.download_links);
+      writeFileSync(archiveFile, ndjson);
+      process.stderr.write(`Archived: ${archiveFile} (${linkCount} shard${linkCount > 1 ? 's' : ''})\n`);
+    }
+  }
+
+  const records = loadArchive(cfg.archiveDir);
+  if (records.length === 0) {
+    process.stderr.write(`No archive data found in ${cfg.archiveDir}/archive/\n`);
+    process.exit(1);
+  }
+
+  const leaderboard = buildLeaderboard(records, month);
+  const markdown = renderMarkdown(leaderboard, cfg.label);
+
+  mkdirSync(cfg.archiveDir, { recursive: true });
+  const reportFile = join(cfg.archiveDir, `${month}-report.md`);
+  writeFileSync(reportFile, markdown);
+  process.stdout.write(markdown + '\n');
+  process.stderr.write(`\nReport saved → ${reportFile}\n`);
+
+  const self = `copilot-leaderboard --${key}`;
+  process.stderr.write('\nNext steps:\n');
+  if (skipFetch) {
+    process.stderr.write(`  ${self} --update           # fetch today's 28-day snapshot\n`);
+    process.stderr.write(`  ${self} --backfill          # fetch last 28 days one-by-one\n`);
+    process.stderr.write(`  ${self} --backfill 60       # go back further\n`);
+  } else {
+    process.stderr.write(`  ${self}                    # view report offline\n`);
+    process.stderr.write(`  ${self} --month ${month}   # same month, offline\n`);
+  }
+}
+
+if (doStil) await runForOrg('stil');
+if (doNine) await runForOrg('nine');
