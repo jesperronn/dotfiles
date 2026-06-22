@@ -139,15 +139,6 @@ async function pMap(items, fn, concurrency) {
   return results;
 }
 
-function fetchOneDayMeta(token, apiPath, day) {
-  const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-1-day?day=${day}`;
-  const raw = execSync(
-    `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
-    { encoding: 'utf8', maxBuffer: 1024 * 1024 }
-  );
-  const json = JSON.parse(raw);
-  return { raw, json };
-}
 
 // ── Archive helpers ───────────────────────────────────────────────────────────
 
@@ -273,9 +264,14 @@ async function runForOrg(key) {
       process.stderr.write(`Backfilling ${missing.length} day(s)${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
 
       const fetchDay = async (day) => {
+        let raw;
         try {
-          const { raw: metaRaw, json: meta } = fetchOneDayMeta(token, cfg.apiPath, day);
-          writeFileSync(join(archivePath, `${day}-1day-meta.json`), metaRaw);
+          raw = execSync(
+            `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "https://api.github.com/${cfg.apiPath}/copilot/metrics/reports/users-1-day?day=${day}"`,
+            { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+          );
+          writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
+          const meta = JSON.parse(raw);
           if (!meta.download_links?.length) {
             process.stderr.write(`  - ${day} (no data)\n`);
             return;
@@ -284,7 +280,9 @@ async function runForOrg(key) {
           writeFileSync(join(archivePath, `${day}-1day.ndjson`), ndjson);
           process.stderr.write(`  ✓ ${day}\n`);
         } catch (e) {
-          process.stderr.write(`  ✗ ${day} (${e.message.split('\n')[0]})\n`);
+          if (raw !== undefined) writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
+          const detail = raw === '' ? 'empty response' : e.message.split('\n')[0];
+          process.stderr.write(`  - ${day} (${detail})\n`);
         }
       };
 
