@@ -263,13 +263,14 @@ async function runForOrg(key) {
     if (backfillDays > 0) {
       // Build list of dates to backfill, skip days already archived
       const dates = [];
-      for (let d = backfillDays - 1; d >= 0; d--) {
+      for (let d = 1; d <= backfillDays; d++) {
         const dt = new Date();
         dt.setDate(dt.getDate() - d);
         dates.push(dt.toISOString().slice(0, 10));
       }
       const missing = dates.filter(day => !existsSync(join(archivePath, `${day}-1day-meta.json`)));
-      process.stderr.write(`Backfilling ${missing.length}/${dates.length} days (${backfillDays - missing.length} already cached)...\n`);
+      const cached = dates.length - missing.length;
+      process.stderr.write(`Backfilling ${missing.length} day(s)${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
 
       const fetchDay = async (day) => {
         try {
