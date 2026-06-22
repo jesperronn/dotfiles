@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# gh-copilot-metrics — fetch GitHub Copilot usage metrics for an enterprise
+#
+# ── Token permissions required ────────────────────────────────────────────────
+#
+#   Fine-grained PAT (recommended):
+#     Enterprise permissions → "Copilot Business Management" → Read
+#
+#   Classic PAT (fallback):
+#     Scope: manage_billing:copilot
+#
+#   Token must be created by an enterprise owner or billing manager.
+#   Tokens are stored in 1Password and fetched via `op item get ... --reveal`.
+#     nine:      GITHUB_COPILOT_TOKEN_JRJ_NINE   (enterprise: nine)
+#     buvm-stil: GITHUB_COPILOT_TOKEN_JRJ_STIL   (enterprise: buvm-stil)
+#
+# ── Endpoint in use ───────────────────────────────────────────────────────────
+#
+#   GET /enterprises/{enterprise}/copilot/metrics/reports/enterprise-1-day
+#   Returns download links for a single-day enterprise Copilot usage report.
+#   Query param: ?day=YYYY-MM-DD
+#
+#   Docs: https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics?apiVersion=2026-03-10
+#
+# ── Other useful endpoints (same permission requirements) ─────────────────────
+#
+#   28-day rolling enterprise summary (closest approximation to a month):
+#     GET /enterprises/{enterprise}/copilot/metrics/reports/enterprise-28-day/latest
+#
+#   Per-user daily breakdown (who used what):
+#     GET /enterprises/{enterprise}/copilot/metrics/reports/users-1-day?day=YYYY-MM-DD
+#
+#   Per-user 28-day rolling breakdown:
+#     GET /enterprises/{enterprise}/copilot/metrics/reports/users-28-day/latest
+#
+#   Team membership changes (who joined/left Copilot seat):
+#     GET /enterprises/{enterprise}/copilot/metrics/reports/user-teams-1-day?day=YYYY-MM-DD
+#
+#   Organization-level equivalents exist for all of the above, replacing
+#   /enterprises/{enterprise}/ with /orgs/{org}/.
+#
+# ── AI credit / billing usage (separate API, separate permission) ─────────────
+#
+#   To answer "how many API credits did we consume this month?" use the
+#   billing usage reports API instead — it is NOT on the copilot-usage-metrics
+#   docs page above.
+#
+#   Docs: https://docs.github.com/en/enterprise-cloud@latest/rest/billing/usage-reports
+#
+#   Flow (async export — POST then poll):
+#     1. POST /enterprises/{enterprise}/settings/billing/reports
+#        Body: { "type": "ai_credit", "start_date": "YYYY-MM-DD", "end_date": "YYYY-MM-DD" }
+#        → returns { "id": "<report_id>", "status": "pending", ... }
+#     2. GET  /enterprises/{enterprise}/settings/billing/reports/{report_id}
+#        Poll until status == "completed", then download from the URL in the response.
+#
+#   Other report types for the same endpoint: detailed | summarized | premium_request | ai_credit
+#
+#   Permission required (fine-grained PAT):
+#     Enterprise permissions → "Enterprise billing" → Read
+#     (different from the Copilot Business Management permission above)
+#
+# ── Usage:
+#   gh-copilot-metrics (--nine | --stil | --all) [--day YYYY-MM-DD] [--dry-run]
+set -euo pipefail
+
+if [ -t 1 ]; then
+  C_RED=$'\033[31m'; C_YEL=$'\033[33m'
+  C_BLU=$'\033[34m'; C_DIM=$'\033[2m'; C_RST=$'\033[0m'; C_BLD=$'\033[1m'
+else
+  C_RED=; C_YEL=; C_DIM=; C_RST=; C_BLD=; C_BLU=
+fi
+
+die()  { printf '%s\n' "${C_RED}[error]${C_RST} $*" >&2; exit 1; }
+info() { printf '%s\n' "${C_DIM}$*${C_RST}" >&2; }
+
+usage() {
+  cat <<EOF
+${C_BLD}Usage:${C_RST}
+  gh-copilot-metrics (--nine | --stil | --all) [--day YYYY-MM-DD] [--dry-run]
+
+${C_BLD}Options:${C_RST}
+  --nine             Fetch for enterprise "nine"    (token: GITHUB_COPILOT_TOKEN_JRJ_NINE)
+  --stil             Fetch for enterprise "buvm-stil" (token: GITHUB_COPILOT_TOKEN_JRJ_STIL)
+  --all              Fetch for both enterprises
+  --day YYYY-MM-DD   Day to query (default: yesterday)
+  --dry-run          Print the curl command(s) without executing
+  --help, -h         Show this help
+
+${C_BLD}API reference:${C_RST}
+  https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics?apiVersion=2026-03-10
+EOF
+}
+
+fetch_metrics() {
+  local enterprise="$1" op_item="$2" day="$3" dry_run="$4"
+  local url="https://api.github.com/enterprises/${enterprise}/copilot/metrics/reports/enterprise-1-day?day=${day}"
+
+  if [ "$dry_run" = "1" ]; then
+    printf 'curl -fsSL \\\n'
+    printf '  -H "Accept: application/vnd.github+json" \\\n'
+    printf '  -H "Authorization: Bearer $(op item get %s --fields label=token --reveal)" \\\n' "$op_item"
+    printf '  -H "X-GitHub-Api-Version: 2026-03-10" \\\n'
+    printf '  "%s"\n' "$url"
+    return
+  fi
+
+  info "Fetching token from 1Password (${op_item})..."
+  local token
+  token="$(op item get "$op_item" --fields label=token --reveal 2>/dev/null)" \
+    || die "Failed to read token from 1Password. Is 'op' signed in?"
+  [ -n "$token" ] || die "Token was empty — check the 1Password item '$op_item'."
+
+  info "GET ${url}"
+  curl -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    -H "Authorization: Bearer ${token}" \
+    -H "X-GitHub-Api-Version: 2026-03-10" \
+    "$url"
+}
+
+DAY="$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d yesterday +%Y-%m-%d)"
+DRY_RUN=0
+DO_NINE=0
+DO_STIL=0
+
+[ $# -eq 0 ] && { usage; exit 1; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --nine)    DO_NINE=1;    shift ;;
+    --stil)    DO_STIL=1;    shift ;;
+    --all)     DO_NINE=1; DO_STIL=1; shift ;;
+    --day)     DAY="$2";     shift 2 ;;
+    --dry-run) DRY_RUN=1;    shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown option: $1" ;;
+  esac
+done
+
+[ $((DO_NINE + DO_STIL)) -gt 0 ] || die "Specify at least one of --nine, --stil, or --all."
+
+if [ "$DO_NINE" = "1" ]; then fetch_metrics "nine"      "GITHUB_COPILOT_TOKEN_JRJ_NINE" "$DAY" "$DRY_RUN"; fi
+if [ "$DO_STIL" = "1" ]; then fetch_metrics "buvm-stil" "GITHUB_COPILOT_TOKEN_JRJ_STIL" "$DAY" "$DRY_RUN"; fi
