@@ -161,50 +161,73 @@ function loadArchive(archiveDir) {
 
 // ── Report generation ─────────────────────────────────────────────────────────
 
-// Primary metric: AI credits used, floored. Falls back to 0 when null/absent.
-function activity(r) {
-  return Math.floor(r.ai_credits_used ?? 0);
-}
-
 export function buildLeaderboard(records, month) {
   const monthRecords = records.filter(r => r.day.startsWith(month));
   const days = [...new Set(monthRecords.map(r => r.day))].sort();
 
-  // user -> day -> activity
+  // user -> day -> { credits, interactions }
   const byUser = {};
   for (const r of monthRecords) {
-    (byUser[r.user_login] ??= {})[r.day] = ((byUser[r.user_login][r.day] || 0) + activity(r));
+    byUser[r.user_login] ??= {};
+    const prev = byUser[r.user_login][r.day] ?? { credits: 0, interactions: 0 };
+    byUser[r.user_login][r.day] = {
+      credits: prev.credits + Math.floor(r.ai_credits_used ?? 0),
+      interactions: prev.interactions + (r.user_initiated_interaction_count ?? 0),
+    };
   }
 
   const users = Object.entries(byUser)
-    .map(([login, dayData]) => ({ login, dayData, total: Object.values(dayData).reduce((a, b) => a + b, 0) }))
-    .sort((a, b) => b.total - a.total);
+    .map(([login, dayData]) => {
+      const totalCredits = Object.values(dayData).reduce((a, b) => a + b.credits, 0);
+      const totalInteractions = Object.values(dayData).reduce((a, b) => a + b.interactions, 0);
+      return { login, dayData, totalCredits, totalInteractions };
+    })
+    .sort((a, b) => b.totalCredits - a.totalCredits || b.totalInteractions - a.totalInteractions);
 
   const allDayTotals = Object.fromEntries(
-    days.map(d => [d, users.reduce((sum, u) => sum + (u.dayData[d] || 0), 0)])
+    days.map(d => [d, {
+      credits: users.reduce((s, u) => s + (u.dayData[d]?.credits ?? 0), 0),
+      interactions: users.reduce((s, u) => s + (u.dayData[d]?.interactions ?? 0), 0),
+    }])
   );
-  const grandTotal = Object.values(allDayTotals).reduce((a, b) => a + b, 0);
+  const grandCredits = Object.values(allDayTotals).reduce((s, v) => s + v.credits, 0);
+  const grandInteractions = Object.values(allDayTotals).reduce((s, v) => s + v.interactions, 0);
 
-  return { days, users, allDayTotals, grandTotal, month };
+  return { days, users, allDayTotals, grandCredits, grandInteractions, month };
 }
 
 export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
-  const { days, users, allDayTotals, grandTotal, month } = leaderboard;
+  const { days, users, allDayTotals, grandCredits, grandInteractions, month } = leaderboard;
   const [year, mon] = month.split('-');
   const monthName = new Date(Number(year), Number(mon) - 1, 1)
     .toLocaleString('en', { month: 'long', year: 'numeric' });
   const seatCount = users.length;
-  const avg = seatCount > 0 ? (grandTotal / seatCount).toFixed(1) : '0';
+  const avgCredits = seatCount > 0 ? (grandCredits / seatCount).toFixed(1) : '0';
+  const avgInteractions = seatCount > 0 ? (grandInteractions / seatCount).toFixed(1) : '0';
   const stamp = generatedDate ?? new Date().toISOString().slice(0, 10);
+
+  // Format a cell as "credits/interactions"; empty string when both are zero/absent
+  const fmtCell = (v) => {
+    if (!v) return '';
+    const c = v.credits > 0 ? String(v.credits) : '';
+    const i = v.interactions > 0 ? String(v.interactions) : '';
+    if (!c && !i) return '';
+    return `${c}/${i}`;
+  };
 
   // day column headers: just day-of-month number, no leading zero
   const dayNums = days.map(d => String(parseInt(d.slice(8), 10)));
 
   // column widths
+  const fmtGrand = fmtCell({ credits: grandCredits, interactions: grandInteractions });
   const colW = [
-    Math.max(4, ...users.map(u => u.login.length)),                    // User
-    Math.max(11, String(grandTotal).length),                           // Month total
-    ...dayNums.map((h, i) => Math.max(h.length, String(allDayTotals[days[i]]).length)),
+    Math.max(4, ...users.map(u => u.login.length)),
+    Math.max(11, fmtGrand.length),
+    ...dayNums.map((h, i) => {
+      const d = days[i];
+      return Math.max(h.length, fmtCell(allDayTotals[d]).length,
+        ...users.map(u => fmtCell(u.dayData[d]).length));
+    }),
   ];
 
   const pad  = (s, w) => String(s).padEnd(w);
@@ -214,14 +237,18 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   const lines = [
     `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
     '',
-    `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avg}_`,
+    `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avgCredits} credits / ${avgInteractions} interactions_`,
     '',
     mkRow(['User', 'Month total', ...dayNums]),
     mkSep(),
-    mkRow(['**All**', String(grandTotal), ...days.map(d => String(allDayTotals[d] || 0))]),
-    ...users.map(u => mkRow([u.login, String(u.total), ...days.map(d => String(u.dayData[d] || ''))])),
+    mkRow(['**All**', fmtGrand, ...days.map(d => fmtCell(allDayTotals[d]))]),
+    ...users.map(u => mkRow([
+      u.login,
+      fmtCell({ credits: u.totalCredits, interactions: u.totalInteractions }),
+      ...days.map(d => fmtCell(u.dayData[d])),
+    ])),
     '',
-    `_metric: AI credits used (floored) | generated ${stamp}_`,
+    `_metric: ai_credits_used (floored) / user_initiated_interaction_count | generated ${stamp}_`,
     '',
   ];
 

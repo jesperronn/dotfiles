@@ -15,11 +15,11 @@ setup_tmpdir() {
   trap 'rm -rf "$TEST_TMP_DIR"' EXIT
 }
 
-# Fixture: 3 users over 3 days in June 2026, metric = floor(ai_credits_used)
-# alice:   100.9→100 | 50.7→50  | 20.3→20  | total=170
-# bob:     80.1→80   | 60.5→60  | 40.9→40  | total=180
-# charlie: 10.2→10   | 5.8→5    | (no day3) | total=15
-# All total: 365 | avg per seat: 121.7
+# Fixture: 3 users over 3 days in June 2026, cells show "credits/interactions"
+# alice:   100/10 | 50/5 | 20/3 | total=170/18
+# bob:     80/8   | 60/6 | 40/4 | total=180/18
+# charlie: 10/2   | 5/1  | (no day3) | total=15/3
+# Grand total credits=365, interactions=39
 write_fixture() {
   local dir="$1"
   mkdir -p "$dir/archive"
@@ -101,8 +101,9 @@ test_grand_total_correct() {
   local output="" status=0
   capture_command output status "$BIN" --stil --report-only --archive-dir "$dir" --month 2026-06
   assert_status "0" "$status" "exits 0"
-  # alice=170, bob=180, charlie=15, grand total=365
-  assert_contains "$output" "365" "grand total 365 present in output"
+  # alice=170/18, bob=180/18, charlie=15/3, grand=365/39
+  assert_contains "$output" "365" "grand total credits 365 present in output"
+  assert_contains "$output" "39"  "grand total interactions 39 present in output"
 }
 
 test_day_columns_present() {
