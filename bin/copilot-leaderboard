@@ -20,6 +20,13 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+// ── Scoring constants ─────────────────────────────────────────────────────────
+
+// Each user_initiated_interaction_count counts as this many ai_credits for sort order.
+// Set to 1 until we have a better calibration. Adjust when real credit data covers
+// a full month so the two metrics can be compared on equal footing.
+const INTERACTION_CREDIT_MULTIPLIER = 1;
+
 // ── Org config ────────────────────────────────────────────────────────────────
 
 const ORG_CONFIGS = {
@@ -180,9 +187,10 @@ export function buildLeaderboard(records, month) {
     .map(([login, dayData]) => {
       const totalCredits = Object.values(dayData).reduce((a, b) => a + b.credits, 0);
       const totalInteractions = Object.values(dayData).reduce((a, b) => a + b.interactions, 0);
-      return { login, dayData, totalCredits, totalInteractions };
+      const score = totalCredits + totalInteractions * INTERACTION_CREDIT_MULTIPLIER;
+      return { login, dayData, totalCredits, totalInteractions, score };
     })
-    .sort((a, b) => b.totalCredits - a.totalCredits || b.totalInteractions - a.totalInteractions);
+    .sort((a, b) => b.score - a.score);
 
   const allDayTotals = Object.fromEntries(
     days.map(d => [d, {
