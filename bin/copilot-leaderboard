@@ -214,33 +214,69 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   const avgInteractions = seatCount > 0 ? (grandInteractions / seatCount).toFixed(1) : '0';
   const stamp = generatedDate ?? new Date().toISOString().slice(0, 10);
 
+  // ANSI color codes
+  const c = {
+    creditVivid: '\x1b[38;5;214m',     // vivid bright orange
+    interactionMuted: '\x1b[38;5;250m', // light muted gray
+    creditDim: '\x1b[90m',             // bright black (dim on dark backgrounds)
+    divider: '\x1b[2m',                // dim (for dividers and separators)
+    reset: '\x1b[0m',
+  };
+
+  const coloredNum = (num) => {
+    if (num === 0 || num === '0') {
+      return `${c.creditDim}${num}${c.reset}`;
+    }
+    return `${c.creditVivid}${num}${c.reset}`;
+  };
+
+  const coloredInteraction = (num) => {
+    if (num === 0 || num === '0') {
+      return `${c.creditDim}${num}${c.reset}`;
+    }
+    return `${c.interactionMuted}${num}${c.reset}`;
+  };
+
   // Format a cell as "credits/interactions"; empty string when both are zero/absent
   const fmtCell = (v) => {
     if (!v) return '';
-    const c = v.credits > 0 ? String(v.credits) : '';
-    const i = v.interactions > 0 ? String(v.interactions) : '';
-    if (!c && !i) return '';
-    return `${c}/${i}`;
+    const c_val = v.credits > 0 ? String(v.credits) : (v.credits === 0 ? '0' : '');
+    const i_val = v.interactions > 0 ? String(v.interactions) : (v.interactions === 0 ? '0' : '');
+    if (!c_val && !i_val) return '';
+
+    const cFormatted = c_val ? coloredNum(c_val) : '';
+    const iFormatted = i_val ? coloredInteraction(i_val) : '';
+    const divider = `${c.divider}·${c.reset}`;
+
+    if (!cFormatted && !iFormatted) return '';
+    return `${cFormatted}${cFormatted && iFormatted ? divider : ''}${iFormatted}`;
   };
 
   // day column headers: just day-of-month number, no leading zero
   const dayNums = days.map(d => String(parseInt(d.slice(8), 10)));
 
+  // For column width calculation, strip ANSI codes
+  const stripAnsi = (str) => str.replace(/\x1b\[[0-9;]*m/g, '');
+
   // column widths
   const fmtGrand = fmtCell({ credits: grandCredits, interactions: grandInteractions });
   const colW = [
     Math.max(4, ...users.map(u => u.login.length)),
-    Math.max(11, fmtGrand.length),
+    Math.max(11, stripAnsi(fmtGrand).length),
     ...dayNums.map((h, i) => {
       const d = days[i];
-      return Math.max(h.length, fmtCell(allDayTotals[d]).length,
-        ...users.map(u => fmtCell(u.dayData[d]).length));
+      const widths = [
+        h.length,
+        stripAnsi(fmtCell(allDayTotals[d])).length,
+        ...users.map(u => stripAnsi(fmtCell(u.dayData[d])).length)
+      ];
+      return Math.max(...widths);
     }),
   ];
 
-  const pad  = (s, w) => String(s).padEnd(w);
-  const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(' | ') + ' |';
-  const mkSep = ()    => '|' + colW.map(w => '-'.repeat(w + 2)).join('|') + '|';
+  const pad  = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length)); // account for ANSI codes
+  const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
+  const mkSep = ()    => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
 
   const lines = [
     `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
@@ -256,7 +292,12 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
       ...days.map(d => fmtCell(u.dayData[d])),
     ])),
     '',
-    `_metric: ai_credits_used (floored) / user_initiated_interaction_count | generated ${stamp}_`,
+    '**Legend:**',
+    `- ${c.creditVivid}●${c.reset} ai_credits_used (floored)`,
+    `- ${c.interactionMuted}●${c.reset} user_initiated_interaction_count`,
+    `- ${c.creditDim}0${c.reset} = zero values (very dim)`,
+    '',
+    `_metric: ${c.creditVivid}ai_credits_used${c.reset} ${c.divider}·${c.reset} ${c.interactionMuted}user_initiated_interaction_count${c.reset} | generated ${stamp}_`,
     '',
   ];
 
