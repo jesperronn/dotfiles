@@ -27,6 +27,11 @@ import { join } from 'node:path';
 // a full month so the two metrics can be compared on equal footing.
 const INTERACTION_CREDIT_MULTIPLIER = 1;
 
+// ── Layout constants ──────────────────────────────────────────────────────────
+
+// Minimum character width for date columns in leaderboard tables
+const DATE_COLUMN_MIN_WIDTH = 3;
+
 // ── Org config ────────────────────────────────────────────────────────────────
 
 const ORG_CONFIGS = {
@@ -51,7 +56,7 @@ const argv = process.argv.slice(2);
 let doStil = false, doNine = false, skipFetch = true, dryRun = false;
 let month = null;
 let archiveDirOverride = null;
-let backfillDays = 0;
+let doBackfill = false;
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -63,15 +68,17 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--dry-run')      dryRun = true;
   else if (a === '--month')        month = argv[++i];
   else if (a === '--archive-dir')  archiveDirOverride = argv[++i];
-  else if (a === '--backfill') {
-    skipFetch = false;
-    backfillDays = Number(argv[i + 1]) > 0 ? Number(argv[++i]) : 28;
-  }
+  else if (a === '--backfill')     { skipFetch = false; doBackfill = true; }
   else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
   else { process.stderr.write(`Unknown option: ${a}\n`); process.exit(1); }
 }
 
 if (!doStil && !doNine) { printHelp(); process.exit(1); }
+
+if (doBackfill && !month) {
+  process.stderr.write('Error: --backfill requires --month YYYY-MM\n');
+  process.exit(1);
+}
 
 if (!month) {
   const now = new Date();
@@ -89,7 +96,7 @@ Options:
   --all               Both orgs
   --month YYYY-MM     Month to report (default: current month)
   --update            Fetch fresh data from GitHub API (default: use existing archive)
-  --backfill [N]      Fetch last N days of per-day data via users-1-day endpoint (default N=28)
+  --backfill          Fetch all days in --month via users-1-day endpoint (requires --month)
   --archive-dir DIR   Override archive root directory (useful for testing)
   --dry-run           Print API calls without executing
   --help, -h          Show this help
@@ -216,8 +223,8 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
 
   // ANSI color codes
   const c = {
-    creditVivid: '\x1b[38;5;214m',     // vivid bright orange
-    interactionMuted: '\x1b[38;5;250m', // light muted gray
+    creditVivid: '\x1b[38;5;214m',     // primary: vivid bright orange
+    interactionVivid: '\x1b[38;5;45m', // secondary: bright cyan
     creditDim: '\x1b[90m',             // bright black (dim on dark backgrounds)
     divider: '\x1b[2m',                // dim (for dividers and separators)
     reset: '\x1b[0m',
@@ -234,22 +241,19 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
     if (num === 0 || num === '0') {
       return `${c.creditDim}${num}${c.reset}`;
     }
-    return `${c.interactionMuted}${num}${c.reset}`;
+    return `${c.interactionVivid}${num}${c.reset}`;
   };
 
-  // Format a cell as "credits/interactions"; empty string when both are zero/absent
-  const fmtCell = (v) => {
-    if (!v) return '';
-    const c_val = v.credits > 0 ? String(v.credits) : (v.credits === 0 ? '0' : '');
-    const i_val = v.interactions > 0 ? String(v.interactions) : (v.interactions === 0 ? '0' : '');
-    if (!c_val && !i_val) return '';
+  // Format credits cell
+  const fmtCredits = (v) => {
+    if (!v || v.credits === 0) return v?.credits === 0 ? coloredNum('0') : '';
+    return coloredNum(String(v.credits));
+  };
 
-    const cFormatted = c_val ? coloredNum(c_val) : '';
-    const iFormatted = i_val ? coloredInteraction(i_val) : '';
-    const divider = `${c.divider}·${c.reset}`;
-
-    if (!cFormatted && !iFormatted) return '';
-    return `${cFormatted}${cFormatted && iFormatted ? divider : ''}${iFormatted}`;
+  // Format interactions cell
+  const fmtInteractions = (v) => {
+    if (!v || v.interactions === 0) return v?.interactions === 0 ? coloredInteraction('0') : '';
+    return coloredInteraction(String(v.interactions));
   };
 
   // day column headers: just day-of-month number, no leading zero
@@ -258,46 +262,70 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   // For column width calculation, strip ANSI codes
   const stripAnsi = (str) => str.replace(/\x1b\[[0-9;]*m/g, '');
 
-  // column widths
-  const fmtGrand = fmtCell({ credits: grandCredits, interactions: grandInteractions });
+  // Calculate column widths for a table format
+  const calcColW = (fmtCellFn) => {
+    const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
+    return [
+      Math.max(4, ...users.map(u => u.login.length)),
+      Math.max(11, stripAnsi(fmtGrand).length),
+      ...dayNums.map((h, i) => {
+        const d = days[i];
+        const widths = [
+          h.length,
+          stripAnsi(fmtCellFn(allDayTotals[d])).length,
+          ...users.map(u => stripAnsi(fmtCellFn(u.dayData[d])).length)
+        ];
+        return Math.max(...widths);
+      }),
+    ];
+  };
+
+  // Merge column widths from both tables and enforce minimum for day columns
+  const colWCredits = calcColW(fmtCredits);
+  const colWInteractions = calcColW(fmtInteractions);
   const colW = [
-    Math.max(4, ...users.map(u => u.login.length)),
-    Math.max(11, stripAnsi(fmtGrand).length),
-    ...dayNums.map((h, i) => {
-      const d = days[i];
-      const widths = [
-        h.length,
-        stripAnsi(fmtCell(allDayTotals[d])).length,
-        ...users.map(u => stripAnsi(fmtCell(u.dayData[d])).length)
-      ];
-      return Math.max(...widths);
-    }),
+    Math.max(colWCredits[0], colWInteractions[0]),
+    Math.max(colWCredits[1], colWInteractions[1]),
+    ...dayNums.map((_, i) => Math.max(colWCredits[i + 2] ?? 0, colWInteractions[i + 2] ?? 0, DATE_COLUMN_MIN_WIDTH)),
   ];
 
-  const pad  = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length)); // account for ANSI codes
-  const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
-  const mkSep = ()    => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
+  // Build both tables with same column widths
+  const buildTable = (fmtCellFn, title) => {
+    const pad  = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length)); // account for ANSI codes
+    const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
+    const mkSep = ()    => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
+
+    const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
+    const rows = [
+      `### ${title}`,
+      '',
+      mkRow(['User', 'Month total', ...dayNums]),
+      mkSep(),
+      mkRow(['**All**', fmtGrand, ...days.map(d => fmtCellFn(allDayTotals[d]))]),
+      ...users.map(u => mkRow([
+        u.login,
+        fmtCellFn({ credits: u.totalCredits, interactions: u.totalInteractions }),
+        ...days.map(d => fmtCellFn(u.dayData[d])),
+      ])),
+    ];
+    return rows;
+  };
 
   const lines = [
     `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
     '',
     `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avgCredits} credits / ${avgInteractions} interactions_`,
     '',
-    mkRow(['User', 'Month total', ...dayNums]),
-    mkSep(),
-    mkRow(['**All**', fmtGrand, ...days.map(d => fmtCell(allDayTotals[d]))]),
-    ...users.map(u => mkRow([
-      u.login,
-      fmtCell({ credits: u.totalCredits, interactions: u.totalInteractions }),
-      ...days.map(d => fmtCell(u.dayData[d])),
-    ])),
+    ...buildTable(fmtCredits, `${c.creditVivid}ai_credits_used${c.reset}`),
+    '',
+    ...buildTable(fmtInteractions, `${c.interactionVivid}user_initiated_interaction_count${c.reset}`),
     '',
     '**Legend:**',
-    `- ${c.creditVivid}●${c.reset} ai_credits_used (floored)`,
-    `- ${c.interactionMuted}●${c.reset} user_initiated_interaction_count`,
+    `- ${c.creditVivid}●${c.reset} ai_credits_used (floored) [primary]`,
+    `- ${c.interactionVivid}●${c.reset} user_initiated_interaction_count [secondary]`,
     `- ${c.creditDim}0${c.reset} = zero values (very dim)`,
     '',
-    `_metric: ${c.creditVivid}ai_credits_used${c.reset} ${c.divider}·${c.reset} ${c.interactionMuted}user_initiated_interaction_count${c.reset} | generated ${stamp}_`,
+    `_generated ${stamp}_`,
     '',
   ];
 
@@ -327,17 +355,17 @@ async function runForOrg(key) {
     const token = fetchToken(cfg.opItem);
     mkdirSync(archivePath, { recursive: true });
 
-    if (backfillDays > 0) {
-      // Build list of dates to backfill, skip days already archived
+    if (doBackfill) {
+      // Build list of dates for the entire month
+      const [year, mon] = month.split('-');
+      const numDays = new Date(Number(year), Number(mon), 0).getDate();
       const dates = [];
-      for (let d = 1; d <= backfillDays; d++) {
-        const dt = new Date();
-        dt.setDate(dt.getDate() - d);
-        dates.push(dt.toISOString().slice(0, 10));
+      for (let d = 1; d <= numDays; d++) {
+        dates.push(`${year}-${mon}-${String(d).padStart(2, '0')}`);
       }
       const missing = dates.filter(day => !existsSync(join(archivePath, `${day}-1day-meta.json`)));
       const cached = dates.length - missing.length;
-      process.stderr.write(`Backfilling ${missing.length} day(s)${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
+      process.stderr.write(`Backfilling ${missing.length}/${dates.length} day(s) in ${month}${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
 
       const fetchDay = async (day) => {
         let raw;
@@ -394,9 +422,11 @@ async function runForOrg(key) {
   const self = `copilot-leaderboard --${key}`;
   process.stderr.write('\nNext steps:\n');
   if (skipFetch) {
-    process.stderr.write(`  ${self} --update           # fetch today's 28-day snapshot\n`);
-    process.stderr.write(`  ${self} --backfill          # fetch last 28 days one-by-one\n`);
-    process.stderr.write(`  ${self} --backfill 60       # go back further\n`);
+    process.stderr.write(`  ${self} --update                      # fetch today's 28-day snapshot\n`);
+    process.stderr.write(`  ${self} --backfill --month ${month}   # backfill all days in ${month}\n`);
+    const prevMonth = new Date(Number(month.split('-')[0]), Number(month.split('-')[1]) - 1, 1);
+    const prevMonthStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+    process.stderr.write(`  ${self} --backfill --month ${prevMonthStr}   # backfill previous month\n`);
   } else {
     process.stderr.write(`  ${self}                    # view report offline\n`);
     process.stderr.write(`  ${self} --month ${month}   # same month, offline\n`);
