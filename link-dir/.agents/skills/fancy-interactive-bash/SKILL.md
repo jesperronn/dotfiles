@@ -17,20 +17,9 @@ The goal is not "write a script that works once". The goal is:
 
 ## Template Files
 
-This skill includes starter templates under `assets/`:
-- `assets/script-template.sh`
-- `assets/script-template.test.sh`
-- `assets/bin-test-template`
-- `assets/bin-lint-template`
+Starter templates are in `assets/`: `script-template.sh`, `script-template.test.sh`, `bin-test-template`, `bin-lint-template`.
 
-Use them when you want a concrete starting point instead of retyping the structure.
-
-Guidance:
-- copy `assets/script-template.sh` when creating a new interactive Bash entrypoint
-- copy `assets/script-template.test.sh` and rename it to the sibling `*.test.sh`
-- copy `assets/bin-test-template` to repository `bin/test`
-- copy `assets/bin-lint-template` to repository `bin/lint`
-- adapt names and prefixes immediately so the template does not leak placeholder identifiers
+Copy them as starting points and adapt names immediately to avoid leaking placeholders.
 
 ## Default Shape
 
@@ -95,43 +84,20 @@ fi
 
 ## Validation Workflow
 
-Treat testing and linting as part of the script contract, not follow-up chores.
+Treat testing and linting as script contract, not follow-up chores.
 
-Rules:
-- For Bash work, the standard validation entrypoints are `bin/lint` and `bin/test`.
-- When adding a Bash script such as `bin/foo`, also add a small sibling test file such as `bin/foo.test.sh`.
-- Keep the test file small, direct, and readable.
-- Prefer parameterized tests when the same assertion pattern is repeated across multiple inputs or environments.
-- Failure output must make `expected` and `actual` easy to compare.
-- Print colored `[PASS]` markers at the front of each successful test line.
-- Print colored `[FAIL]` markers at the front of each failed test line.
-- Tests should cover the supported environments or environment branches the script claims to handle.
-- Add a repository-level `bin/test` wrapper that finds `*.test.sh` files and executes them.
-- Add a repository-level `bin/lint` wrapper that runs the lint pass consistently across the repository.
+**Script level:**
+- Add `*.test.sh` sibling for each script (`bin/foo` → `bin/foo.test.sh`)
+- Keep tests small, readable, assertion output clear (expected vs actual)
+- Print colored `[PASS]` / `[FAIL]` markers at line start
+- Cover option parsing, defaults, `--help`, symmetry, formatters, interactive fallbacks, progress/failure shapes
 
-For `bin/test`:
-- discover all `*.test.sh` files in the repository
-- execute them in a stable order
-- print each test file on its own line before execution, for example `running ==> bin/script-a.test.sh`
-- stop on failure or report a final non-zero exit status
-- keep output readable enough that one failing test is obvious immediately
-- make the per-file runner line reproducible so failures can be retried directly against the named file
-- apply the same color principles to the per-file heading as the rest of the Bash UX
-- aqua/cyan file headings are a strong default when they improve readability
+**Repository level:**
+- `bin/test`: discover and run all `*.test.sh` files in stable order; per-file heading before each; fail fast; apply color to headings (cyan/aqua works well)
+- `bin/lint`: standard shellcheck entrypoint; per-file headings with same color scheme; fail non-zero on lint errors
+- Both should have reproducible per-file lines so failures can be retried directly
 
-For `bin/lint`:
-- make it the standard entrypoint for linting Bash files
-- run `shellcheck` across the relevant shell scripts in the repository
-- keep invocation consistent so developers do not hand-roll lint commands each time
-- fail non-zero on any lint error
-- print a reproducible per-file heading before linting each file
-- apply the same color principles as `bin/test`; aqua/cyan file headings work well here too
-
-The method is:
-- local script test file for focused verification
-- `bin/test` for repository-wide test execution
-- `bin/lint` for repository-wide shell linting
-- developers should normally run both `bin/lint` and `bin/test` before considering the work done
+Developers run `bin/lint && bin/test` before commit.
 
 ## Naming
 
@@ -176,71 +142,62 @@ Rules:
 
 ## Output and Color
 
-Treat terminal output as part of the interface.
+Treat terminal output as part of the interface. Principles apply to Bash, Go, Python, and any CLI tool.
 
-Use a small palette with named variables:
-- dim
-- bold
-- red
-- green
-- warm yellow/orange for help section headings
-- magenta/pink for metavariables and placeholders
-- aqua/cyan for per-file runner headings
-- one purple-ish accent color for the tool name and branded info lines
-- reset
+**TTY detection:** Auto-disable color when output is piped/redirected. Detect via `[[ -t 1 ]]` (Bash), `os.Stat` (Go), `sys.stdout.isatty()` (Python). Optionally support `--color`/`--no-color` flags. **All output must remain readable without color.**
 
-Apply color to:
-- usage headings
-- the top-level tool name in usage/help, using a purple-ish accent when it is the primary brand color
-- subcommand names separately from parameter placeholders so the command shape is easier to scan
-- parameter placeholders in a distinct accent from subcommands, for example magenta placeholders next to cyan subcommands
-- option names in help
-- info/warn/error/success lines
-- `bin/test` and `bin/lint` per-file runner headings
-- test results such as `[PASS]` and `[FAIL]`
+**Palette:** Use small, semantic set with consistent meaning across your tool:
 
-Rules:
-- All output must still work with `--no-color`.
-- Keep a single `color_print` helper and build all styled output on top of it.
-- Help output should be readable both with and without color.
-- Prefer token-level help styling over coloring an entire usage line one color.
-- A strong default for `--help`, borrowing from the `bat --help` theme, is: warm yellow/orange section headings, a purple-ish tool name, green command tokens and flags, magenta/pink placeholders, and default terminal color for prose.
-- Per-file runner headings should use the same palette rather than inventing a separate style system.
-- If the usage block has subcommands, color the command token separately from the placeholder token.
-- Prefer a heredoc usage block when it makes token-level help styling easier to read.
+| Element | Color | Used For |
+|---------|-------|----------|
+| Dim | gray | descriptions, prose, non-critical text, debug output |
+| Bold | bright | structural markers, emphasis |
+| Heading | warm yellow/orange | section labels (`Usage:`, `Flags:`, `Examples:`) |
+| Command | green | executable tokens, subcommands |
+| Flag | yellow or cyan | option names (pick one, use consistently) |
+| Placeholder | magenta/pink | metavariables (`<issue-key>`, `[FILE]`) |
+| File heading | cyan/aqua | per-file labels in test/lint output |
+| Tool name | purple-ish | primary brand, usage first line (optional) |
+| Success | green | completion, `[PASS]` |
+| Error | red | failure, `[FAIL]`, error lines |
 
-Reference pattern:
-- `pgit` should follow the same semantic split as `bat --help`: warm section labels, purple tool name, green command tokens, and magenta placeholders.
-- Follow that split rather than coloring the entire usage line uniformly.
+**Apply to:**
+- Help section headings and tool name
+- Subcommand tokens separately from placeholders (separate colors so command shape scans fast)
+- Option names in help
+- `info()`, `success()`, `warn()`, `error()` output
+- Test/lint runner headings
+- `[PASS]` / `[FAIL]` markers
+- **Dim text:** Debug output, verbose trace lines, auxiliary information user can ignore (e.g., when `--verbose` shows step-by-step progress, use dim for "entering step X" context)
+
+**Rules:**
+- **One central abstraction.** `color_print` helper in Bash, `color` package in Go — not scattered codes.
+- **Token-level, not full-line.** Color individual tokens (command, flag, placeholder) not entire usage line.
+- **Consistent across the tool.** Same palette for help, test output, error messages, runner headings.
+- **Consistent across languages.** Bash script and Go CLI in same project should feel identical to users.
+- **Deviations are intentional.** If you use blue for commands instead of green, document why and keep semantic split (headings ≠ commands ≠ placeholders ≠ prose).
+
+Reference: `bat --help` uses warm headings, purple tool name, green commands, magenta placeholders, default text.
 
 ## Performance And Timings
 
-Interactive shell tools should make slow steps visible without making normal usage noisy.
+Make slow steps visible without noise.
 
-Preferred split:
-- `--verbose`: what the script is doing
-- `--timings`: where the time is going
-- `--trace`: what exact shell commands executed
+**Split flags:**
+- `--verbose`: what's happening
+- `--timings`: where time is going
+- `--trace`: exact commands
 
-Rules:
-- Default output should stay concise.
-- Timings should be cheap to capture and easy to disable.
-- Time meaningful phases such as `parse_prereqs`, discovery, planning, selectors, external commands, and final reporting.
-- Prefer timing phase boundaries and external commands over every trivial helper.
-- In verbose mode, include timing next to the step that just completed when that clarifies slowness.
-- In non-verbose mode, keep timing output behind `--timings` or the final summary.
-- If a step fails, include elapsed time when it helps diagnose the failure.
+**Rules:**
+- Default output concise
+- Time meaningful phases (not every helper): `parse_prereqs`, discovery, planning, selectors, external commands, final report
+- In `--verbose`: show timing next to step when it clarifies slowness
+- In default mode: keep timings in `--timings` or summary only
+- Include elapsed time on failure when diagnostic
+- One timing helper, not scattered `date` calls; prefer monotonic timers, fall back cleanly
+- Store per-step data for summary; don't couple timing to color/TTY logic
 
-Implementation guidance:
-- Use one timing helper instead of ad hoc `date` calls throughout the file.
-- Prefer monotonic or high-resolution timers when available, but fall back cleanly.
-- Store per-step timing data so the script can emit a useful summary at the end.
-- Do not couple timing collection to colored output or TTY-only rendering.
-
-Useful patterns:
-- `run_timed "Discovering candidates" discover_candidates`
-- `run_command_timed "Running cleanup hook" my_hook`
-- `Completed in 12.4s`
+**Pattern:** `run_timed "Step name" step_function` → `Completed in 12.4s`
 
 ## Interactivity
 
@@ -308,41 +265,22 @@ This matters more than "pure shell minimalism". A sourceable script with overrid
 
 ## Testing Method
 
-Test the structure, not just the behavior.
+Test structure and behavior via source and function override.
 
-Cover at least:
-- option parsing
-- default flags and reset state
-- `--help`, unknown options, and on/off flag symmetry
-- formatting helpers
-- selector row formatting
-- interactive fallback behavior
-- progress rendering shape
-- failure rendering shape
-- orchestration ordering when feasible
-- environment-specific branches the script claims to support
+**Coverage:** Option parsing, defaults/reset, `--help`, flag symmetry, formatters, interactive fallbacks, progress/failure shapes, orchestration, environment branches.
 
-Preferred test style:
-- source the script
-- redefine specific helper functions inside the test to isolate units
-- use temporary directories instead of fixture-heavy permanent state
-- assert exact strings for formatted rows and prompts
-- assert exit codes separately from stdout/stderr text
-- run `shellcheck` as a required validation step in addition to tests
-- print `[PASS]` in color at the start of each passing test line
-- print `[FAIL]` in color at the start of each failing test line
-- make failure output show expected and actual values clearly
-- use parameterized test loops when they reduce repetition without hiding intent
+**Method:**
+- Source the script; override helpers to isolate units
+- Use temp directories, not fixtures
+- Assert exact strings (formatted rows, prompts); separate exit code assertions
+- Run `shellcheck` as required validation
+- Print colored `[PASS]` / `[FAIL]` at line start
+- Show expected vs actual clearly on failure
+- Use parameterized loops when they add signal, not noise
 
-Use explicit helpers such as:
-- `assert_eq`
-- `assert_status`
-- `reset_state`
+**Helpers:** `assert_eq`, `assert_status`, `reset_state`
 
-For the test runner UX:
-- print section headers
-- show colored `[PASS]` / `[FAIL]` markers
-- fail fast on structural regressions
+**Test runner UX:** Section headers, colored `[PASS]` / `[FAIL]`, fail fast on structural regressions.
 
 ## What To Reuse From The Source Pattern
 
