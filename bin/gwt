@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+# ── Global flags and cached state ──────────────────────────────────────
+
+GWT_COLOR_ENABLED=0
+GWT_VERBOSE=0
+GWT_FZF_FOUND=0
+GWT_REPOSITORY_ROOT=""
+GWT_WORKTREE_LINES=()
+
+GWT_C_RESET=$'\033[0m'
+GWT_C_DIM=$'\033[2m'
+GWT_C_BOLD=$'\033[1m'
+GWT_C_RED=$'\033[31m'
+GWT_C_GREEN=$'\033[32m'
+GWT_C_SECTION=$'\033[33m'
+GWT_C_ACCENT=$'\033[35m'
+
+# ── Reset helpers ──────────────────────────────────────────────────────
+
+gwt_reset_state() {
+  GWT_COLOR_ENABLED=0
+  GWT_VERBOSE=0
+  GWT_FZF_FOUND=0
+  GWT_REPOSITORY_ROOT=""
+  GWT_WORKTREE_LINES=()
+}
+
+# ── Output helpers ─────────────────────────────────────────────────────
+
+gwt_color_print() {
+  local color="$1"
+  shift
+
+  if (( GWT_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$GWT_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+gwt_info() {
+  gwt_color_print "${GWT_C_BOLD}${GWT_C_SECTION}" "$*"
+}
+
+gwt_success() {
+  gwt_color_print "$GWT_C_GREEN" "$*"
+}
+
+gwt_warn() {
+  gwt_color_print "${GWT_C_RED}" "$*" >&2
+}
+
+gwt_error() {
+  gwt_color_print "${GWT_C_RED}${GWT_C_BOLD}" "$*" >&2
+}
+
+gwt_dim() {
+  gwt_color_print "$GWT_C_DIM" "$*"
+}
+
+gwt_verbose() {
+  if (( GWT_VERBOSE )); then
+    gwt_dim "$*"
+  fi
+}
+
+# ── Usage ──────────────────────────────────────────────────────────────
+
+gwt_usage() {
+  local section_style="" tool_style="" reset_style=""
+
+  if (( GWT_COLOR_ENABLED )); then
+    section_style="${GWT_C_BOLD}${GWT_C_SECTION}"
+    tool_style="${GWT_C_BOLD}${GWT_C_ACCENT}"
+    reset_style="$GWT_C_RESET"
+  fi
+
+  printf '%sUsage:%s %sgwt%s\n\n' "$section_style" "$reset_style" "$tool_style" "$reset_style"
+  printf '%sDescription:%s Manage git worktrees interactively.\n' "$section_style" "$reset_style"
+  printf '  Lists existing worktrees via fzf. Select one to delete it.\n'
+  printf '  Press Ctrl-A (or your fzf binding) to create a new worktree.\n\n'
+  printf '%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s-h, --help%s  Show this help.\n\n' "$GWT_C_GREEN" "$GWT_C_RESET"
+}
+
+# ── Option parsing ─────────────────────────────────────────────────────
+
+gwt_parse_opts() {
+  if [[ $# -eq 0 ]]; then
+    return 0
+  fi
+
+  case "${1-}" in
+    -h|--help)
+      gwt_usage
+      return 1
+      ;;
+  esac
+
+  return 0
+}
+
+# ── Prerequisites ──────────────────────────────────────────────────────
+
+gwt_parse_prereqs() {
+  # Detect terminal capabilities
+  if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    GWT_COLOR_ENABLED=1
+  else
+    GWT_COLOR_ENABLED=0
+  fi
+
+  # Check git
+  if ! command -v git >/dev/null 2>&1; then
+    gwt_error "git is not installed or not in PATH."
+    return 1
+  fi
+
+  # Check fzf
+  if command -v fzf >/dev/null 2>&1; then
+    GWT_FZF_FOUND=1
+  else
+    gwt_error "fzf is not installed or not in PATH."
+    gwt_error "Install it with: brew install fzf"
+    return 1
+  fi
+}
+
+# ── Repository discovery ───────────────────────────────────────────────
+
+gwt_find_repo_root() {
+  local toplevel
+
+  toplevel="$(git rev-parse --show-toplevel 2>/dev/null)" || true
+
+  if [[ -z "$toplevel" ]]; then
+    gwt_error "Not inside a git repository."
+    gwt_error "Run gwt from within (or below) a git repository."
+    return 1
+  fi
+
+  GWT_REPOSITORY_ROOT="$toplevel"
+  gwt_verbose "Repository root: $GWT_REPOSITORY_ROOT"
+  return 0
+}
+
+# ── Worktree listing ───────────────────────────────────────────────────
+
+gwt_list_worktrees() {
+  # Raw output: path  branch  HEAD
+  local raw_output=""
+
+  raw_output="$(git -C "$GWT_REPOSITORY_ROOT" worktree list 2>&1)" || true
+
+  GWT_WORKTREE_LINES=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    GWT_WORKTREE_LINES+=("$line")
+  done <<< "$raw_output"
+
+  gwt_verbose "Found ${#GWT_WORKTREE_LINES[@]} worktree(s)"
+}
+
+# ── Fzf selector ───────────────────────────────────────────────────────
+
+gwt_select_worktree() {
+  local selected_line=""
+
+  if (( ! GWT_FZF_FOUND )); then
+    gwt_error "fzf is required for interactive mode."
+    return 1
+  fi
+
+  # Build fzf input: display lines
+  local display_lines=()
+  local entry=""
+  for entry in "${GWT_WORKTREE_LINES[@]}"; do
+    display_lines+=("$entry")
+  done
+
+  # Compute fzf height: min of 30% of terminal or 20 lines
+  local terminal_lines
+  terminal_lines="$(tput lines 2>/dev/null)" || terminal_lines=24
+  local thirty_pct=$(( (terminal_lines * 30) / 100 ))
+  (( thirty_pct < 1 )) && thirty_pct=1
+  local fzf_height=$(( thirty_pct < 20 ? thirty_pct : 20 ))
+
+  # We use a signal file to communicate "add" vs "select"
+  # because fzf's --bind execute can't return a value to bash easily.
+  local fzf_output=""
+  local fzf_args=(--prompt='Worktree> ' --height "$fzf_height" --bind 'ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
+
+  fzf_output="$(printf '%s\n' "${display_lines[@]}" | fzf "${fzf_args[@]}" 2>/dev/null)" || true
+
+  # Check if user pressed Ctrl-A (the signal file would exist)
+  if [[ -f /tmp/gwt-add-signal ]]; then
+    rm -f /tmp/gwt-add-signal
+    echo "ADD"
+    return 0
+  fi
+
+  if [[ -z "$fzf_output" ]]; then
+    # User cancelled — exit cleanly
+    return 1
+  fi
+
+  echo "$fzf_output"
+  return 0
+}
+
+# ── Worktree name generation ───────────────────────────────────────────
+
+gwt_generate_worktree_name() {
+  # <repo_name>-wt, <repo_name>-wt1, <repo_name>-wt2, ...
+  local repo_name
+
+  repo_name="$(basename "$GWT_REPOSITORY_ROOT")"
+
+  local candidate="${repo_name}-wt"
+  local full_path="${GWT_REPOSITORY_ROOT%/..*}/../${candidate}"
+
+  # Check if the path already exists as a worktree
+  if git -C "$GWT_REPOSITORY_ROOT" worktree list 2>/dev/null | grep -q "${full_path}	"; then
+    local i=1
+    while true; do
+      candidate="${repo_name}-wt${i}"
+      full_path="${GWT_REPOSITORY_ROOT%/..*}/../${candidate}"
+      if ! git -C "$GWT_REPOSITORY_ROOT" worktree list 2>/dev/null | grep -q "${full_path}	"; then
+        break
+      fi
+      (( i++ ))
+    done
+  fi
+
+  echo "$full_path"
+}
+
+# ── Add worktree ───────────────────────────────────────────────────────
+
+gwt_apply_add() {
+  local worktree_path
+
+  worktree_path="$(gwt_generate_worktree_name)"
+
+  gwt_dim "git worktree add ${worktree_path}"
+  gwt_verbose "Creating worktree at: $worktree_path"
+
+  if git -C "$GWT_REPOSITORY_ROOT" worktree add "$worktree_path" 2>&1; then
+    gwt_success "Worktree created at: $worktree_path"
+  else
+    gwt_error "Failed to create worktree at: $worktree_path"
+    return 1
+  fi
+
+  gwt_countdown_navigate "$worktree_path"
+}
+
+# ── 3-second countdown ─────────────────────────────────────────────────
+
+gwt_countdown_navigate() {
+  local worktree_path="$1"
+  local remaining=3
+  local key=""
+
+  gwt_verbose "Starting 3s countdown for auto-navigate"
+
+  while (( remaining > 0 )); do
+    # Print countdown in-place (same line)
+    printf '\r%sNavigate to %s? [y/N] (%ss)%s' \
+      "$GWT_C_DIM" "$worktree_path" "$remaining" "$GWT_C_RESET"
+
+    # Read a single character with a short timeout
+    if read -rs -n1 -t 1 key 2>/dev/null; then
+      if [[ "$key" == "y" || "$key" == "Y" ]]; then
+        printf '\r%sNavigating to %s%s\n' "$GWT_C_GREEN" "$worktree_path" "$GWT_C_RESET"
+        cd "$worktree_path" || return 1
+        gwt_success "Now in: $(pwd)"
+        return 0
+      else
+        # Any other key — just ignore, continue countdown
+        key=""
+      fi
+    fi
+
+    (( remaining-- ))
+  done
+
+  # Clear the countdown line
+  local spacer
+  spacer="$(printf '%0.s ' $(seq 1 60))"
+  printf '\r%s%s%s\n' "$spacer" "$GWT_C_RESET" "$spacer"
+  gwt_verbose "Countdown expired — staying in $(pwd)"
+  return 0
+}
+
+# ── Delete worktree ────────────────────────────────────────────────────
+
+gwt_apply_delete() {
+  local selected_line="$1"
+  local worktree_path=""
+
+  # Parse the path from the worktree list line
+  # Format: "path\tbranch\tHEAD"
+  worktree_path="$(echo "$selected_line" | awk '{print $1}')"
+
+  if [[ -z "$worktree_path" ]]; then
+    gwt_error "Could not parse worktree path from: $selected_line"
+    return 1
+  fi
+
+  gwt_dim "git worktree remove ${worktree_path}"
+  git -C "$GWT_REPOSITORY_ROOT" worktree remove "$worktree_path" 2>&1 || true
+
+  gwt_dim "git worktree prune"
+  git -C "$GWT_REPOSITORY_ROOT" worktree prune 2>&1 || true
+
+  gwt_success "Worktree removed and pruned: $worktree_path"
+}
+
+# ── Main entry point ───────────────────────────────────────────────────
+
+gwt_run_main() {
+  gwt_reset_state
+  gwt_parse_opts "$@" || return $?
+  gwt_parse_prereqs
+
+  gwt_find_repo_root || return $?
+
+  gwt_list_worktrees
+
+  if (( ${#GWT_WORKTREE_LINES[@]} == 0 )); then
+    gwt_info "No worktrees found. Use Ctrl-A to create one."
+  else
+    gwt_info "Select a worktree to delete (Ctrl-A to add new):"
+  fi
+
+  local selected=""
+  selected="$(gwt_select_worktree)" || return 0
+
+  if [[ "$selected" == "ADD" ]]; then
+    gwt_apply_add
+  elif [[ -n "$selected" ]]; then
+    gwt_apply_delete "$selected"
+  fi
+
+  return 0
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  gwt_run_main "$@"
+fi
