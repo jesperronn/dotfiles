@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# Purpose:
+#   Run a test suite repeatedly to surface flaky tests. Tracks per-run failures,
+#   then prints a summary showing which tests are flaky (sometimes fail) vs broken
+#   (always fail).
+#
+# Usage:
+#   flakyfinder [OPTIONS] [-- COMMAND]
+#
+# Options:
+#   --runs N, -N N      Max number of runs (default: 10)
+#   --timeout MINUTES   Max wall-clock minutes (default: 30)
+#   --quiet             Suppress per-run test output; print only run status lines
+#   -h, --help          Show this help and exit
+#
+# Auto-detection (when no command given):
+#   pom.xml present     → mvn test
+#   package.json        → npm test
+#
+# Examples:
+#   flakyfinder                            # auto-detect, defaults
+#   flakyfinder -N 5                       # stop after 5 runs
+#   flakyfinder --timeout 10               # stop after 10 minutes
+#   flakyfinder -- mvn test -pl api        # explicit command
+#   flakyfinder --runs 20 -- npm test      # 20 runs, explicit command
+set -euo pipefail
+
+FF_RUNS=10
+FF_TIMEOUT=30
+FF_QUIET=0
+FF_SHOW_HELP=0
+FF_COMMAND=()
+FF_STOP_REQUESTED=0
+
+FF_C_RESET=$'\033[0m'
+FF_C_BOLD=$'\033[1m'
+FF_C_RED=$'\033[31m'
+FF_C_GREEN=$'\033[32m'
+FF_C_YELLOW=$'\033[33m'
+FF_C_CYAN=$'\033[36m'
+FF_C_DIM=$'\033[2m'
+FF_COLOR=0
+
+# Per-run tracking: associative array test_name → space-separated list of run numbers where it failed
+declare -A FF_FAILURES=()
+FF_RUN_RESULTS=()   # "pass" or "fail" per run index (1-based, stored at index-1)
+
+ff_color() {
+  local color="$1"; shift
+  if (( FF_COLOR )); then
+    printf '%b%s%b' "$color" "$*" "$FF_C_RESET"
+  else
+    printf '%s' "$*"
+  fi
+}
+
+ff_println() {
+  local color="$1"; shift
+  if (( FF_COLOR )); then
+    printf '%b%s%b\n' "$color" "$*" "$FF_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+ff_usage() {
+  cat <<EOF
+$(ff_color "${FF_C_BOLD}${FF_C_CYAN}" "flakyfinder") — run a test suite repeatedly to surface flaky tests
+
+$(ff_color "${FF_C_BOLD}" "Usage:")
+  flakyfinder [OPTIONS] [-- COMMAND]
+
+$(ff_color "${FF_C_BOLD}" "Options:")
+  $(ff_color "$FF_C_GREEN" "--runs N, -N N")     Max number of runs (default: 10)
+  $(ff_color "$FF_C_GREEN" "--timeout MINUTES")  Max wall-clock minutes (default: 30)
+  $(ff_color "$FF_C_GREEN" "--quiet")            Suppress per-run test output
+  $(ff_color "$FF_C_GREEN" "-h, --help")         Show this help and exit
+
+$(ff_color "${FF_C_BOLD}" "Auto-detection (no command given):")
+  pom.xml present  → mvn test
+  package.json     → npm test
+
+$(ff_color "${FF_C_BOLD}" "Examples:")
+  flakyfinder
+  flakyfinder -N 5
+  flakyfinder --timeout 10 -- mvn test -pl api
+  flakyfinder --runs 20 -- npm test
+EOF
+}
+
+ff_error() {
+  ff_println "$FF_C_RED" "ERROR: $*" >&2
+}
+
+ff_is_positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+parse_opts() {
+  while (($#)); do
+    case "$1" in
+      -h|--help)
+        FF_SHOW_HELP=1; shift ;;
+      --runs|-N)
+        [[ $# -lt 2 ]] && { ff_error "$1 requires a value"; return 1; }
+        ff_is_positive_integer "$2" || { ff_error "Runs must be a positive integer."; return 1; }
+        FF_RUNS="$2"; shift 2 ;;
+      --runs=*)
+        local v="${1#--runs=}"
+        ff_is_positive_integer "$v" || { ff_error "Runs must be a positive integer."; return 1; }
+        FF_RUNS="$v"; shift ;;
+      -N=*)
+        local v="${1#-N=}"
+        ff_is_positive_integer "$v" || { ff_error "Runs must be a positive integer."; return 1; }
+        FF_RUNS="$v"; shift ;;
+      --timeout)
+        [[ $# -lt 2 ]] && { ff_error "--timeout requires a value"; return 1; }
+        ff_is_positive_integer "$2" || { ff_error "Timeout must be a positive integer."; return 1; }
+        FF_TIMEOUT="$2"; shift 2 ;;
+      --timeout=*)
+        local v="${1#--timeout=}"
+        ff_is_positive_integer "$v" || { ff_error "Timeout must be a positive integer."; return 1; }
+        FF_TIMEOUT="$v"; shift ;;
+      --quiet)
+        FF_QUIET=1; shift ;;
+      --)
+        shift; break ;;
+      -*)
+        ff_error "Unknown option: $1"; ff_usage >&2; return 1 ;;
+      *)
+        break ;;
+    esac
+  done
+
+  if (( $# > 0 )); then
+    FF_COMMAND=("$@")
+  fi
+}
+
+ff_detect_command() {
+  if [[ -f pom.xml ]]; then
+    FF_COMMAND=(mvn test)
+    ff_println "$FF_C_DIM" "Auto-detected: mvn test"
+  elif [[ -f package.json ]]; then
+    FF_COMMAND=(npm test)
+    ff_println "$FF_C_DIM" "Auto-detected: npm test"
+  else
+    ff_error "Cannot auto-detect test command. No pom.xml or package.json found."
+    ff_error "Pass a command explicitly: flakyfinder -- <command>"
+    return 1
+  fi
+}
+
+# Extract failed test names from output file.
+# Supports Maven surefire and vitest/jest style output.
+ff_extract_failures() {
+  local logfile="$1"
+
+  # Maven surefire: "Tests run: ..., Failures: N, Errors: N, ..., <<< FAILURE!"
+  # and lines like: "[ERROR] FooTest.testBar:42 ..."
+  # Best source: lines ending in "<<< FAILURE!" or "<<< ERROR!"
+  # e.g.: "[ERROR] com.example.FooTest#testBar  Time elapsed: ...  <<< FAILURE!"
+  grep -oE '[A-Za-z][A-Za-z0-9_.]+#[A-Za-z][A-Za-z0-9_]+' "$logfile" 2>/dev/null \
+    | sort -u \
+    | grep -v '^$' \
+    || true
+
+  # vitest/jest: lines like "✗ test name" or "× test name" or "FAIL src/foo.test.ts > name"
+  # Extract: "FAIL ... > <test name>" or "✗ <test name>"
+  grep -oP '(?<=FAIL\s)[^\n]+(?=\s*>)|(?<=✗\s)[^\n]+|(?<=×\s)[^\n]+' "$logfile" 2>/dev/null \
+    | sed 's/[[:space:]]*$//' \
+    | sort -u \
+    | grep -v '^$' \
+    || true
+}
+
+ff_handle_interrupt() {
+  FF_STOP_REQUESTED=1
+}
+
+ff_print_summary() {
+  local total_runs="${#FF_RUN_RESULTS[@]}"
+  local pass_count=0
+  local fail_count=0
+
+  for result in "${FF_RUN_RESULTS[@]}"; do
+    [[ "$result" == "pass" ]] && (( pass_count += 1 )) || (( fail_count += 1 ))
+  done
+
+  printf '\n'
+  ff_println "${FF_C_BOLD}${FF_C_CYAN}" "═══ FLAKYFINDER SUMMARY ════════════════════════════════"
+  printf '%s runs completed  ' "$total_runs"
+  ff_color "$FF_C_GREEN" "${pass_count} passed"
+  printf '  '
+  (( fail_count > 0 )) && ff_color "$FF_C_RED" "${fail_count} failed" || ff_color "$FF_C_DIM" "0 failed"
+  printf '\n'
+
+  if [[ ${#FF_FAILURES[@]} -eq 0 ]]; then
+    printf '\n'
+    ff_println "$FF_C_GREEN" "✓ No failures detected across all runs."
+    return 0
+  fi
+
+  local flaky_tests=()
+  local broken_tests=()
+
+  for test in "${!FF_FAILURES[@]}"; do
+    local failed_runs="${FF_FAILURES[$test]}"
+    local failed_count
+    failed_count=$(echo "$failed_runs" | wc -w | tr -d ' ')
+
+    if (( failed_count < total_runs )); then
+      flaky_tests+=("$test")
+    else
+      broken_tests+=("$test")
+    fi
+  done
+
+  if (( ${#flaky_tests[@]} > 0 )); then
+    printf '\n'
+    ff_println "${FF_C_BOLD}${FF_C_YELLOW}" "⚠  FLAKY TESTS (sometimes fail):"
+    for test in "${flaky_tests[@]}"; do
+      local failed_runs="${FF_FAILURES[$test]}"
+      local failed_count
+      failed_count=$(echo "$failed_runs" | wc -w | tr -d ' ')
+      printf '  '
+      ff_color "$FF_C_YELLOW" "⚠ $test"
+      printf '  '
+      ff_color "$FF_C_DIM" "failed ${failed_count}/${total_runs} runs  [run(s): ${failed_runs}]"
+      printf '\n'
+    done
+  fi
+
+  if (( ${#broken_tests[@]} > 0 )); then
+    printf '\n'
+    ff_println "${FF_C_BOLD}${FF_C_RED}" "✗  CONSISTENT FAILURES (failed every run):"
+    for test in "${broken_tests[@]}"; do
+      printf '  '
+      ff_color "$FF_C_RED" "✗ $test"
+      printf '\n'
+    done
+  fi
+
+  printf '\n'
+}
+
+ff_run_all() {
+  local start_epoch
+  start_epoch=$(date +%s)
+  local deadline=$(( start_epoch + FF_TIMEOUT * 60 ))
+  local logfile
+  logfile=$(mktemp /tmp/flakyfinder.XXXXXX)
+  # shellcheck disable=SC2064
+  trap "rm -f '$logfile'" EXIT
+
+  trap ff_handle_interrupt INT
+
+  ff_println "${FF_C_BOLD}" "Running: ${FF_COMMAND[*]}"
+  ff_color "$FF_C_DIM" "Limit: ${FF_RUNS} runs, ${FF_TIMEOUT} min timeout"
+  printf '\n\n'
+
+  local run=0
+  for (( run = 1; run <= FF_RUNS; run++ )); do
+    local now
+    now=$(date +%s)
+    if (( now >= deadline )); then
+      ff_println "$FF_C_YELLOW" "⏱  Timeout of ${FF_TIMEOUT} min reached after $((run - 1)) run(s)."
+      break
+    fi
+
+    if (( FF_STOP_REQUESTED )); then
+      ff_println "$FF_C_YELLOW" "Interrupted after $((run - 1)) run(s)."
+      break
+    fi
+
+    local run_start
+    run_start=$(date +%s)
+    printf '%s' "$(ff_color "${FF_C_BOLD}${FF_C_CYAN}" "Run ${run}/${FF_RUNS}") … "
+
+    local status=0
+    if (( FF_QUIET )); then
+      set +e
+      "${FF_COMMAND[@]}" >"$logfile" 2>&1
+      status=$?
+      set -e
+    else
+      set +e
+      "${FF_COMMAND[@]}" 2>&1 | tee "$logfile"
+      status=${PIPESTATUS[0]}
+      set -e
+    fi
+
+    local run_end elapsed
+    run_end=$(date +%s)
+    elapsed=$(( run_end - run_start ))
+
+    if (( status == 0 )); then
+      ff_println "$FF_C_GREEN" "✓ passed  (${elapsed}s)"
+      FF_RUN_RESULTS+=("pass")
+    else
+      ff_println "$FF_C_RED" "✗ failed  (${elapsed}s)"
+      FF_RUN_RESULTS+=("fail")
+
+      local failures
+      failures=$(ff_extract_failures "$logfile")
+      if [[ -n "$failures" ]]; then
+        while IFS= read -r test; do
+          [[ -z "$test" ]] && continue
+          if [[ -v FF_FAILURES["$test"] ]]; then
+            FF_FAILURES["$test"]+=" $run"
+          else
+            FF_FAILURES["$test"]="$run"
+          fi
+        done <<< "$failures"
+      else
+        # Fallback: no named tests extracted, record generic failure
+        local key="<unknown test> (exit ${status})"
+        if [[ -v FF_FAILURES["$key"] ]]; then
+          FF_FAILURES["$key"]+=" $run"
+        else
+          FF_FAILURES["$key"]="$run"
+        fi
+      fi
+    fi
+  done
+
+  trap - INT
+  ff_print_summary
+}
+
+parse_prereqs() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    FF_COLOR=0
+  elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    FF_COLOR=1
+  else
+    FF_COLOR=0
+  fi
+}
+
+run_main() {
+  parse_prereqs
+  parse_opts "$@" || return $?
+
+  if (( FF_SHOW_HELP )); then
+    ff_usage
+    return 0
+  fi
+
+  if (( ${#FF_COMMAND[@]} == 0 )); then
+    ff_detect_command || return $?
+  fi
+
+  ff_run_all
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi
