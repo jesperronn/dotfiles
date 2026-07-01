@@ -10,6 +10,14 @@ if [[ -n "$HOME" && ( "$CODEX_SANDBOX" == "true" || "$TERM" == "dumb" ) ]]; then
   export rvm_shell_arity="${rvm_shell_arity:-1}"
   export rvm_tar_command="${rvm_tar_command:-tar}"
 
+  # Keep agent/sandbox/non-interactive shells out of the real ~/.bash_history:
+  # without this they share HISTFILE with interactive terminals, and since
+  # histappend is never enabled here, exiting one of these shells overwrites
+  # (rather than appends to) the shared file. Cheap exports only — do not add
+  # starship/rvm-scripts here, that previously blocked agent tool calls.
+  export HISTFILE="${XDG_CACHE_HOME}/bash_history_agent"
+  shopt -s histappend
+
   source "$DOTFILES/source/00_dotfiles.sh"
   source "$DOTFILES/source/90_env_variables.sh"
   source "$DOTFILES/source/01_path.sh"
