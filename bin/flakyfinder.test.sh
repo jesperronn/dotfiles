@@ -42,6 +42,12 @@ test_quiet_flag() {
   assert_eq "1" "$FF_QUIET" "--quiet sets FF_QUIET"
 }
 
+test_quiet_short_flag() {
+  FF_QUIET=0; FF_COMMAND=()
+  parse_opts -q -- true
+  assert_eq "1" "$FF_QUIET" "-q sets FF_QUIET"
+}
+
 test_help_flag() {
   FF_SHOW_HELP=0; FF_COMMAND=()
   parse_opts --help
@@ -118,6 +124,7 @@ run_tests \
   test_runs_short_flag \
   test_timeout_flag \
   test_quiet_flag \
+  test_quiet_short_flag \
   test_help_flag \
   test_invalid_runs \
   test_detect_maven \

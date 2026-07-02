@@ -12,8 +12,8 @@
 # Options:
 #   --runs N, -N N      Max number of runs (default: 10)
 #   --timeout MINUTES   Max wall-clock minutes (default: 30)
-#   --quiet             Suppress per-run test output; print only run status lines
-#   -h, --help          Show this help and exit
+#   --quiet, -q        Suppress per-run test output; print only run status lines
+#   -h, --help         Show this help and exit
 #
 # Auto-detection (when no command given):
 #   pom.xml present     → mvn test
@@ -75,7 +75,7 @@ $(ff_color "${FF_C_BOLD}" "Usage:")
 $(ff_color "${FF_C_BOLD}" "Options:")
   $(ff_color "$FF_C_GREEN" "--runs N, -N N")     Max number of runs (default: 10)
   $(ff_color "$FF_C_GREEN" "--timeout MINUTES")  Max wall-clock minutes (default: 30)
-  $(ff_color "$FF_C_GREEN" "--quiet")            Suppress per-run test output
+  $(ff_color "$FF_C_GREEN" "--quiet, -q")        Suppress per-run test output
   $(ff_color "$FF_C_GREEN" "-h, --help")         Show this help and exit
 
 $(ff_color "${FF_C_BOLD}" "Auto-detection (no command given):")
@@ -123,7 +123,7 @@ parse_opts() {
         local v="${1#--timeout=}"
         ff_is_positive_integer "$v" || { ff_error "Timeout must be a positive integer."; return 1; }
         FF_TIMEOUT="$v"; shift ;;
-      --quiet)
+      --quiet|-q)
         FF_QUIET=1; shift ;;
       --)
         shift; break ;;
