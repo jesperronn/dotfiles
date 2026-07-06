@@ -1,0 +1,30 @@
+# copilot-leaderboard config
+# Linked to $HOME/.config/copilot-leaderboard.toml by the dotfiles setup.
+#
+# Each account becomes selectable through:
+#   copilot-leaderboard --only <name>
+#
+# Auth:
+# - token_from_1password_item: uses `op item get ... --fields label=token --reveal`
+# - token_from_env: reads a token directly from your environment
+
+[accounts.account_acme]
+label = "acme"
+api_path = "orgs/acme"
+archive_dir = "~/src/copilot-leaderboard-acme"
+token_from_1password_item = "GITHUB_COPILOT_TOKEN_ACME"
+# token_from_env = "GITHUB_COPILOT_TOKEN_ACME"
+
+[accounts.nine]
+label = "nine"
+api_path = "enterprises/nine"
+archive_dir = "~/src/copilot-leaderboard-nine"
+token_from_1password_item = "GITHUB_COPILOT_TOKEN_JRJ_NINE"
+# token_from_env = "GITHUB_COPILOT_TOKEN_JRJ_NINE"
+
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "~/src/copilot-leaderboard-stil"
+token_from_1password_item = "GITHUB_COPILOT_BUVM_STIL_USAGE"
+# token_from_env = "GITHUB_COPILOT_BUVM_STIL_USAGE"

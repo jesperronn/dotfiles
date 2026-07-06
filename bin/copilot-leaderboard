@@ -1,124 +1,200 @@
 #!/usr/bin/env node
-// copilot-leaderboard — archive GitHub Copilot per-user metrics, generate monthly leaderboard
-//
-// Docs:     https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics
-// Endpoint: https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest
-//
-// Archive layout:
-//   ~/src/copilot-leaderboard-{slug}/
-//     archive/YYYY-MM-DD.ndjson   raw per-user-day NDJSON fetched that day
-//     YYYY-MM-report.md           generated monthly leaderboard
-//
-// Metric per cell: user_initiated_interaction_count + code_acceptance_activity_count
-//
-// Usage:
-//   copilot-leaderboard (--stil | --nine | --all) [--month YYYY-MM] [--report-only] [--dry-run]
-//   copilot-leaderboard --stil --archive-dir DIR --report-only   (testing / manual override)
+// One-shot setup from the public dotfiles repo:
+//   curl -fsSL https://raw.githubusercontent.com/jesperronn/dotfiles/refs/heads/main/bin/copilot-leaderboard | node - --init
+// replace --init with --help/--update/ etc.
 
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-// ── Scoring constants ─────────────────────────────────────────────────────────
-
-// Each user_initiated_interaction_count counts as this many ai_credits for sort order.
-// Set to 1 until we have a better calibration. Adjust when real credit data covers
-// a full month so the two metrics can be compared on equal footing.
 const INTERACTION_CREDIT_MULTIPLIER = 1;
-
-// ── Layout constants ──────────────────────────────────────────────────────────
-
-// Minimum character width for date columns in leaderboard tables
 const DATE_COLUMN_MIN_WIDTH = 3;
+const DEFAULT_CONFIG_PATH = join(homedir(), '.config', 'copilot-leaderboard.toml');
 
-// ── Org config ────────────────────────────────────────────────────────────────
+const REQUIRED_ACCOUNT_KEYS = ['label', 'api_path', 'archive_dir'];
 
-const ORG_CONFIGS = {
-  stil: {
-    label:      'buvm-stil',
-    opItem:     'GITHUB_COPILOT_BUVM_STIL_USAGE',
-    apiPath:    'orgs/buvm-stil',
-    archiveDir: join(homedir(), 'src', 'copilot-leaderboard-stil'),
-  },
-  nine: {
-    label:      'nine',
-    opItem:     'GITHUB_COPILOT_TOKEN_JRJ_NINE',
-    apiPath:    'enterprises/nine',
-    archiveDir: join(homedir(), 'src', 'copilot-leaderboard-nine'),
-  },
-};
-
-// ── Argument parsing ──────────────────────────────────────────────────────────
-
-const argv = process.argv.slice(2);
-
-let doStil = false, doNine = false, skipFetch = true, dryRun = false;
-let month = null;
-let archiveDirOverride = null;
-let doBackfill = false;
-
-for (let i = 0; i < argv.length; i++) {
-  const a = argv[i];
-  if      (a === '--stil')         doStil = true;
-  else if (a === '--nine')         doNine = true;
-  else if (a === '--all')          { doStil = true; doNine = true; }
-  else if (a === '--update')       skipFetch = false;
-  else if (a === '--report-only')  skipFetch = true;   // kept as alias
-  else if (a === '--dry-run')      dryRun = true;
-  else if (a === '--month')        month = argv[++i];
-  else if (a === '--archive-dir')  archiveDirOverride = argv[++i];
-  else if (a === '--backfill')     { skipFetch = false; doBackfill = true; }
-  else if (a === '-h' || a === '--help') { printHelp(); process.exit(0); }
-  else { process.stderr.write(`Unknown option: ${a}\n`); process.exit(1); }
-}
-
-if (!doStil && !doNine) { printHelp(); process.exit(1); }
-
-if (doBackfill && !month) {
-  process.stderr.write('Error: --backfill requires --month YYYY-MM\n');
-  process.exit(1);
-}
-
-if (!month) {
-  const now = new Date();
-  month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function printHelp() {
+function printHelp(state) {
+  const available = formatAvailableAccounts(state.accounts);
+  const configStatus = state.configExists
+    ? state.configPath
+    : `${state.configPath} (missing; create with: copilot-leaderboard --init)`;
   process.stdout.write(`\
 Usage:
-  copilot-leaderboard (--stil | --nine | --all) [options]
+  copilot-leaderboard --only NAME[,NAME...] [options]
+  copilot-leaderboard --all [options]
+  copilot-leaderboard --init [--config PATH]
 
 Options:
-  --stil              Fetch/report for buvm-stil  (token: GITHUB_COPILOT_BUVM_STIL_USAGE)
-  --nine              Fetch/report for nine       (token: GITHUB_COPILOT_TOKEN_JRJ_NINE)
-  --all               Both orgs
-  --month YYYY-MM     Month to report (default: current month)
-  --update            Fetch fresh data from GitHub API (default: use existing archive)
-  --backfill          Fetch all days in --month via users-1-day endpoint (requires --month)
-  --archive-dir DIR   Override archive root directory (useful for testing)
-  --dry-run           Print API calls without executing
-  --help, -h          Show this help
+  --only NAMES        Account names from the config, comma-separated
+  --all               Run every configured account
+  --month YYYY-MM     Report month (default: current month)
+  --update            Fetch today's 28-day snapshot before reporting
+  --backfill          Fetch each day in --month before reporting
+  --report-only       Use cached archive data only (default)
+  --init              Write an example config
+  --config PATH       Config path (default: ${DEFAULT_CONFIG_PATH})
+  --archive-dir DIR   Override archive directory for one selected account
+  --dry-run           Show fetch/report targets without network calls
+  --help, -h          Show help
 
-Archive layout:
-  ~/src/copilot-leaderboard-{slug}/
-    archive/YYYY-MM-DD.ndjson   raw NDJSON snapshot fetched that day
-    YYYY-MM-report.md           generated monthly leaderboard
+Available accounts:
+  ${available}
 
-API reference:
-  https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics
+Config:
+  ${configStatus}
+
+Examples:
+  copilot-leaderboard --init
+  copilot-leaderboard --only ${available === '(none)' ? 'ACCOUNT,OTHER' : available.split(', ').slice(0, 2).join(',') || available} --month ${month}
+
+Config format:
+  [accounts.NAME] with label, api_path, archive_dir, and token_from_1password_item or token_from_env.
 `);
 }
 
-// ── Network helpers ───────────────────────────────────────────────────────────
+function expandHome(value) {
+  if (!value) return value;
+  if (value === '~') return homedir();
+  if (value.startsWith('~/')) return join(homedir(), value.slice(2));
+  return value;
+}
 
-function fetchToken(opItem) {
+function normalizeAccount(name, account) {
+  return {
+    ...account,
+    name,
+    archive_dir: expandHome(account.archive_dir),
+  };
+}
+
+function coerceTomlValue(rawValue) {
+  const value = rawValue.trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  throw new Error(`Unsupported TOML value: ${rawValue}`);
+}
+
+function parseConfigToml(content) {
+  const accounts = {};
+  let currentAccount = null;
+
+  for (const [index, rawLine] of content.split('\n').entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const section = line.match(/^\[accounts\.([A-Za-z0-9_-]+)\]$/);
+    if (section) {
+      currentAccount = section[1];
+      accounts[currentAccount] ??= {};
+      continue;
+    }
+
+    const pair = rawLine.match(/^\s*([A-Za-z0-9_-]+)\s*=\s*(.+?)\s*$/);
+    if (pair && currentAccount) {
+      accounts[currentAccount][pair[1]] = coerceTomlValue(pair[2]);
+      continue;
+    }
+
+    throw new Error(`Unsupported config line ${index + 1}: ${rawLine}`);
+  }
+
+  return accounts;
+}
+
+function defaultConfigTemplate() {
+  return `# copilot-leaderboard config
+# Copy this file to ${DEFAULT_CONFIG_PATH} or set COPILOT_LEADERBOARD_CONFIG.
+#
+# Each account becomes selectable through:
+#   copilot-leaderboard --only <name>
+#
+# Auth:
+# - token_from_1password_item: uses \`op item get ... --fields label=token --reveal\`
+# - token_from_env: reads a token directly from your environment
+
+[accounts.account_acme]
+label = "acme"
+api_path = "orgs/acme"
+archive_dir = "~/src/copilot-leaderboard-acme"
+token_from_1password_item = "GITHUB_COPILOT_TOKEN_ACME"
+# token_from_env = "GITHUB_COPILOT_TOKEN_ACME"
+
+`;
+}
+
+function validateAccounts(accounts, sourceLabel) {
+  for (const [name, account] of Object.entries(accounts)) {
+    for (const key of REQUIRED_ACCOUNT_KEYS) {
+      if (!account[key]) {
+        throw new Error(`Account '${name}' in ${sourceLabel} is missing '${key}'`);
+      }
+    }
+    if (!account.token_from_1password_item && !account.token_from_env) {
+      throw new Error(`Account '${name}' in ${sourceLabel} needs token_from_1password_item or token_from_env`);
+    }
+  }
+}
+
+function loadAccounts(configPath = DEFAULT_CONFIG_PATH) {
+  if (!existsSync(configPath)) {
+    return {
+      accounts: {},
+      configPath,
+      configExists: false,
+      sourceLabel: configPath,
+    };
+  }
+
+  const parsed = parseConfigToml(readFileSync(configPath, 'utf8'));
+  validateAccounts(parsed, configPath);
+
+  return {
+    accounts: Object.fromEntries(
+      Object.entries(parsed).map(([name, account]) => [name, normalizeAccount(name, account)])
+    ),
+    configPath,
+    configExists: true,
+    sourceLabel: configPath,
+  };
+}
+
+function initConfig(configPath = DEFAULT_CONFIG_PATH) {
+  if (existsSync(configPath)) {
+    throw new Error(`Config already exists: ${configPath}`);
+  }
+  mkdirSync(dirname(configPath), { recursive: true });
+  writeFileSync(configPath, defaultConfigTemplate());
+  return configPath;
+}
+
+function resolveSelectedAccounts(selectionNames, availableAccounts) {
+  const missing = selectionNames.filter(name => !availableAccounts[name]);
+  if (missing.length > 0) {
+    const available = formatAvailableAccounts(availableAccounts);
+    throw new Error(`Unknown account(s): ${missing.join(', ')}. Available: ${available}`);
+  }
+  return selectionNames.map(name => availableAccounts[name]);
+}
+
+function formatAvailableAccounts(accounts) {
+  const names = Object.keys(accounts).sort();
+  return names.length > 0 ? names.join(', ') : '(none)';
+}
+
+function fetchToken(account) {
+  if (account.token_from_env) {
+    const token = process.env[account.token_from_env]?.trim();
+    if (!token) throw new Error(`Environment variable '${account.token_from_env}' is empty`);
+    return token;
+  }
+
   const token = execSync(
-    `op item get "${opItem}" --fields label=token --reveal`,
+    `op item get "${account.token_from_1password_item}" --fields label=token --reveal`,
     { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }
   ).trim();
-  if (!token) throw new Error(`Empty token from 1Password item '${opItem}'`);
+  if (!token) throw new Error(`Empty token from 1Password item '${account.token_from_1password_item}'`);
   return token;
 }
 
@@ -139,7 +215,6 @@ function downloadAllNdjson(links) {
     .join('');
 }
 
-// Run up to `concurrency` async tasks at a time
 async function pMap(items, fn, concurrency) {
   const results = [];
   let i = 0;
@@ -153,9 +228,6 @@ async function pMap(items, fn, concurrency) {
   return results;
 }
 
-
-// ── Archive helpers ───────────────────────────────────────────────────────────
-
 function parseNdjson(content) {
   return content.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 }
@@ -164,7 +236,6 @@ function loadArchive(archiveDir) {
   const dir = join(archiveDir, 'archive');
   if (!existsSync(dir)) return [];
   const files = readdirSync(dir).filter(f => f.endsWith('.ndjson')).sort();
-  // later files overwrite earlier ones for same user+day (values are stable; this handles re-fetches)
   const seen = new Map();
   for (const file of files) {
     const records = parseNdjson(readFileSync(join(dir, file), 'utf8'));
@@ -173,13 +244,10 @@ function loadArchive(archiveDir) {
   return [...seen.values()];
 }
 
-// ── Report generation ─────────────────────────────────────────────────────────
-
-export function buildLeaderboard(records, month) {
+function buildLeaderboard(records, month) {
   const monthRecords = records.filter(r => r.day.startsWith(month));
   const days = [...new Set(monthRecords.map(r => r.day))].sort();
 
-  // user -> day -> { credits, interactions }
   const byUser = {};
   for (const r of monthRecords) {
     byUser[r.user_login] ??= {};
@@ -211,7 +279,7 @@ export function buildLeaderboard(records, month) {
   return { days, users, allDayTotals, grandCredits, grandInteractions, month };
 }
 
-export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
+function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   const { days, users, allDayTotals, grandCredits, grandInteractions, month } = leaderboard;
   const [year, mon] = month.split('-');
   const monthName = new Date(Number(year), Number(mon) - 1, 1)
@@ -221,48 +289,35 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   const avgInteractions = seatCount > 0 ? (grandInteractions / seatCount).toFixed(1) : '0';
   const stamp = generatedDate ?? new Date().toISOString().slice(0, 10);
 
-  // ANSI color codes
   const c = {
-    creditVivid: '\x1b[38;5;214m',     // primary: vivid bright orange
-    interactionVivid: '\x1b[38;5;45m', // secondary: bright cyan
-    creditDim: '\x1b[90m',             // bright black (dim on dark backgrounds)
-    divider: '\x1b[2m',                // dim (for dividers and separators)
+    creditVivid: '\x1b[38;5;214m',
+    interactionVivid: '\x1b[38;5;45m',
+    creditDim: '\x1b[90m',
+    divider: '\x1b[2m',
     reset: '\x1b[0m',
   };
 
-  const coloredNum = (num) => {
-    if (num === 0 || num === '0') {
-      return `${c.creditDim}${num}${c.reset}`;
-    }
-    return `${c.creditVivid}${num}${c.reset}`;
-  };
+  const coloredNum = (num) => num === 0 || num === '0'
+    ? `${c.creditDim}${num}${c.reset}`
+    : `${c.creditVivid}${num}${c.reset}`;
 
-  const coloredInteraction = (num) => {
-    if (num === 0 || num === '0') {
-      return `${c.creditDim}${num}${c.reset}`;
-    }
-    return `${c.interactionVivid}${num}${c.reset}`;
-  };
+  const coloredInteraction = (num) => num === 0 || num === '0'
+    ? `${c.creditDim}${num}${c.reset}`
+    : `${c.interactionVivid}${num}${c.reset}`;
 
-  // Format credits cell
   const fmtCredits = (v) => {
     if (!v || v.credits === 0) return v?.credits === 0 ? coloredNum('0') : '';
     return coloredNum(String(v.credits));
   };
 
-  // Format interactions cell
   const fmtInteractions = (v) => {
     if (!v || v.interactions === 0) return v?.interactions === 0 ? coloredInteraction('0') : '';
     return coloredInteraction(String(v.interactions));
   };
 
-  // day column headers: just day-of-month number, no leading zero
   const dayNums = days.map(d => String(parseInt(d.slice(8), 10)));
-
-  // For column width calculation, strip ANSI codes
   const stripAnsi = (str) => str.replace(/\x1b\[[0-9;]*m/g, '');
 
-  // Calculate column widths for a table format
   const calcColW = (fmtCellFn) => {
     const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
     return [
@@ -273,14 +328,13 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
         const widths = [
           h.length,
           stripAnsi(fmtCellFn(allDayTotals[d])).length,
-          ...users.map(u => stripAnsi(fmtCellFn(u.dayData[d])).length)
+          ...users.map(u => stripAnsi(fmtCellFn(u.dayData[d])).length),
         ];
         return Math.max(...widths);
       }),
     ];
   };
 
-  // Merge column widths from both tables and enforce minimum for day columns
   const colWCredits = calcColW(fmtCredits);
   const colWInteractions = calcColW(fmtInteractions);
   const colW = [
@@ -289,14 +343,13 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
     ...dayNums.map((_, i) => Math.max(colWCredits[i + 2] ?? 0, colWInteractions[i + 2] ?? 0, DATE_COLUMN_MIN_WIDTH)),
   ];
 
-  // Build both tables with same column widths
   const buildTable = (fmtCellFn, title) => {
-    const pad  = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length)); // account for ANSI codes
-    const mkRow = cells => '| ' + cells.map((c, i) => pad(c, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
-    const mkSep = ()    => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
+    const pad = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length));
+    const mkRow = cells => '| ' + cells.map((cell, i) => pad(cell, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
+    const mkSep = () => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
 
     const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
-    const rows = [
+    return [
       `### ${title}`,
       '',
       mkRow(['User', 'Month total', ...dayNums]),
@@ -308,10 +361,9 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
         ...days.map(d => fmtCellFn(u.dayData[d])),
       ])),
     ];
-    return rows;
   };
 
-  const lines = [
+  return [
     `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
     '',
     `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avgCredits} credits / ${avgInteractions} interactions_`,
@@ -327,36 +379,148 @@ export function renderMarkdown(leaderboard, orgLabel, generatedDate) {
     '',
     `_generated ${stamp}_`,
     '',
-  ];
-
-  return lines.join('\n');
+  ].join('\n');
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+const argv = process.argv.slice(2);
+const explicitSelections = [];
 
-async function runForOrg(key) {
-  const cfg = { ...ORG_CONFIGS[key] };
-  if (archiveDirOverride) cfg.archiveDir = archiveDirOverride;
+let skipFetch = true;
+let dryRun = false;
+let month = null;
+let archiveDirOverride = null;
+let doBackfill = false;
+let doInit = false;
+let configPath = process.env.COPILOT_LEADERBOARD_CONFIG || DEFAULT_CONFIG_PATH;
+let wantHelp = false;
+let includeAllAccounts = false;
 
-  const archivePath = join(cfg.archiveDir, 'archive');
+function readOptionValue(optionName, index) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith('--')) {
+    process.stderr.write(`Error: ${optionName} requires a value\n`);
+    process.exit(1);
+  }
+  return value;
+}
+
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === '--all')          includeAllAccounts = true;
+  else if (a === '--only')         explicitSelections.push(...readOptionValue(a, i++).split(',').map(v => v.trim()).filter(Boolean));
+  else if (a === '--init')         doInit = true;
+  else if (a === '--config')       configPath = readOptionValue(a, i++);
+  else if (a === '--update')       skipFetch = false;
+  else if (a === '--report-only')  skipFetch = true;
+  else if (a === '--dry-run')      dryRun = true;
+  else if (a === '--month')        month = readOptionValue(a, i++);
+  else if (a === '--archive-dir')  archiveDirOverride = readOptionValue(a, i++);
+  else if (a === '--backfill')     { skipFetch = false; doBackfill = true; }
+  else if (a === '-h' || a === '--help') wantHelp = true;
+  else { process.stderr.write(`Unknown option: ${a}\n`); process.exit(1); }
+}
+
+if (!month) {
+  const now = new Date();
+  month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+if (doBackfill && !month) {
+  process.stderr.write('Error: --backfill requires --month YYYY-MM\n');
+  process.exit(1);
+}
+
+if (doInit && !wantHelp) {
+  try {
+    const writtenPath = initConfig(configPath);
+    process.stdout.write(`Wrote ${writtenPath}\n`);
+    process.stdout.write('Added example accounts. Edit this file with your own account names, API paths, archive dirs, and token source.\n');
+    process.stdout.write('Then run: copilot-leaderboard --help\n');
+    process.exit(0);
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  }
+}
+
+let accountState;
+try {
+  accountState = loadAccounts(configPath);
+} catch (error) {
+  process.stderr.write(`${error.message}\n`);
+  process.exit(1);
+}
+
+const availableNames = Object.keys(accountState.accounts).sort();
+
+if (wantHelp) {
+  printHelp(accountState);
+  process.exit(0);
+}
+
+if (!accountState.configExists) {
+  process.stderr.write(`Config not found: ${accountState.configPath}\n`);
+  process.stderr.write(`Create a starter config with: copilot-leaderboard --init\n`);
+  process.exit(1);
+}
+
+const selectionNames = includeAllAccounts
+  ? availableNames
+  : [...new Set(explicitSelections)];
+
+if (selectionNames.length === 0) {
+  printHelp(accountState);
+  process.exit(1);
+}
+
+let selectedAccounts;
+try {
+  selectedAccounts = resolveSelectedAccounts(selectionNames, accountState.accounts);
+} catch (error) {
+  process.stderr.write(`${error.message}\n`);
+  process.exit(1);
+}
+
+if (availableNames.length === 0) {
+  process.stderr.write(`No accounts configured in ${accountState.configPath}.\n`);
+  process.stderr.write(`Create a starter config with: copilot-leaderboard --init\n`);
+  process.exit(1);
+}
+
+if (archiveDirOverride && selectedAccounts.length !== 1) {
+  process.stderr.write('Error: --archive-dir only supports a single selected account\n');
+  process.exit(1);
+}
+
+async function runForAccount(account) {
+  const cfg = { ...account };
+  if (archiveDirOverride) cfg.archive_dir = archiveDirOverride;
+
+  process.stderr.write(`Using config: ${accountState.configPath}\n`);
+  process.stderr.write(`Using account: ${cfg.name} (${cfg.label})\n`);
+
+  const archivePath = join(cfg.archive_dir, 'archive');
   const today = new Date().toISOString().slice(0, 10);
   const archiveFile = join(archivePath, `${today}.ndjson`);
-  const apiUrl = `https://api.github.com/${cfg.apiPath}/copilot/metrics/reports/users-28-day/latest`;
+  const apiUrl = `https://api.github.com/${cfg.api_path}/copilot/metrics/reports/users-28-day/latest`;
 
   if (dryRun) {
     process.stderr.write(`[dry-run] Would fetch: ${apiUrl}\n`);
     process.stderr.write(`[dry-run] Would save to: ${archiveFile}\n`);
-    process.stderr.write(`[dry-run] Would write: ${join(cfg.archiveDir, `${month}-report.md`)}\n`);
+    process.stderr.write(`[dry-run] Would write: ${join(cfg.archive_dir, `${month}-report.md`)}\n`);
     return;
   }
 
   if (!skipFetch) {
-    process.stderr.write(`Fetching token from 1Password (${cfg.opItem})...\n`);
-    const token = fetchToken(cfg.opItem);
+    if (cfg.token_from_env) {
+      process.stderr.write(`Reading token from env (${cfg.token_from_env})...\n`);
+    } else {
+      process.stderr.write(`Fetching token from 1Password (${cfg.token_from_1password_item})...\n`);
+    }
+    const token = fetchToken(cfg);
     mkdirSync(archivePath, { recursive: true });
 
     if (doBackfill) {
-      // Build list of dates for the entire month
       const [year, mon] = month.split('-');
       const numDays = new Date(Number(year), Number(mon), 0).getDate();
       const dates = [];
@@ -371,7 +535,7 @@ async function runForOrg(key) {
         let raw;
         try {
           raw = execSync(
-            `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "https://api.github.com/${cfg.apiPath}/copilot/metrics/reports/users-1-day?day=${day}"`,
+            `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "https://api.github.com/${cfg.api_path}/copilot/metrics/reports/users-1-day?day=${day}"`,
             { encoding: 'utf8', maxBuffer: 1024 * 1024 }
           );
           writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
@@ -383,18 +547,17 @@ async function runForOrg(key) {
           const ndjson = downloadAllNdjson(meta.download_links);
           writeFileSync(join(archivePath, `${day}-1day.ndjson`), ndjson);
           process.stderr.write(`  ✓ ${day}\n`);
-        } catch (e) {
+        } catch (error) {
           if (raw !== undefined) writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
-          const detail = raw === '' ? 'empty response' : e.message.split('\n')[0];
+          const detail = raw === '' ? 'empty response' : error.message.split('\n')[0];
           process.stderr.write(`  - ${day} (${detail})\n`);
         }
       };
 
       await pMap(missing, fetchDay, 1);
     } else {
-      // Regular --update: fetch rolling 28-day snapshot
       process.stderr.write(`GET ${apiUrl}\n`);
-      const { raw: metaRaw, json: meta } = fetchMeta(token, cfg.apiPath);
+      const { raw: metaRaw, json: meta } = fetchMeta(token, cfg.api_path);
       writeFileSync(join(archivePath, `${today}-meta.json`), metaRaw);
       const linkCount = meta.download_links.length;
       process.stderr.write(`Downloading ${linkCount} NDJSON shard(s)...\n`);
@@ -404,22 +567,22 @@ async function runForOrg(key) {
     }
   }
 
-  const records = loadArchive(cfg.archiveDir);
+  const records = loadArchive(cfg.archive_dir);
   if (records.length === 0) {
-    process.stderr.write(`No archive data found in ${cfg.archiveDir}/archive/\n`);
+    process.stderr.write(`No archive data found in ${cfg.archive_dir}/archive/\n`);
     process.exit(1);
   }
 
   const leaderboard = buildLeaderboard(records, month);
   const markdown = renderMarkdown(leaderboard, cfg.label);
 
-  mkdirSync(cfg.archiveDir, { recursive: true });
-  const reportFile = join(cfg.archiveDir, `${month}-report.md`);
+  mkdirSync(cfg.archive_dir, { recursive: true });
+  const reportFile = join(cfg.archive_dir, `${month}-report.md`);
   writeFileSync(reportFile, markdown);
   process.stdout.write(markdown + '\n');
   process.stderr.write(`\nReport saved → ${reportFile}\n`);
 
-  const self = `copilot-leaderboard --${key}`;
+  const self = `copilot-leaderboard --only ${cfg.name}`;
   process.stderr.write('\nNext steps:\n');
   if (skipFetch) {
     process.stderr.write(`  ${self} --update                      # fetch today's 28-day snapshot\n`);
@@ -433,5 +596,6 @@ async function runForOrg(key) {
   }
 }
 
-if (doStil) await runForOrg('stil');
-if (doNine) await runForOrg('nine');
+for (const account of selectedAccounts) {
+  await runForAccount(account);
+}
