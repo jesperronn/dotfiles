@@ -1,4 +1,35 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# Purpose:
+#   Bootstrap dotfiles repository — clones, copies, links, and initializes
+#   a macOS/Linux environment.
+#
+# Usage:
+#   bin/dotfiles [source | restart] [--copy | --link | --init]
+#
+# Modes:
+#   full         Run everything (copy + link + init). Default when run directly.
+#   source       Define functions and return (used by source/00_dotfiles.sh).
+#
+# Options:
+#    --copy        Run only the copy step.
+#    --link        Run only the link steps (link-dir and link-file).
+#    --init        Run only the init scripts (interactive picker from caches/init/).
+#   restart       Reset sudo timestamp and re-run dotfiles.
+#    -h, --help    Show this help and exit.
+#
+# Environment:
+#   DOTFILES              Overrides repo root (default: ~/src/dotfiles).
+#   prompt_delay          Auto-continue delay in seconds (5 first run, 15 otherwise).
+#   DOTFILES_SCRIPT_RUNNING  Internal flag, set by the script itself.
+#
+# Dependencies:
+#   git, sudo, bash >= 4, diff
+#
+# Notes:
+#   Original author: "Cowboy" Ben Alman (MIT).
+#   sudo keep-alive loop only runs in full mode.
 github_user=jesperronn
 github_project=cowboy-dotfiles
 [[ "$1" == "source" ]] || \
@@ -381,8 +412,25 @@ function link_dir_do() {
 
 # Link individual files, including nested files, without replacing parent directories.
 function link_file_header() { e_header "Linking nested files into home directory"; }
+function link_file_is_managed() {
+  local path="$1"
+  local name=""
+
+  name="$(basename "$path")"
+  case "$name" in
+    *.tmp|*.tmp.*|*.swp|*.swo|*~)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
 function link_file_files() {
-  find "$DOTFILES/link-file" -type f | sort
+  find "$DOTFILES/link-file" -type f | while IFS= read -r path; do
+    if link_file_is_managed "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done | sort
 }
 function link_file_base() {
   echo "${1#"$DOTFILES/link-file/"}"
