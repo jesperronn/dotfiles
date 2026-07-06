@@ -29,3 +29,4 @@ link-dir/.pi/agent/sessions/
 link-dir/.config/kilo/node_modules/
 link-dir/.config/kilo/package-lock.json
 link-dir/.config/kilo/package.json
+link-file/.claude.json.tmp.*
