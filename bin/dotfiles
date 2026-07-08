@@ -396,8 +396,24 @@ function copy_do() {
 
 # Link directories.
 function link_dir_header() { e_header "Linking directories into home directory"; }
+function link_dir_is_managed() {
+  local name
+
+  name="$(basename "$1")"
+  case "$name" in
+    .aider|.cave|.claude|.cline|.codexbar|.config|.cursor|.lmstudio|.obsidian-wiki|.pi)
+      return 1
+      ;;
+  esac
+
+  return 0
+}
 function link_dir_files() {
-  find "$DOTFILES/link-dir" -mindepth 1 -maxdepth 1 -type d | sort
+  find "$DOTFILES/link-dir" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r path; do
+    if link_dir_is_managed "$path"; then
+      printf '%s\n' "$path"
+    fi
+  done | sort
 }
 function link_dir_base() {
   echo "${1#"$DOTFILES/link-dir/"}"
@@ -410,7 +426,7 @@ function link_dir_do() {
   ln -sf "${2#"$HOME"/}" ~/
 }
 
-# Link individual files, including nested files, without replacing parent directories.
+# Link individual files, including nested files, without replacing unmanaged parent directories.
 function link_file_header() { e_header "Linking nested files into home directory"; }
 function link_file_is_managed() {
   local path="$1"
@@ -436,12 +452,69 @@ function link_file_base() {
   echo "${1#"$DOTFILES/link-file/"}"
 }
 function link_file_test() {
-  [[ "$1" -ef "$2" ]] && echo "same file"
+  if [[ "$1" -ef "$2" ]] && ! link_file_has_managed_parent_link_dir "$2"; then
+    echo "same file"
+  fi
+}
+function link_file_parent_is_managed_link_dir() {
+  local path="$1"
+  local target
+
+  [[ -L "$path" ]] || return 1
+  target="$(readlink "$path")"
+  case "$target" in
+    "$DOTFILES/link-dir"|"$DOTFILES/link-dir/"*|"${DOTFILES#"$HOME"/}/link-dir"|"${DOTFILES#"$HOME"/}/link-dir/"*)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+function link_file_has_managed_parent_link_dir() {
+  local dest="$1"
+  local dest_dir
+  local rel_path
+  local path="$HOME"
+  local part
+
+  dest_dir="$(dirname "$dest")"
+  rel_path="${dest_dir#"$HOME"/}"
+  IFS=/ read -r -a parts <<< "$rel_path"
+  for part in "${parts[@]}"; do
+    [[ "$part" ]] || continue
+    path="$path/$part"
+    if link_file_parent_is_managed_link_dir "$path"; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+function link_file_prepare_parent_dirs() {
+  local dest_dir="$1"
+  local rel_path="${dest_dir#"$HOME"/}"
+  local path="$HOME"
+  local part backup_dest
+
+  IFS=/ read -r -a parts <<< "$rel_path"
+  for part in "${parts[@]}"; do
+    [[ "$part" ]] || continue
+    path="$path/$part"
+    if link_file_parent_is_managed_link_dir "$path"; then
+      e_arrow "Backing up managed directory link ~/${path#"$HOME"/}."
+      backup=1
+      [[ -e "$backup_dir" ]] || mkdir -p "$backup_dir"
+      backup_dest="$backup_dir/${path#"$HOME"/}"
+      mkdir -p "$(dirname "$backup_dest")"
+      mv "$path" "$backup_dest"
+    fi
+    [[ -d "$path" ]] || mkdir "$path"
+  done
 }
 function link_file_do() {
   local dest="$HOME/$1"
   e_success "Linking ~/$1."
-  mkdir -p "$(dirname "$dest")"
+  link_file_prepare_parent_dirs "$(dirname "$dest")"
   ln -sf "$2" "$dest"
 }
 
