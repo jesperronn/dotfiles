@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
-
-# Check if Git is explicitly requesting a signing operation.
+# shellcheck shell=bash
+#
+# Purpose:
+#   Git GPG signing wrapper that checks the gpg-agent cache before executing
+#   signing commands. Prevents Cline/external tools from hanging on a missing
+#   passphrase by aborting early when the cache is empty.
+#
+# Usage:
+#   git gpg-wrapper <git-gpg-args...>
+#   # Called transparently by git via:
+#   #   git config gpg.x509.program <path-to-this-script>
+#   #   git config gpg.ssh.program  <path-to-this-script>
+#
+# How it works:
+#   1. Detects if git is requesting a signing operation (--detach-sign, --clearsign, --sign).
+#   2. If NOT signing: bypasses all cache checks and passes through to GPG immediately.
+#   3. If signing: checks git config custom.gpgkeygrip, then checks gpg-agent cache.
+#   4. If cache is empty: aborts with instructions to sign interactively first.
+#   5. If cache has the key: executes GPG with --batch --no-tty.
+#
+# Configuration (git config):
+#   custom.gpgkeygrip     Required — find with: gpg --list-secret-keys --with-keygrip
+#
+# Dependencies:
+#   git, gpg
+#
+# Notes:
+#   This script should be configured as gpg.x509.program and/or gpg.ssh.program
+#   in git config so that git calls it transparently for signing operations.
 # Git typically uses --detach-sign (-b), --clearsign, or --sign (-s) when making a commit.
 SHOULD_SIGN=false
 for arg in "$@"; do

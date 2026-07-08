@@ -1,5 +1,30 @@
 #!/usr/bin/env node
-// coverup — find JaCoCo XML files and report instruction/branch coverage
+//
+// Purpose:
+//   Find JaCoCo XML coverage reports in a project tree and print a coverage
+//   table (instruction/branch) sorted by worst coverage first.
+//
+// Usage:
+//   bin/coverup [OPTIONS] [-- <path-filter>]
+//
+// Options:
+//   --sort percentage    Sort by coverage % ascending (worst first).
+//   --sort lines         Sort by missed instruction count descending.
+//   --sort branches      Sort by missed branch count descending.
+//   --sort total         Sort by missed lines + branches descending [default].
+//   --root <dir>         Root directory to search (default: cwd).
+//   --verbose, -v        Show all files including 100% covered; show debug info.
+//   --help, -h           Show this help and exit.
+//
+// Arguments:
+//   -- <path-filter>     Only show source files whose path contains <path-filter>.
+//
+// Output:
+//   Prints a table: FILE  COV%  LINES  BRANCHES, plus a summary line.
+//   With --verbose: also lists fully-covered files and all jacoco.xml found.
+//
+// Notes:
+//   Skips node_modules/ and .git/ directories during scan.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';

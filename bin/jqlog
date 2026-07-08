@@ -1,6 +1,28 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# Purpose:
+#   Format a JSON log file or stream via jq, extracting level, sequence,
+#   message, stack trace, and timestamp fields into aligned columns.
+#
+# Usage:
+#   bin/jqlog <file>           Read logs from a file.
+#   echo "..." | bin/jqlog     Read logs from stdin.
+#
+# Fields extracted (space-delimited):
+#   .level  .sequence .message .stackTrace ."@timestamp"
+#
+# Environment:
+#   NO_COLOR              Not used (jqlog does not produce colors).
+#
+# Dependencies:
+#   jq
+#
+# Notes:
+#   If jq fails to parse a line, it is silently skipped (use stderr for errors).
+#   If no argument is given and stdin is not a terminal, it reads from stdin.
 
-# 
+#
 
 jqlog() {
   JQ_FLAGS=("--raw-output" "--raw-output" "-a" "$@")

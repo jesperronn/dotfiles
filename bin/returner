@@ -1,6 +1,25 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-
+#
+# Purpose:
+#   Exit with a specific shell status code and optionally print a message.
+#   Useful in scripts where you need to return a non-zero code with context.
+#
+# Usage:
+#   bin/returner <exit-code> [-m MESSAGE | --message=MESSAGE]
+#
+# Options:
+#   -m MESSAGE, --message=MESSAGE   Print a message before returning.
+#   -h, --help                      Show this help and exit.
+#
+# Arguments:
+#   exit-code    Integer between 0 and 255.
+#
+# Environment:
+#   NO_COLOR              Disable colored output.
+#
+# Notes:
+#   Exit codes are validated as unsigned integers in range 0..255.
 set -euo pipefail
 
 RETURNER_COLOR_ENABLED=0

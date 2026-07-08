@@ -4,6 +4,24 @@
 set -euo pipefail
 
 # ── Global flags and cached state ──────────────────────────────────────
+#
+# Purpose:
+#   Interactive git worktree manager using fzf. Lists existing worktrees,
+#   lets you select one to delete, or press Ctrl-A to create a new one.
+#
+# Usage:
+#   bin/gwt
+#
+# Interactions:
+#   fzf worktree picker   Select a worktree to delete.
+#   Ctrl-A                Create a new worktree (auto-generated name).
+#   -h, --help            Show this help and exit.
+#
+# Notes:
+#   - Must be run inside (or below) a git repository.
+#   - Worktrees are created at repo_root/../<repo_name>-wt<N>.
+#   - After creating a worktree, a 3-second countdown lets you cd into it (press y).
+#   - fzf is required for interactive mode.
 
 GWT_COLOR_ENABLED=0
 GWT_VERBOSE=0

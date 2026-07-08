@@ -5,6 +5,45 @@ set -u
 
 SCRIPT_NAME="$(basename "$0")"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Purpose:
+#   Diagnose and fix Podman VM issues: start/stop machines, check health,
+#   fix socket mounts, resolve clock drift, and set port-443 sysctl.
+#
+# Usage:
+#   bin/podman_troubleshoot [OPTIONS] [image_name]
+#
+# Options:
+#       --fix              Prompt before each recovery step and apply fixes.
+#       --force            Skip prompts when --fix is set.
+#       --verbose          Show progress for long-running checks.
+#       --log-health       Log health check failures to a file.
+#       --log-emergency    Log emergency failures.
+#     -h, --help           Show this help and exit.
+#
+# Arguments:
+#   image_name       Optional image name to test pull (e.g. postgres:18.3-alpine).
+#                    If omitted, only system/registry checks run.
+#
+# Environment:
+#   NO_COLOR              Disables color output.
+#   PODMAN_TROUBLESHOOT_START_TIMEOUT_SECONDS
+#                         Seconds to wait for podman machine start (default: 90).
+#   PODMAN_TROUBLESHOOT_VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS
+#                         Timeout for VM registry IP probe (default: 30).
+#   PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS
+#                         Timeout for podman ps checks (default: 30).
+#   PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SECONDS
+#                         Allowed clock drift before reporting (default: 10).
+#
+# Dependencies:
+#   podman, jq, bash >= 4
+#
+# Notes:
+#   If no image is provided, only system and registry checks are run.
+#   --fix prompts before each recovery step unless --force is also passed.
+#   For the intended rootless setup and docker.sock model, see docs/podman-rootless-plan.md.
+#   Edit run_main() to comment checks in or out as needed.
 IMAGE_NAME=""
 FIX_MODE=0
 FORCE_MODE=0
