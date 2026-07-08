@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-
+#
+# Purpose:
+#   Run a command repeatedly until it fails, is stopped, or reaches a count limit.
+#   Useful for watching builds, pinging endpoints, or replaying flaky commands.
+#
+# Usage:
+#   bin/looper [OPTIONS] COMMAND [ARGS...]
+#
+# Options:
+#   -n COUNT, --count=COUNT   Number of runs to attempt. Infinite by default.
+#   -h, --help                Show this help and exit.
+#
+# Signals:
+#   CTRL-C                    Stop after the current iteration (exit code 130).
+#
+# Environment:
+#   NO_COLOR                  Disable colored output.
+#
+# Notes:
+#   Each iteration prints the command with its iteration number (green=success, red=failure).
+#   The loop breaks on non-zero exit or when the count limit is reached.
 set -euo pipefail
 
 LOOPER_COLOR_ENABLED=0

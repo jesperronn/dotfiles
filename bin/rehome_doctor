@@ -4,7 +4,35 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-REHOME_REPO_ROOT="${REHOME_REPO_ROOT:-$ROOT_DIR}"
+#
+# Purpose:
+#   Scan ~/ (or another directory) for files and folders not managed by the
+#   dotfiles repo. Classifies items as: managed (symlink into repo or copy/ item),
+#   candidate (real file/dir, not yet managed), other (symlink to elsewhere),
+#   or skipped (system/junk items). Supports interactive review via fzf.
+#
+# Usage:
+#   bin/rehome_doctor [OPTIONS]
+#
+# Options:
+#   -a, --all                Include system/junk items normally skipped.
+#   -i, --interactive        Pick candidates via fzf and rehome selected items.
+#   -d PATH, --dir PATH      Scan this directory instead of ~.
+#   -r PATH, --repo-root PATH  Repo root (default: directory containing this script).
+#   -h, --help               Show this help and exit.
+#
+# Symbols in output:
+#   ✓  Managed   — symlink pointing into this repo
+#   ?  Candidate — real file/dir, not yet managed
+#   →  Other     — symlink pointing elsewhere
+#   -  Skipped   — system/junk item (use --all to see)
+#
+# Environment:
+#   NO_COLOR              Disable colored output.
+#   REHOME_REPO_ROOT      Override repo root path.
+#
+# Dependencies:
+#   fzf (required for --interactive mode)
 
 SHOW_ALL=0
 INTERACTIVE=0

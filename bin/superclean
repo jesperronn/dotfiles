@@ -1,9 +1,53 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-
+#
+# Purpose:
+#   Aggressive developer-machine cleanup: finds junk apps, caches, logs,
+#   old gems, containers, and more. Supports dry-run, interactive review,
+#   and per-group filtering (node, java, ruby, go, brew, apps, logs, etc.).
+#
+# Usage:
+#   bin/superclean [OPTIONS]
+#
+# Options:
+#  -n, --dry-run       Show what would be cleaned with sizes, no changes.
+#      --verbose        Print extra progress details.
+#  -i, --interactive    Review deep-scan folders with fzf before deletion.
+#      --aggressive     Enable slower/riskier cleanup steps.
+#      --color          Enable colored output (default).
+#      --no-color       Disable colored output.
+#      --sudo           Allow sudo for sudo-required cleanup tasks (default).
+#      --no-sudo        Skip cleanup tasks that require sudo.
+#      --node, --no-node
+#      --java, --no-java
+#      --ruby, --no-ruby
+#      --go, --no-go
+#      --brew, --no-brew
+#      --apps, --no-apps
+#      --logs, --no-logs
+#      --hooks, --no-hooks
+#      --containers, --no-containers
+#      --downloads, --no-downloads
+#      --desktop, --no-desktop
+#      --documents, --no-documents
+#      --ollama, --no-ollama
+#      Group flags: each group is on by default; use --no-<group> to exclude.
+#  -h, --help           Show this help and exit.
+#
+# Environment:
+#   NO_COLOR            When set, disables colored output.
+#
+# Dependencies:
+#   fzf (for --interactive mode), sudo (for --sudo group), jq
+#
+# Notes:
+#   Safe groups (never deletive): node, ruby, brew, ollama.
+#   Destructive groups: containers, logs, hooks, desktop, documents, downloads.
+#   Aggressive adds: .gradle, .ivy2, .m2, deep cache scans.
 set -euo pipefail
 
 SUPER_CLEAN_DRY_RUN=0
+export C_RESET=''
 SUPER_CLEAN_VERBOSE=0
 SUPER_CLEAN_INTERACTIVE=0
 SUPER_CLEAN_AGGRESSIVE=0
