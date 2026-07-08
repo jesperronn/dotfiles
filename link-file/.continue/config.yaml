@@ -5,9 +5,9 @@ version: 1.1.0
 schema: v1
 
 models:
-  - name: "Qwen 3.6 (35B BF16)"
+  - name: "Qwen 3.6 (35B MXFP8)"
     provider: ollama
-    model: "qwen3.6:35b-a3b-coding-bf16"
+    model: "qwen3.6:35b-a3b-coding-mxfp8"
     roles: [chat, edit]
     capabilities: [tool_use]
     # NEW logic: Use System Message Tools to bypass Ollama's native JSON parser

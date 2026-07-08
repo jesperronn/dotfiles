@@ -78,6 +78,11 @@
     "tabStripFullStripStyle": false,
     "openDownloadsPaneOnStartNewModelDownload": false
   },
+  "cloudInference": {
+    "billingContext": {
+      "type": "personal"
+    }
+  },
   "configPresetInclusiveness": {
     "speculativeDecoding": false
   },
@@ -91,20 +96,22 @@
     "customThresholdBytes": 4294967296,
     "alwaysAllowLoadAnyway": false
   },
-  "dismissedModals": [],
+  "dismissedModals": [
+    "Mobile Onboarding"
+  ],
   "dismissedConversationSnackbars": [],
   "pre030ChatsMigrated": 3,
   "appPostUpdateNotificationPending": false,
   "promptWhenCommittingUnsavedChangesWithNewFields": false,
   "enableLocalService": false,
-  "enableEngineProtocolRuntime": false,
+  "useLlamaCppEngineProtocolRuntime2": false,
   "cliInstalled": false,
   "useHFProxy": true,
   "hfSearchToken": "",
   "hfDownloadToken": "",
   "defaultContextLength": {
     "type": "max",
-    "value": 4096
+    "value": 32768
   },
   "appIntroAcceptedForBuild": null
 }

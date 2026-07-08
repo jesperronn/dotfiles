@@ -3,7 +3,12 @@
     "commit": "",
     "pr": ""
   },
-  "model": "sonnet",
+  "permissions": {
+    "allow": [
+      "Bash"
+    ]
+  },
+  "model": "opus",
   "alwaysThinkingEnabled": true,
   "effortLevel": "medium",
   "skipWorkflowUsageWarning": true,

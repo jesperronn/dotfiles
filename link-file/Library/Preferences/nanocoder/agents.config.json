@@ -1,0 +1,12 @@
+{
+	  "nanocoder": {
+    "providers": [
+{
+	"name": "LM Studio",
+	"baseUrl": "http://localhost:1234/v1",
+	"models": ["google/gemma-4-e4b", "qwen/qwen3.5-9b", "qwen/qwen3-coder-30b", "qwen/qwen3.6-35b-a3b"],
+	"context-window": 128000	
+}
+    ]
+}
+}

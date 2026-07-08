@@ -10,6 +10,9 @@
 # CMD + Shift + , to reload
 # Slightly brighten ANSI green for better contrast on dark backgrounds.
 palette = 2=#8ecf7a
+# Tokyo Night selection colors — replaces the jarring default inversion
+selection-background = #3e4451
+selection-foreground = #ffffff
 # Temporary test: make ANSI green obviously pink.
 # palette = 2=#ff5fa2
 

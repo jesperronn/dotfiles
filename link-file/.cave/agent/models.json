@@ -1,0 +1,75 @@
+{
+  "providers": {
+    "lmstudio": {
+      "baseUrl": "http://127.0.0.1:1234/v1",
+      "api": "openai-completions",
+      "apiKey": "lm-studio",
+      "models": [
+        {
+          "id": "google/gemma-4-26b-a4b-qat"
+        },
+        {
+          "id": "microsoft/phi-4"
+        },
+        {
+          "id": "mistralai/devstral-small-2-2512"
+        },
+        {
+          "id": "mistralai/mistral-7b-instruct-v0.3"
+        },
+        {
+          "id": "mistralai/mistral-nemo-instruct-2407"
+        },
+        {
+          "id": "qwen/qwen2.5-coder-7b"
+        },
+        {
+          "id": "qwen/qwen3-coder-30b"
+        },
+        {
+          "id": "qwen/qwen3-coder-next"
+        },
+        {
+          "id": "qwen/qwen3.5-9b"
+        },
+        {
+          "id": "qwen/qwen3.6-35b-a3b"
+        }
+      ]
+    },
+    "ollama": {
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        {
+          "id": "gemma4-claude:latest"
+        },
+        {
+          "id": "gemma4:26b"
+        },
+        {
+          "id": "gemma4:26b-mlx"
+        },
+        {
+          "id": "gpt-oss:20b"
+        },
+        {
+          "id": "phi4:latest"
+        },
+        {
+          "id": "qwen2.5-coder-7b:latest"
+        },
+        {
+          "id": "qwen2.5-coder:7b"
+        },
+        {
+          "id": "qwen3.5:9b"
+        },
+        {
+          "id": "qwen3.6:35b-a3b-coding-mxfp8"
+        }
+      ]
+    }
+  }
+}
