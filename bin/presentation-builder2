@@ -1,0 +1,516 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $(basename "$0") <input.md>" >&2
+  exit 1
+fi
+
+INPUT="$1"
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "Error: file not found: $INPUT" >&2
+  exit 1
+fi
+
+BASENAME="${INPUT%.md}"
+OUTPUT="${BASENAME}.html"
+MARKDOWN_CONTENT="$(cat "$INPUT")"
+
+cat > "$OUTPUT" <<'HTMLEOF'
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Præsentation</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+/* ── Theme ─────────────────────────────────────────────────── */
+:root {
+  --bg:          #0e0d0b;
+  --bg-slide:    #131210;
+  --bg-surface:  #1c1a16;
+  --fg:          #f2ede3;
+  --fg-muted:    #9a9080;
+  --border:      #2e2c26;
+  --accent:      #c8a020;
+  --accent-dim:  rgba(200,160,32,0.12);
+  --font-head:   Georgia, 'Palatino Linotype', serif;
+  --font-body:   -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:   'SF Mono', Menlo, Consolas, monospace;
+  --font-size-body: 1.5rem;
+  --nav-h:       52px;
+  --slide-pad:   4rem 5rem;
+}
+
+/* ── Reset ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+/* ── Deck ───────────────────────────────────────────────────── */
+.deck {
+  width: 100%;
+  max-width: 900px;
+}
+
+/* ── Slides ─────────────────────────────────────────────────── */
+.slide {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 480px;
+  padding: var(--slide-pad);
+  background: var(--bg-slide);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 4px;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+  overflow: auto;
+}
+
+.slide:target,
+.deck:not(:has(:target)) .slide:first-of-type {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── Typography ─────────────────────────────────────────────── */
+.slide h1 {
+  font-family: var(--font-head);
+  font-size: 3rem;
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--fg);
+  margin-bottom: 0.75rem;
+}
+
+.slide h2 {
+  font-family: var(--font-head);
+  font-size: 2rem;
+  font-weight: 400;
+  color: var(--fg);
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.slide h3 {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 1.5rem;
+}
+
+.slide p {
+  font-size: var(--font-size-body);
+  color: var(--fg-muted);
+  line-height: 1.75;
+  margin-bottom: 0.5rem;
+}
+
+.slide ul, .slide ol {
+  list-style: none;
+  padding: 0;
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.slide ol {
+  counter-reset: item;
+}
+
+.slide li {
+  font-size: var(--font-size-body);
+  color: var(--fg-muted);
+  line-height: 1.8;
+  padding-left: 1.25rem;
+  position: relative;
+}
+
+.slide ul li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.65em;
+  width: 6px;
+  height: 6px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+
+.slide ol li {
+  counter-increment: item;
+}
+
+.slide ol li::before {
+  content: counter(item) '.';
+  position: absolute;
+  left: 0;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.slide a { color: var(--accent); }
+
+.slide strong { color: var(--fg); }
+
+/* ── Code ───────────────────────────────────────────────────── */
+.slide code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1em 0.4em;
+  color: var(--accent);
+}
+
+.slide pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+.slide pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg);
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+/* ── Tables ─────────────────────────────────────────────────── */
+.slide table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1rem;
+  font-size: 1.1rem;
+}
+
+.slide th, .slide td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.9rem;
+  text-align: left;
+}
+
+.slide th {
+  background: var(--bg-surface);
+  color: var(--accent);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 0.05em;
+}
+
+.slide td {
+  color: var(--fg-muted);
+}
+
+.slide blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  color: var(--fg-muted);
+  font-style: italic;
+  margin-bottom: 1rem;
+}
+
+.slide hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1rem 0;
+}
+
+/* ── Slide counter ──────────────────────────────────────────── */
+.slide-num {
+  font-size: 11px;
+  font-family: var(--font-body);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 1.5rem;
+  opacity: 0.8;
+}
+
+/* ── Nav ────────────────────────────────────────────────────── */
+nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--nav-h);
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.dots {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.2s;
+  text-decoration: none;
+  display: block;
+}
+
+.dot:hover       { transform: scale(1.3); }
+.dot.active      { background: var(--accent); }
+
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-family: var(--font-body);
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btn:hover {
+  background: var(--bg-surface);
+  color: var(--fg);
+  border-color: var(--fg-muted);
+}
+
+.btn-fs {
+  padding: 0 12px;
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  background: var(--bg-surface);
+  font-family: monospace;
+}
+
+/* ── Fullscreen ─────────────────────────────────────────────── */
+:fullscreen body {
+  padding: 0;
+  justify-content: flex-start;
+}
+
+:fullscreen .deck {
+  max-width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+:fullscreen .slide {
+  flex: 1;
+  min-height: 0;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  border-radius: 0;
+  padding: 6vw 8vw;
+}
+
+:fullscreen .slide h1 { font-size: 4.5vw; }
+:fullscreen .slide h2 { font-size: 3vw; }
+:fullscreen .slide h3 { font-size: 1.1vw; }
+:fullscreen .slide p,
+:fullscreen .slide li  { font-size: 1.9vw; }
+
+:fullscreen nav {
+  border-top: 1px solid var(--border);
+  padding: 0 2rem;
+  background: var(--bg);
+  flex-shrink: 0;
+}
+</style>
+</head>
+<body>
+
+<script type="text/markdown" id="source">
+HTMLEOF
+
+# Append markdown content (avoid heredoc to preserve special chars)
+printf '%s\n' "$MARKDOWN_CONTENT" >> "$OUTPUT"
+
+cat >> "$OUTPUT" <<'HTMLEOF'
+</script>
+
+<div class="deck" id="deck"></div>
+
+<script>
+(function () {
+
+  /* ── Build DOM from markdown ──────────────────────── */
+  const source = document.getElementById('source').textContent;
+  const allBlocks = source.split(/\n\s*---\s*\n/).map(s => s.trim()).filter(Boolean);
+  const blocks = allBlocks.filter(b => !/^\[slide:hidden\]/m.test(b.split('\n')[0]));
+  const deck   = document.getElementById('deck');
+  const ids    = blocks.map((_, i) => `s${i + 1}`);
+
+  marked.setOptions({ gfm: true, breaks: false });
+
+  blocks.forEach((block, i) => {
+    const section = document.createElement('section');
+    section.className = 'slide';
+    section.id = ids[i];
+
+    const numSpan = document.createElement('span');
+    numSpan.className = 'slide-num';
+    numSpan.textContent = `${String(i + 1).padStart(2,'0')} / ${String(blocks.length).padStart(2,'0')}`;
+
+    const content = document.createElement('div');
+    content.innerHTML = marked.parse(block);
+
+    section.appendChild(numSpan);
+    section.appendChild(content);
+    deck.appendChild(section);
+  });
+
+  /* ── Nav ──────────────────────────────────────────── */
+  const nav = document.createElement('nav');
+
+  const dotsEl = document.createElement('div');
+  dotsEl.className = 'dots';
+  ids.forEach((id, i) => {
+    const a = document.createElement('a');
+    a.className = 'dot';
+    a.href = '#' + id;
+    a.setAttribute('aria-label', `Slide ${i + 1}`);
+    a.addEventListener('click', () => setTimeout(() => goTo(i), 0));
+    dotsEl.appendChild(a);
+  });
+
+  const navRight = document.createElement('div');
+  navRight.className = 'nav-right';
+
+  const hint = document.createElement('span');
+  hint.style.cssText = 'display:flex;gap:4px;align-items:center';
+  hint.innerHTML = '<span class="key">←</span><span class="key">→</span>';
+
+  const btnPrev = document.createElement('a');
+  btnPrev.id = 'btn-prev';
+  btnPrev.className = 'btn';
+  btnPrev.textContent = '← prev';
+  btnPrev.addEventListener('click', () => setTimeout(() => goTo(current() - 1), 0));
+
+  const btnNext = document.createElement('a');
+  btnNext.id = 'btn-next';
+  btnNext.className = 'btn';
+  btnNext.textContent = 'next →';
+  btnNext.addEventListener('click', () => setTimeout(() => goTo(current() + 1), 0));
+
+  const btnFs = document.createElement('button');
+  btnFs.className = 'btn btn-fs';
+  btnFs.setAttribute('aria-label', 'Toggle fullscreen');
+  btnFs.textContent = '⛶ F';
+  btnFs.addEventListener('click', toggleFullscreen);
+
+  navRight.append(hint, btnPrev, btnNext, btnFs);
+  nav.append(dotsEl, navRight);
+  deck.appendChild(nav);
+
+  /* ── Navigation logic ─────────────────────────────── */
+  function current() {
+    const idx = ids.indexOf(location.hash.slice(1));
+    return idx === -1 ? 0 : idx;
+  }
+
+  function goTo(i) {
+    i = Math.max(0, Math.min(ids.length - 1, i));
+    location.hash = ids[i];
+    updateNav(i);
+  }
+
+  function updateNav(i) {
+    document.querySelectorAll('.dot').forEach((d, j) => {
+      d.classList.toggle('active', j === i);
+    });
+    document.getElementById('btn-prev').href = '#' + ids[Math.max(0, i - 1)];
+    document.getElementById('btn-next').href = '#' + ids[Math.min(ids.length - 1, i + 1)];
+  }
+
+  window.addEventListener('hashchange', () => updateNav(current()));
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight') goTo(current() + 1);
+    if (e.key === 'ArrowLeft')  goTo(current() - 1);
+    if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+  });
+
+  /* ── Fullscreen ───────────────────────────────────── */
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  }
+
+  /* ── Init ─────────────────────────────────────────── */
+  goTo(current());
+
+})();
+</script>
+
+</body>
+</html>
+HTMLEOF
+
+echo "Built: $OUTPUT"
+
+echo "Press 'o' to open now (auto-skip in 5s)..."
+for i in 5 4 3 2 1; do
+  if read -r -s -n 1 -t 1 key; then
+    if [[ "$key" == "o" || "$key" == "O" ]]; then
+      open "$OUTPUT"
+      exit 0
+    fi
+  else
+    printf '\r%ds remaining... ' "$((i - 1))"
+  fi
+done
+echo
