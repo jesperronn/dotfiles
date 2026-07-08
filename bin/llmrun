@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # llmrun — universal adapter launcher (standalone)
-# Generated: 2026-06-21
+# Generated: 2026-07-07
 # Source project: /Users/jesper/src/local-model-evaluator-bench
 # Regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun
 #
 # Usage:
-#   llmrun [--tool <name>] [--runtime <lms|mlx|ollama>] [--model <id>] [prompt...]
+#   llmrun [--agent <name>] [--runtime <lms|mlx|ollama>] [--model <id>] [prompt...]
+#   llmrun runtime status|start|stop|logs [lms|ollama|mlx|all] ...
 #
 # All three flags fall back to fzf pickers when not given.
 # Adapters live in the source project — set LLMRUN_ADAPTERS to override.
@@ -14,7 +15,7 @@ set -uo pipefail
 # ── Baked-in paths (env vars override) ───────────────────────────────────────
 _ADAPTERS="${LLMRUN_ADAPTERS:-/Users/jesper/src/local-model-evaluator-bench/adapters}"
 _PROJECT="${LLMRUN_PROJECT:-/Users/jesper/src/local-model-evaluator-bench}"
-_LMS_URL="${LMS_BASE_URL:-http://localhost:1234/v1}"
+_LMS_URL="${LMS_BASE_URL:-http://127.0.0.1:1234/v1}"
 _LMS_KEY="${LMS_API_KEY:-lm-studio}"
 
 # ── Inline helpers ────────────────────────────────────────────────────────────
@@ -25,6 +26,7 @@ else
   C_RED=; C_GRN=; C_YEL=; C_BLU=; C_DIM=; C_RST=; C_BLD=
 fi
 info()      { printf '%s\n' "${C_BLU}==>${C_RST} $*"; }
+ok()        { printf '%s\n' "${C_GRN}[OK]${C_RST} $*"; }
 warn()      { printf '%s\n' "${C_YEL}[WARN]${C_RST} $*" >&2; }
 err()       { printf '%s\n' "${C_RED}[FAIL]${C_RST} $*" >&2; }
 die()       { err "$*"; exit 1; }
@@ -33,16 +35,612 @@ lms_up()    { curl -fsS --max-time 5 "$_LMS_URL/models" >/dev/null 2>&1; }
 ollama_up() { curl -fsS --max-time 5 "http://localhost:11434/api/tags" >/dev/null 2>&1; }
 mlx_up()    { curl -fsS --max-time 5 "http://localhost:8080/v1/models" >/dev/null 2>&1; }
 
+# ── runtime: status/start/stop/logs (lms|ollama|mlx lifecycle, no repo needed) ──
+_rt_lms_loaded() {
+  lms ps --json 2>/dev/null | python3 -c "
+import json,sys
+for m in json.load(sys.stdin):
+    print(m.get('identifier') or m.get('modelKey',''))
+" 2>/dev/null
+}
+_rt_ollama_loaded() { ollama ps 2>/dev/null | awk 'NR>1 && NF { print $1 }' || true; }
+_rt_mlx_model() {
+  curl -fsS --max-time 2 http://localhost:8080/v1/models 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data'][0]['id'])" 2>/dev/null
+}
+# Strip trailing slash from TMPDIR (typically ends with /) to avoid double-slash paths
+_rt_tmpdir="${TMPDIR%/}"; _rt_tmpdir="${_rt_tmpdir:-/tmp}"
+_rt_mlx_logfile="$_rt_tmpdir/llmrun-mlx.log"
+
+rt_status_one() {
+  local rt="$1"
+  case "$rt" in
+    lms)
+      printf '%s     ' "${C_BLU}LMS${C_RST}"
+      if lms_up 2>/dev/null; then
+        local loaded; loaded=$(_rt_lms_loaded)
+        if [ -n "$loaded" ]; then
+          printf '%s  %sloaded:%s %s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}" "$(echo "$loaded" | paste -sd, -)"
+        else
+          printf '%s  %s(no model loaded)%s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}"
+        fi
+      else
+        printf '%s\n' "${C_DIM}down${C_RST}"
+      fi
+      ;;
+    ollama)
+      printf '%s  ' "${C_BLU}Ollama${C_RST}"
+      if ollama_up 2>/dev/null; then
+        local loaded; loaded=$(_rt_ollama_loaded)
+        if [ -n "$loaded" ]; then
+          printf '%s  %sloaded:%s %s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}" "$(echo "$loaded" | paste -sd, -)"
+        else
+          printf '%s  %s(no model loaded)%s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}"
+        fi
+      else
+        printf '%s\n' "${C_DIM}down${C_RST}"
+      fi
+      ;;
+    mlx)
+      printf '%s     ' "${C_BLU}MLX${C_RST}"
+      if mlx_up 2>/dev/null; then
+        local model; model=$(_rt_mlx_model)
+        printf '%s  %sloaded:%s %s\n' "${C_GRN}up (port 8080)${C_RST}" "${C_DIM}" "${C_RST}" "${model:-?}"
+      else
+        printf '%s\n' "${C_DIM}down${C_RST}"
+      fi
+      ;;
+    *) die "unknown runtime: $rt (valid: lms ollama mlx)";;
+  esac
+}
+
+cmd_runtime_status() {
+  local target="${1:-all}"
+  case "$target" in
+    all) rt_status_one lms; rt_status_one ollama; rt_status_one mlx;;
+    lms|ollama|mlx) rt_status_one "$target";;
+    *) die "unknown runtime: $target (valid: lms ollama mlx all)";;
+  esac
+}
+
+cmd_runtime_start() {
+  local target="${1:-}"; local model="${2:-}"
+  [ -z "$target" ] && die "usage: llmrun runtime start <lms|ollama|mlx> [model]"
+  case "$target" in
+    lms)
+      if lms_up 2>/dev/null; then info "lms: already running"; return; fi
+      command -v lms >/dev/null 2>&1 || die "lms CLI not found on PATH"
+      info "starting LM Studio server..."
+      lms server start && ok "lms: started" || die "lms server start failed"
+      ;;
+    ollama)
+      if ollama_up 2>/dev/null; then info "ollama: already running"; return; fi
+      command -v ollama >/dev/null 2>&1 || die "ollama CLI not found on PATH"
+      local app="/Applications/Ollama.app"
+      if [ -d "$app" ]; then
+        info "starting Ollama app..."
+        open -a "$app"
+      else
+        info "starting ollama serve (background)..."
+        nohup ollama serve >"$_rt_tmpdir/llmrun-ollama.log" 2>&1 &
+        disown
+      fi
+      for _i in 1 2 3 4 5 6 7 8 9 10; do
+        ollama_up 2>/dev/null && { ok "ollama: started"; return; }
+        sleep 1
+      done
+      die "ollama did not come up within 10s — check \${TMPDIR}/llmrun-ollama.log"
+      ;;
+    mlx)
+      if mlx_up 2>/dev/null; then
+        local _m; _m=$(_rt_mlx_model)
+        info "mlx: already running (${_m:-model unknown})"
+        return
+      fi
+      [ -z "$model" ] && die "usage: llmrun runtime start mlx <model>  (this repo also has model-specific wrappers — see bin/mlx-serve-*)"
+      command -v mlx_lm.server >/dev/null 2>&1 || python3 -c "import mlx_lm" 2>/dev/null \
+        || die "mlx_lm not found — pip install mlx-lm"
+      info "starting mlx_lm.server with $model (background, log: \${TMPDIR}/llmrun-mlx.log)..."
+      nohup python3 -m mlx_lm.server --model "$model" --port 8080 >"$_rt_mlx_logfile" 2>&1 &
+      disown
+      for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        mlx_up 2>/dev/null && { ok "mlx: started"; return; }
+        sleep 2
+      done
+      die "mlx server did not come up within 30s — check $_rt_mlx_logfile"
+      ;;
+    *) die "unknown runtime: $target (valid: lms ollama mlx)";;
+  esac
+}
+
+cmd_runtime_stop() {
+  local target="${1:-}"
+  [ -z "$target" ] && die "usage: llmrun runtime stop <lms|ollama|mlx|all>"
+  case "$target" in
+    lms)
+      if lms_up 2>/dev/null; then
+        local loaded; loaded=$(_rt_lms_loaded)
+        if [ -n "$loaded" ]; then
+          while IFS= read -r m; do lms unload "$m" 2>/dev/null || true; done <<< "$loaded"
+        fi
+        ok "lms: models unloaded"
+      else
+        info "lms: not running"
+      fi
+      ;;
+    ollama)
+      if ollama_up 2>/dev/null; then
+        local loaded; loaded=$(_rt_ollama_loaded)
+        [ -n "$loaded" ] && while IFS= read -r m; do ollama stop "$m" >/dev/null 2>&1 || true; done <<< "$loaded"
+        local app_pid; app_pid=$(pgrep -f "Ollama.app/Contents/MacOS/Ollama" | head -1)
+        local srv_pid; srv_pid=$(pgrep -f "ollama serve" | head -1)
+        if [ -n "$app_pid" ]; then kill "$app_pid" 2>/dev/null && ok "ollama: stopped"
+        elif [ -n "$srv_pid" ]; then kill "$srv_pid" 2>/dev/null && ok "ollama: stopped"
+        else ok "ollama: models unloaded"; fi
+      else
+        info "ollama: not running"
+      fi
+      ;;
+    mlx)
+      local pid; pid=$(lsof -ti :8080 2>/dev/null | head -1)
+      if [ -z "$pid" ]; then info "mlx: nothing on port 8080"
+      else kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; ok "mlx: stopped"; fi
+      ;;
+    all) cmd_runtime_stop lms; cmd_runtime_stop ollama; cmd_runtime_stop mlx;;
+    *) die "unknown runtime: $target (valid: lms ollama mlx all)";;
+  esac
+}
+
+cmd_runtime_logs() {
+  local follow=0; local n=40; local show_all=0
+  for a in "$@"; do
+    case "$a" in
+      -f|--follow) follow=1;;
+      --all) show_all=1;;
+      lms|ollama|mlx) TGT="$a";;
+      *[0-9]*) n="$a";;
+    esac
+  done
+
+  if [ "$show_all" = 1 ]; then
+    _cmd_runtime_logs_all "$follow" "$n"
+    return
+  fi
+
+  local tgt="${TGT:-}"
+  [ -z "$tgt" ] && die "usage: llmrun runtime logs [--all] [<lms|ollama|mlx>] [-f] [N]"
+  case "$tgt" in
+    lms)
+      command -v lms >/dev/null 2>&1 || die "lms CLI not found on PATH"
+      # lms has no static "tail" — `lms log stream` only ever follows live
+      # traffic. Without -f, cap it with a short timeout so it still exits
+      # instead of hanging forever waiting for new log lines.
+      if [ "$follow" = 1 ]; then
+        exec lms log stream
+      else
+        info "lms only supports live log streaming — capturing 3s (use -f to follow indefinitely)"
+        # Portable timeout: use it if present (not on stock macOS), else perl's
+        # alarm (ships with macOS).
+        if command -v timeout >/dev/null 2>&1; then
+          timeout 3 lms log stream 2>/dev/null || true
+        elif command -v gtimeout >/dev/null 2>&1; then
+          gtimeout 3 lms log stream 2>/dev/null || true
+        else
+          perl -e '$SIG{ALRM}=sub{exit 0}; alarm 3; exec @ARGV' lms log stream 2>/dev/null || true
+        fi
+      fi
+      ;;
+    ollama)
+      local log="$_rt_tmpdir/llmrun-ollama.log"
+      [ -f "$HOME/Library/Logs/Ollama/server.log" ] && log="$HOME/Library/Logs/Ollama/server.log"
+      [ -f "$log" ] || die "no ollama log found at \${TMPDIR}/llmrun-ollama.log"
+      if [ "$follow" = 1 ]; then tail -n "$n" -f "$log"; else tail -n "$n" "$log"; fi
+      ;;
+    mlx)
+      [ -f "$_rt_mlx_logfile" ] || die "no mlx log found at \${TMPDIR}/llmrun-mlx.log (started outside llmrun?)"
+      if [ "$follow" = 1 ]; then tail -n "$n" -f "$_rt_mlx_logfile"; else tail -n "$n" "$_rt_mlx_logfile"; fi
+      ;;
+    *) die "unknown runtime: $tgt (valid: lms ollama mlx all)";;
+  esac
+}
+
+_cmd_runtime_logs_all() {
+  local follow="$1" n="$2"
+  local ollama_log tmpdir lms_tmplog
+
+  # Locate logfiles
+  ollama_log="$_rt_tmpdir/llmrun-ollama.log"
+  [ -f "$HOME/Library/Logs/Ollama/server.log" ] && ollama_log="$HOME/Library/Logs/Ollama/server.log"
+
+  # For --all, we'll use tail on multiple files to get interleaved output
+  # with header markers (==> file <==). We parse those to prefix each line
+  # with the runtime name and color.
+  local tail_cmd
+  if [ "$follow" = 1 ]; then
+    tail_cmd="tail -n $n -f"
+  else
+    tail_cmd="tail -n $n"
+  fi
+
+  # Create a temp file for lms logs since we can't use tail directly
+  tmpdir="${TMPDIR%/}"; tmpdir="${tmpdir:-/tmp}"
+  lms_tmplog="$tmpdir/llmrun-all-logs-lms-$$.txt"
+  trap "rm -f '$lms_tmplog'" RETURN
+
+  # Start background lms capture if available
+  if command -v lms >/dev/null 2>&1; then
+    (
+      if [ "$follow" = 1 ]; then
+        lms log stream 2>/dev/null
+      else
+        # Timeout-based capture for non-follow mode
+        if command -v timeout >/dev/null 2>&1; then
+          timeout 3 lms log stream 2>/dev/null || true
+        elif command -v gtimeout >/dev/null 2>&1; then
+          gtimeout 3 lms log stream 2>/dev/null || true
+        else
+          perl -e '$SIG{ALRM}=sub{exit 0}; alarm 3; exec @ARGV' lms log stream 2>/dev/null || true
+        fi
+      fi
+    ) > "$lms_tmplog" 2>&1 &
+    local lms_pid=$!
+  else
+    local lms_pid=""
+  fi
+
+  # Build tail command for ollama and mlx
+  local other_files=()
+  [ -f "$ollama_log" ] && other_files+=("$ollama_log")
+  [ -f "$_rt_mlx_logfile" ] && other_files+=("$_rt_mlx_logfile")
+
+  if [ ${#other_files[@]} -gt 0 ]; then
+    $tail_cmd "${other_files[@]}" 2>/dev/null | awk -v rs='\n' \
+      -v ollama_log="$ollama_log" \
+      -v mlx_log="$_rt_mlx_logfile" \
+      -v c_grn="$C_GRN" -v c_yel="$C_YEL" -v c_rst="$C_RST" \
+      '{
+        if ($0 ~ /^==> /) {
+          gsub(/^==> /, ""); gsub(/ <==$/, "");
+          if ($0 == ollama_log) {
+            current_rt = "ollama"; current_color = c_grn;
+          } else if ($0 == mlx_log) {
+            current_rt = "mlx"; current_color = c_yel;
+          } else {
+            next;
+          }
+        } else if ($0 != "") {
+          printf "%s[%s]%s %s\n", current_color, current_rt, c_rst, $0;
+        }
+      }'
+  fi
+
+  # Wait for lms to finish and cat its log with prefixes
+  if [ -n "${lms_pid:-}" ]; then
+    wait "$lms_pid" 2>/dev/null || true
+    if [ -f "$lms_tmplog" ]; then
+      cat "$lms_tmplog" | sed "s/^/${C_RED}[lms]${C_RST} /"
+    fi
+  fi
+}
+
+if [ "${1:-}" = "runtime" ]; then
+  shift
+  RSUB="${1:-status}"; shift 2>/dev/null || true
+  case "$RSUB" in
+    status) cmd_runtime_status "$@";;
+    start)  cmd_runtime_start  "$@";;
+    stop)   cmd_runtime_stop   "$@";;
+    logs)   cmd_runtime_logs   "$@";;
+    -h|--help|help)
+      cat <<'EOF'
+llmrun runtime status [lms|ollama|mlx|all]        show up/down + loaded model
+llmrun runtime start  <lms|ollama|mlx> [model]    start a runtime (mlx needs a model)
+llmrun runtime stop   <lms|ollama|mlx|all>        unload models and stop the runtime
+llmrun runtime logs   [--all] [<lms|ollama|mlx>] [-f] [N]  tail runtime logs (--all: all runtimes)
+EOF
+      ;;
+    *) die "unknown runtime subcommand: $RSUB (valid: status start stop logs)";;
+  esac
+  exit 0
+fi
+
+# ── model: list/get/load/unload lifecycle (inline); rm/update delegate to the
+# richer, already-battle-tested project-local tools (bin/prune, bin/lms_update,
+# bin/outdated) via the baked-in project path — same "point to, don't inline"
+# principle already used for adapters. Those need $_PROJECT on disk, same
+# requirement adapters already have. ──────────────────────────────────────────
+_require_project() {
+  [ -d "$_PROJECT" ] || die "$1 needs the source project on disk (not found: $_PROJECT) — set LLMRUN_PROJECT"
+}
+
+_model_list_lms() {
+  if lms_up 2>/dev/null; then
+    printf '%s\n' "${C_BLU}[lms]${C_RST}"
+    lms ls 2>/dev/null | awk '$1 ~ /\// {print "  " $1}'
+  elif [ "${1:-}" = required ]; then die "lms not reachable"; fi
+}
+_model_list_ollama() {
+  if ollama_up 2>/dev/null; then
+    printf '%s\n' "${C_BLU}[ollama]${C_RST}"
+    ollama list 2>/dev/null | awk 'NR>1 {print "  " $1}'
+  elif [ "${1:-}" = required ]; then die "ollama not reachable"; fi
+}
+_model_list_mlx() {
+  if mlx_up 2>/dev/null; then
+    printf '%s\n' "${C_BLU}[mlx]${C_RST}"
+    curl -fsS --max-time 5 http://localhost:8080/v1/models 2>/dev/null \
+      | python3 -c "import sys,json; [print('  '+m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
+  elif [ "${1:-}" = required ]; then die "mlx not reachable"; fi
+}
+
+cmd_model_list() {
+  local rt="${1:-all}"
+  case "$rt" in
+    lms)    _model_list_lms required;;
+    ollama) _model_list_ollama required;;
+    mlx)    _model_list_mlx required;;
+    all)    _model_list_lms; _model_list_ollama; _model_list_mlx;;
+    *) die "unknown runtime: $rt (valid: lms ollama mlx all)";;
+  esac
+}
+
+cmd_model_get() {
+  local id="" rt=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --runtime|-r) rt="$2"; shift 2;; *) id="$1"; shift;; esac
+  done
+  [ -z "$id" ] && die "usage: llmrun model get <id> --runtime <lms|ollama|mlx>"
+  [ -z "$rt" ] && die "--runtime required (lms|ollama|mlx)"
+  case "$rt" in
+    lms)    command -v lms >/dev/null 2>&1 || die "lms CLI not found"; lms get "$id";;
+    ollama) command -v ollama >/dev/null 2>&1 || die "ollama CLI not found"; ollama pull "$id";;
+    mlx)    info "mlx models download on first use — try: llmrun runtime start mlx $id";;
+    *) die "unknown runtime: $rt";;
+  esac
+}
+
+cmd_model_load() {
+  local id="" rt=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --runtime|-r) rt="$2"; shift 2;; *) id="$1"; shift;; esac
+  done
+  [ -z "$id" ] && die "usage: llmrun model load <id> --runtime <lms|ollama|mlx>"
+  [ -z "$rt" ] && die "--runtime required (lms|ollama|mlx)"
+  case "$rt" in
+    lms)    command -v lms >/dev/null 2>&1 || die "lms CLI not found"; lms load "$id" && ok "loaded: $id";;
+    ollama) ollama_up 2>/dev/null || die "ollama not running — llmrun runtime start ollama"
+            curl -fsS -X POST http://localhost:11434/api/generate \
+              -d "$(python3 -c "import json,sys; print(json.dumps({'model':sys.argv[1]}))" "$id")" >/dev/null \
+              && ok "loaded: $id" || die "load failed for $id";;
+    mlx)    cmd_runtime_start mlx "$id";;
+    *) die "unknown runtime: $rt";;
+  esac
+}
+
+cmd_model_unload() {
+  local id="" rt="" idle=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --runtime|-r) rt="$2"; shift 2;;
+      --idle) idle="$2"; shift 2;;
+      *) id="$1"; shift;;
+    esac
+  done
+  [ -z "$rt" ] && die "--runtime required (lms|ollama|mlx)"
+  case "$rt" in
+    lms)
+      command -v lms >/dev/null 2>&1 || die "lms CLI not found"
+      if [ -n "$id" ]; then
+        lms unload "$id" && ok "unloaded: $id"
+      elif [ -n "$idle" ]; then
+        local mins="${idle%m}"
+        lms ps --json 2>/dev/null | python3 -c "
+import json,sys,time
+now=int(time.time()*1000)
+for m in json.load(sys.stdin):
+    idle_min=(now-(m.get('lastUsedTime') or now))/60000
+    if idle_min >= float(sys.argv[1]):
+        print(m.get('identifier') or m.get('modelKey',''))
+" "$mins" | while IFS= read -r mid; do [ -n "$mid" ] && lms unload "$mid" 2>/dev/null && ok "unloaded (idle): $mid"; done
+      else
+        _rt_lms_loaded | while IFS= read -r mid; do [ -n "$mid" ] && lms unload "$mid" 2>/dev/null && ok "unloaded: $mid"; done
+      fi
+      ;;
+    ollama)
+      [ -z "$id" ] && die "model id required for ollama unload"
+      ollama stop "$id" && ok "unloaded: $id"
+      ;;
+    mlx) cmd_runtime_stop mlx;;
+    *) die "unknown runtime: $rt";;
+  esac
+}
+
+cmd_model_rm() {
+  _require_project "model rm"
+  exec "$_PROJECT/bin/prune" "$@"
+}
+
+cmd_model_update() {
+  _require_project "model update"
+  local check=0; local rest=()
+  for a in "$@"; do [ "$a" = "--check" ] && check=1 || rest+=("$a"); done
+  if [ "$check" = 1 ]; then
+    exec "$_PROJECT/bin/outdated" "${rest[@]}"
+  else
+    exec "$_PROJECT/bin/lms_update" --yes "${rest[@]}"
+  fi
+}
+
+if [ "${1:-}" = "model" ]; then
+  shift
+  MSUB="${1:-list}"; shift 2>/dev/null || true
+  case "$MSUB" in
+    list)   cmd_model_list   "$@";;
+    get)    cmd_model_get    "$@";;
+    load)   cmd_model_load   "$@";;
+    unload) cmd_model_unload "$@";;
+    rm)     cmd_model_rm     "$@";;
+    update) cmd_model_update "$@";;
+    -h|--help|help)
+      cat <<'EOF'
+llmrun model list     [lms|ollama|mlx|all]              list downloaded models
+llmrun model get      <id> --runtime X                  download a model
+llmrun model load     <id> --runtime X                  load into memory
+llmrun model unload   [<id>] [--idle Nm] --runtime X     unload from memory
+llmrun model rm       [<id>] [--unused] [-i]             delete from disk (needs source project)
+llmrun model update   [<id>] [--check]                   re-download stale models (needs source project)
+EOF
+      ;;
+    *) die "unknown model subcommand: $MSUB (valid: list get load unload rm update)";;
+  esac
+  exit 0
+fi
+
+# ── agents: sync (delegates to project) + config CRUD (standalone, no repo) ──
+_AGENTS_STORE="${LLMRUN_AGENTS_STORE:-$HOME/.config/llmrun/agents.json}"
+
+_agents_store_read() {
+  [ -f "$_AGENTS_STORE" ] && cat "$_AGENTS_STORE" || echo '{}'
+}
+
+cmd_agents_sync() {
+  _require_project "agents sync"
+  exec "$_PROJECT/bin/agents-config" "$@"
+}
+
+cmd_agents_config_list() {
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  local rows; rows=$(_agents_store_read | jq -r '
+    to_entries[] as $m | $m.value | to_entries[] as $k |
+    "\($m.key)\t\($k.key)\t\($k.value.value)\t\($k.value.reason // "")\t\($k.value.source // "")"
+  ')
+  if [ -z "$rows" ]; then
+    info "no config set — see: llmrun agents config set <model> <key> <value>"
+    return
+  fi
+  printf '%s\n' "$rows" | awk -F'\t' '{printf "%-30s %-14s %-10s %s\n", $1, $2, $3, $4}'
+}
+
+cmd_agents_config_get() {
+  local model="${1:-}" key="${2:-}"
+  [ -z "$model" ] || [ -z "$key" ] && die "usage: llmrun agents config get <model> <key>"
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  local v; v=$(_agents_store_read | jq -r --arg m "$model" --arg k "$key" '.[$m][$k].value // empty')
+  [ -z "$v" ] && die "no config set for $model.$key"
+  printf '%s\n' "$v"
+}
+
+cmd_agents_config_set() {
+  local model="${1:-}" key="${2:-}" value="${3:-}"; shift 3 2>/dev/null || true
+  local reason="" source=""
+  while [ $# -gt 0 ]; do
+    case "$1" in --reason) reason="$2"; shift 2;; --source) source="$2"; shift 2;; *) shift;; esac
+  done
+  [ -z "$model" ] || [ -z "$key" ] || [ -z "$value" ] \
+    && die "usage: llmrun agents config set <model> <key> <value> [--reason R] [--source S]"
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  mkdir -p "$(dirname "$_AGENTS_STORE")"
+  local tmp; tmp=$(mktemp)
+  _agents_store_read | jq --arg m "$model" --arg k "$key" --arg v "$value" \
+    --arg r "$reason" --arg s "$source" \
+    '.[$m] //= {} | .[$m][$k] = {value:$v, reason:$r, source:$s}' > "$tmp"
+  mv "$tmp" "$_AGENTS_STORE"
+  ok "set $model.$key = $value"
+}
+
+cmd_agents_config_unset() {
+  local model="${1:-}" key="${2:-}"
+  [ -z "$model" ] || [ -z "$key" ] && die "usage: llmrun agents config unset <model> <key>"
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  [ -f "$_AGENTS_STORE" ] || { info "nothing set for $model.$key"; return; }
+  local tmp; tmp=$(mktemp)
+  jq --arg m "$model" --arg k "$key" 'if .[$m] then .[$m] |= del(.[$k]) else . end' "$_AGENTS_STORE" > "$tmp"
+  mv "$tmp" "$_AGENTS_STORE"
+  ok "unset $model.$key"
+}
+
+cmd_agents_config_apply() {
+  local plan="${1:-}"; shift 2>/dev/null || true
+  local write=0; for a in "$@"; do [ "$a" = "--write" ] && write=1; done
+  [ -f "$plan" ] || die "usage: llmrun agents config apply <plan.jsonl> [--write]"
+  command -v jq >/dev/null 2>&1 || die "jq required"
+  local n=0 lineno=0 skipped=0
+  while IFS= read -r row; do
+    lineno=$((lineno+1))
+    [ -z "$row" ] && continue
+    if ! printf '%s' "$row" | jq -e . >/dev/null 2>&1; then
+      warn "plan line $lineno: not valid JSON, skipping: $row"
+      skipped=$((skipped+1))
+      continue
+    fi
+    local model key value reason source
+    model=$(printf '%s' "$row" | jq -r '.model // empty')
+    key=$(printf '%s' "$row" | jq -r '.key // empty')
+    value=$(printf '%s' "$row" | jq -r '.value // empty')
+    reason=$(printf '%s' "$row" | jq -r '.reason // ""')
+    source=$(printf '%s' "$row" | jq -r '.source // ""')
+    if [ -z "$model" ] || [ -z "$key" ] || [ -z "$value" ]; then
+      warn "plan line $lineno: missing model/key/value, skipping: $row"
+      skipped=$((skipped+1))
+      continue
+    fi
+    if [ "$write" = 1 ]; then
+      cmd_agents_config_set "$model" "$key" "$value" --reason "$reason" --source "$source"
+    else
+      printf '%s%s.%s = %s%s  %s(%s)%s\n' "${C_DIM}would set ${C_RST}" "$model" "$key" "$value" "" "${C_DIM}" "$reason" "${C_RST}"
+    fi
+    n=$((n+1))
+  done < "$plan"
+  [ "$skipped" -gt 0 ] && warn "$skipped row(s) skipped (see above)"
+  [ "$write" = 0 ] && info "$n row(s) — dry-run, pass --write to apply"
+}
+
+_agents_help() {
+  cat <<'EOF'
+llmrun agents sync                                        sync opencode/pi model lists (needs source project)
+llmrun agents config list                                 show all stored per-model overrides
+llmrun agents config get    <model> <key>                 read one override
+llmrun agents config set    <model> <key> <value>          write one override
+llmrun agents config unset  <model> <key>                 remove an override
+llmrun agents config apply  <plan.jsonl> [--write]        bulk-apply, dry-run by default
+EOF
+}
+
+if [ "${1:-}" = "agents" ]; then
+  shift
+  ASUB="${1:-}"; shift 2>/dev/null || true
+  case "$ASUB" in
+    sync) cmd_agents_sync "$@";;
+    config)
+      CSUB="${1:-}"; shift 2>/dev/null || true
+      case "$CSUB" in
+        list)   cmd_agents_config_list "$@";;
+        get)    cmd_agents_config_get "$@";;
+        set)    cmd_agents_config_set "$@";;
+        unset)  cmd_agents_config_unset "$@";;
+        apply)  cmd_agents_config_apply "$@";;
+        -h|--help|help|"") _agents_help;;
+        *) die "unknown agents config subcommand: $CSUB (valid: list get set unset apply)";;
+      esac
+      ;;
+    -h|--help|help|"") _agents_help;;
+    *) die "unknown agents subcommand: $ASUB (valid: sync config)";;
+  esac
+  exit 0
+fi
+
 trap 'echo; warn "Interrupted"; exit 130' INT TERM
 
 TOOL=""; RUNTIME=""; MODEL=""; PROMPT_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tool|-t)    TOOL="$2";    shift 2;;
+    --agent|-t)    TOOL="$2";    shift 2;;
     --runtime|-r) RUNTIME="$2"; shift 2;;
     --model|-m)   MODEL="$2";   shift 2;;
     -h|--help)
       awk 'NR>1 && /^[^#]/{exit} NR>1{print}' "$0"
+      printf '\n%s\n' "${C_BLD}Available agents:${C_RST}"
+      ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed -E 's/-(lms|ollama|mlx)$//' | sort -u | sed 's/^/  /'
       printf '\n%s\n' "${C_BLD}Available models per runtime:${C_RST}"
       printf '\n  %s\n' "${C_YEL}LM Studio (lms):${C_RST}"
       if lms_up 2>/dev/null; then
@@ -128,7 +726,7 @@ if [ ! -f "$ADAPTER_FILE" ]; then
   err "no adapter for ${TOOL}-${RUNTIME}"
   printf '\nAvailable combos:\n'
   all_adapters | sed 's/^/  /'
-  printf '\nTry a different --tool or --runtime.\n'
+  printf '\nTry a different --agent or --runtime.\n'
   exit 1
 fi
 
@@ -146,7 +744,7 @@ if ! command -v "$TOOL" >/dev/null 2>&1; then
 fi
 
 # ── Phase 3: Exec ─────────────────────────────────────────────────────────────
-echo "${C_DIM}Rerun: llmrun --tool $TOOL --runtime $RUNTIME --model $MODEL${C_RST}"
+echo "${C_DIM}Rerun: llmrun --agent $TOOL --runtime $RUNTIME --model $MODEL${C_RST}"
 info "launching ${C_BLD}${TOOL}${C_RST} via ${C_BLD}${RUNTIME}${C_RST} with model ${C_BLD}${MODEL}${C_RST}"
 export MODEL_ID="$MODEL"
 if [ "${#PROMPT_ARGS[@]}" -gt 0 ]; then

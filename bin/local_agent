@@ -4,6 +4,44 @@
 set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+#
+# Purpose:
+#   Launch local AI coding agents (Codex, VS Code agents, aider) backed by
+#   Ollama models, with preset-based model selection and fzf picker.
+#
+# Usage:
+#   bin/local_agent [OPTIONS] COMMAND [ARGS...]
+#
+# Commands:
+#    doctor [--fix]        Verify Ollama keep-alive and model aliases.
+#    models                Show local-model choices with agentic labels.
+#    codex [preset] [path] Open Codex interactively against a local Ollama model.
+#    exec [preset] [path]  prompt  Run one non-interactive Codex task locally.
+#    vscode [preset] [path] Open VS Code agents and print local-model setup.
+#    vscode-json           Print Custom Endpoint JSON for VS Code chat models.
+#    env [preset]          Print OpenAI-compatible Ollama env exports.
+#    aider  [preset] [path] Launch aider against the same Ollama model.
+#    -h, --help            Show this help and exit.
+#
+# Options:
+#     -i, --interactive      Select model with fzf instead of passing a preset.
+#
+# Presets (defaults to 'best'):
+#    best                   qwen3.6-coding-best-64k (64k context, 37 GB)
+#    fast                   qwen3.5-coding-fast-64k (64k context, 21 GB)
+#    small                  qwen3.5-coding-small-32k (32k context, 8.9 GB)
+#
+# Environment:
+#   LOCAL_AGENT_VERIFY_OLLAMA_BIN             Path to verify_ollama script (default: ./bin/verify_ollama).
+#   LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN      Path to verify_ollama_models script (default: ./bin/verify_ollama_models).
+#   LOCAL_AGENT_OLLAMA_BASE_URL              Ollama API base URL (default: http://127.0.0.1:11434).
+#   LOCAL_AGENT_RESULTS_FILE                 Path to results.md for model scoring (default: docs/...).
+#   LOCAL_AGENT_DEFAULT_PRESET               Default model preset (default: best).
+#   LOCAL_AGENT_DEFAULT_CWD                  Default working directory for codex/exec (default: $PWD).
+#   LOCAL_AGENT_DEFAULT_CODEX_SANDBOX        Codex sandbox mode (default: workspace-write).
+#   LOCAL_AGENT_DEFAULT_CODEX_APPROVAL       Codex approval mode (default: on-request).
+#   LOCAL_AGENT_DEFAULT_VSCODE_WINDOW_MODE   VS Code flag (default: --reuse-window).
+#   NO_COLOR                                 Disable colored output.
 
 LOCAL_AGENT_VERIFY_OLLAMA_BIN="${LOCAL_AGENT_VERIFY_OLLAMA_BIN:-$DOTFILES_ROOT/bin/verify_ollama}"
 LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN="${LOCAL_AGENT_VERIFY_OLLAMA_MODELS_BIN:-$DOTFILES_ROOT/bin/verify_ollama_models}"
