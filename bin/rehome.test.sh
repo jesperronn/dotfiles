@@ -171,5 +171,42 @@ test_rehome_missing_path_fails_cleanly() {
   assert_contains "$output" "Missing path:" "missing-path error is clear"
 }
 
+test_rehome_revert_file() {
+  local home_dir="$TEST_TMP_DIR/home-revert-file"
+  local repo_root="$TEST_TMP_DIR/repo-revert-file"
+  local source_file="$home_dir/.config/myapp/settings.json"
+  local output=""
+  local status=0
+
+  mkdir -p "$(dirname "$source_file")"
+  make_repo_root "$repo_root"
+  printf '{"mode":"revert"}\n' >"$source_file"
+  run_rehome "$home_dir" "$repo_root" "$source_file"
+
+  capture_command output status run_rehome "$home_dir" "$repo_root" --revert "$source_file"
+  assert_status "0" "$status" "rehome --revert succeeds for files"
+  assert_contains "$output" "Reverted $source_file from link-file/.config/myapp/settings.json." "revert reports the file move"
+  if [[ -L "$source_file" ]]; then
+    test_fail "reverted file is no longer a symlink" "Expected a regular file at [$source_file]"
+  fi
+  assert_eq '{"mode":"revert"}' "$(cat "$source_file")" "reverted file retains its contents"
+}
+
+test_rehome_revert_requires_managed_symlink() {
+  local home_dir="$TEST_TMP_DIR/home-revert-invalid"
+  local repo_root="$TEST_TMP_DIR/repo-revert-invalid"
+  local source_file="$home_dir/file.txt"
+  local output=""
+  local status=0
+
+  mkdir -p "$home_dir"
+  make_repo_root "$repo_root"
+  printf 'payload\n' >"$source_file"
+
+  capture_command output status run_rehome "$home_dir" "$repo_root" --revert "$source_file"
+  assert_status "1" "$status" "revert rejects a regular file"
+  assert_contains "$output" "Target is not a symlink:" "revert explains invalid target"
+}
+
 setup_tmpdir
 run_tests "$@"
