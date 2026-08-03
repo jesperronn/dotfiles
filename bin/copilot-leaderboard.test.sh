@@ -102,6 +102,7 @@ test_help_exits_zero() {
   assert_contains "$output" "copilot-leaderboard --init" "--help shows init example"
   assert_contains "$output" "copilot-leaderboard --only nine,stil --month" "--help shows multi-account month example"
   assert_contains "$output" "Config format:" "--help shows config hint"
+  assert_contains "$output" "--debug" "--help mentions --debug"
   if echo "$output" | grep -q -- "copilot-leaderboard --only nine --update"; then
     test_fail "--help should not include redundant single-account update example" "$output"
   else
@@ -116,6 +117,25 @@ test_help_exits_zero() {
     test_fail "--help should not advertise legacy aliases" "$output"
   else
     test_pass "--help hides legacy aliases"
+  fi
+}
+
+test_debug_reports_diagnostics_without_credentials() {
+  local dir="$TEST_TMP_DIR/debug"
+  write_fixture "$dir"
+  local output="" status=0
+  capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06 --debug
+  assert_status "0" "$status" "--debug report exits 0"
+  assert_contains "$output" "[debug] Arguments parsed:" "--debug reports parsed arguments"
+  assert_contains "$output" "[debug] Loaded configuration:" "--debug reports configuration"
+  assert_contains "$output" "[debug] Selected accounts: stil" "--debug reports selected account"
+  assert_contains "$output" "[debug] Loading 1 archive file(s)" "--debug reports archive discovery"
+  assert_contains "$output" "[debug] Loaded 8 unique user/day record(s)" "--debug reports record count"
+  assert_contains "$output" "[debug] Built leaderboard for 2026-06" "--debug reports leaderboard summary"
+  if echo "$output" | grep -q "GITHUB_COPILOT"; then
+    test_fail "--debug should not expose token source details in report-only mode"
+  else
+    test_pass "--debug does not expose credentials in report-only mode"
   fi
 }
 

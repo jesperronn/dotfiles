@@ -36,6 +36,7 @@ Options:
   --config PATH       Config path (default: ${DEFAULT_CONFIG_PATH})
   --archive-dir DIR   Override archive directory for one selected account
   --dry-run           Show fetch/report targets without network calls
+  --debug             Show diagnostic details on stderr (credentials redacted)
   --help, -h          Show help
 
 Available accounts:
@@ -184,6 +185,7 @@ function formatAvailableAccounts(accounts) {
 }
 
 function fetchToken(account) {
+  debug(`Fetching token for ${account.name} from ${account.token_from_env ? `environment variable ${account.token_from_env}` : `1Password item ${account.token_from_1password_item}`}`);
   if (account.token_from_env) {
     const token = process.env[account.token_from_env]?.trim();
     if (!token) throw new Error(`Environment variable '${account.token_from_env}' is empty`);
@@ -200,18 +202,26 @@ function fetchToken(account) {
 
 function fetchMeta(token, apiPath) {
   const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest`;
+  debug(`GET ${url} (authorization header redacted)`);
   const raw = execSync(
     `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
     { encoding: 'utf8', maxBuffer: 1024 * 1024 }
   );
   const json = JSON.parse(raw);
+  debug(`Received metrics metadata (${raw.length} bytes, ${json.download_links?.length ?? 0} download link(s))`);
   if (!json.download_links?.length) throw new Error(`No download_links in response: ${raw}`);
   return { raw, json };
 }
 
 function downloadAllNdjson(links) {
+  debug(`Downloading ${links.length} NDJSON link(s)`);
   return links
-    .map(url => execSync(`curl -fsSL "${url}"`, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 }))
+    .map((url, index) => {
+      debug(`GET download link ${index + 1}/${links.length}: ${url.replace(/\?.*$/, '?<query redacted>')}`);
+      const content = execSync(`curl -fsSL "${url}"`, { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024 });
+      debug(`Downloaded link ${index + 1}/${links.length} (${content.length} bytes)`);
+      return content;
+    })
     .join('');
 }
 
@@ -234,14 +244,20 @@ function parseNdjson(content) {
 
 function loadArchive(archiveDir) {
   const dir = join(archiveDir, 'archive');
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) {
+    debug(`Archive directory does not exist: ${dir}`);
+    return [];
+  }
   const files = readdirSync(dir).filter(f => f.endsWith('.ndjson')).sort();
+  debug(`Loading ${files.length} archive file(s) from ${dir}`);
   const seen = new Map();
   for (const file of files) {
     const records = parseNdjson(readFileSync(join(dir, file), 'utf8'));
     for (const r of records) seen.set(`${r.user_login}:${r.day}`, r);
   }
-  return [...seen.values()];
+  const records = [...seen.values()];
+  debug(`Loaded ${records.length} unique user/day record(s)`);
+  return records;
 }
 
 function buildLeaderboard(records, month) {
@@ -394,6 +410,11 @@ let doInit = false;
 let configPath = process.env.COPILOT_LEADERBOARD_CONFIG || DEFAULT_CONFIG_PATH;
 let wantHelp = false;
 let includeAllAccounts = false;
+let debugEnabled = false;
+
+function debug(message) {
+  if (debugEnabled) process.stderr.write(`[debug] ${message}\n`);
+}
 
 function readOptionValue(optionName, index) {
   const value = argv[index + 1];
@@ -413,6 +434,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--update')       skipFetch = false;
   else if (a === '--report-only')  skipFetch = true;
   else if (a === '--dry-run')      dryRun = true;
+  else if (a === '--debug')        debugEnabled = true;
   else if (a === '--month')        month = readOptionValue(a, i++);
   else if (a === '--archive-dir')  archiveDirOverride = readOptionValue(a, i++);
   else if (a === '--backfill')     { skipFetch = false; doBackfill = true; }
@@ -424,6 +446,8 @@ if (!month) {
   const now = new Date();
   month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
+
+debug(`Arguments parsed: month=${month}, skipFetch=${skipFetch}, backfill=${doBackfill}, dryRun=${dryRun}, config=${configPath}`);
 
 if (doBackfill && !month) {
   process.stderr.write('Error: --backfill requires --month YYYY-MM\n');
@@ -450,6 +474,8 @@ try {
   process.stderr.write(`${error.message}\n`);
   process.exit(1);
 }
+
+debug(`Loaded configuration: exists=${accountState.configExists}, accounts=${Object.keys(accountState.accounts).sort().join(', ') || '(none)'}`);
 
 const availableNames = Object.keys(accountState.accounts).sort();
 
@@ -481,6 +507,8 @@ try {
   process.exit(1);
 }
 
+debug(`Selected accounts: ${selectedAccounts.map(account => account.name).join(', ')}`);
+
 if (availableNames.length === 0) {
   process.stderr.write(`No accounts configured in ${accountState.configPath}.\n`);
   process.stderr.write(`Create a starter config with: copilot-leaderboard --init\n`);
@@ -503,6 +531,7 @@ async function runForAccount(account) {
   const today = new Date().toISOString().slice(0, 10);
   const archiveFile = join(archivePath, `${today}.ndjson`);
   const apiUrl = `https://api.github.com/${cfg.api_path}/copilot/metrics/reports/users-28-day/latest`;
+  debug(`Starting account ${cfg.name}: archive=${cfg.archive_dir}, month=${month}, mode=${skipFetch ? 'report-only' : (doBackfill ? 'backfill' : 'update')}`);
 
   if (dryRun) {
     process.stderr.write(`[dry-run] Would fetch: ${apiUrl}\n`);
@@ -518,6 +547,7 @@ async function runForAccount(account) {
       process.stderr.write(`Fetching token from 1Password (${cfg.token_from_1password_item})...\n`);
     }
     const token = fetchToken(cfg);
+    debug('Token acquired (value redacted)');
     mkdirSync(archivePath, { recursive: true });
 
     if (doBackfill) {
@@ -529,6 +559,7 @@ async function runForAccount(account) {
       }
       const missing = dates.filter(day => !existsSync(join(archivePath, `${day}-1day-meta.json`)));
       const cached = dates.length - missing.length;
+      debug(`Backfill plan: ${dates.length} day(s), ${missing.length} missing, ${cached} cached`);
       process.stderr.write(`Backfilling ${missing.length}/${dates.length} day(s) in ${month}${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
 
       const fetchDay = async (day) => {
@@ -538,6 +569,7 @@ async function runForAccount(account) {
             `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "https://api.github.com/${cfg.api_path}/copilot/metrics/reports/users-1-day?day=${day}"`,
             { encoding: 'utf8', maxBuffer: 1024 * 1024 }
           );
+          debug(`Backfill response for ${day}: ${raw.length} bytes`);
           writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
           const meta = JSON.parse(raw);
           if (!meta.download_links?.length) {
@@ -563,6 +595,7 @@ async function runForAccount(account) {
       process.stderr.write(`Downloading ${linkCount} NDJSON shard(s)...\n`);
       const ndjson = downloadAllNdjson(meta.download_links);
       writeFileSync(archiveFile, ndjson);
+      debug(`Wrote metadata and archive snapshot: ${archiveFile}`);
       process.stderr.write(`Archived: ${archiveFile} (${linkCount} shard${linkCount > 1 ? 's' : ''})\n`);
     }
   }
@@ -574,11 +607,13 @@ async function runForAccount(account) {
   }
 
   const leaderboard = buildLeaderboard(records, month);
+  debug(`Built leaderboard for ${month}: ${leaderboard.users.length} user(s), ${leaderboard.days.length} day(s), ${leaderboard.grandCredits} credits, ${leaderboard.grandInteractions} interactions`);
   const markdown = renderMarkdown(leaderboard, cfg.label);
 
   mkdirSync(cfg.archive_dir, { recursive: true });
   const reportFile = join(cfg.archive_dir, `${month}-report.md`);
   writeFileSync(reportFile, markdown);
+  debug(`Wrote report: ${reportFile} (${markdown.length} bytes)`);
   process.stdout.write(markdown + '\n');
   process.stderr.write(`\nReport saved → ${reportFile}\n`);
 
