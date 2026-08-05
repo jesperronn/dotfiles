@@ -211,8 +211,7 @@ function fetchMeta(token, apiPath) {
   const statusLine = responseLines.pop();
   const raw = responseLines.join('\n');
   if (statusLine === '401') {
-    const identity = fetchAuthenticatedUser(token);
-    throw new Error(`GitHub returned 401 for ${url}. Authenticated user endpoint: ${identity}`);
+    throw new Error(`GitHub returned 401 for ${url}`);
   }
   if (!/^2\d\d$/.test(statusLine)) {
     throw new Error(`GitHub returned HTTP ${statusLine} for ${url}: ${raw}`);
@@ -578,6 +577,11 @@ async function runForAccount(account) {
     }
     const token = fetchToken(cfg);
     debug('Token acquired (value redacted)');
+    const authenticatedUser = fetchAuthenticatedUser(token);
+    process.stderr.write(`GitHub authentication preflight: ${authenticatedUser}\n`);
+    if (!authenticatedUser.includes(' returned login=')) {
+      throw new Error(`GitHub authentication preflight failed: ${authenticatedUser}`);
+    }
     mkdirSync(archivePath, { recursive: true });
 
     if (doBackfill) {

@@ -165,7 +165,7 @@ TOML
   capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" "$BIN" --only stil --update --debug
   assert_status "1" "$status" "401 metrics response exits 1"
   assert_contains "$output" "GitHub returned 401" "401 error is identified"
-  assert_contains "$output" "Authenticated user endpoint: https://api.github.com/user returned login=debug-user" "401 error reports authenticated user"
+  assert_contains "$output" "GitHub authentication preflight: https://api.github.com/user returned login=debug-user" "preflight reports authenticated user"
   if echo "$output" | grep -q "fake-token"; then
     test_fail "401 diagnostics should not expose the token"
   else
