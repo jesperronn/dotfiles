@@ -139,6 +139,40 @@ test_debug_reports_diagnostics_without_credentials() {
   fi
 }
 
+test_401_reports_authenticated_user_endpoint() {
+  local fake_bin="$TEST_TMP_DIR/fake-bin"
+  local config="$TEST_TMP_DIR/401-config.toml"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200\n'
+else
+  printf '{"message":"Bad credentials"}\n401\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  mkdir -p "$(dirname "$config")"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "~/src/copilot-leaderboard-stil"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" "$BIN" --only stil --update --debug
+  assert_status "1" "$status" "401 metrics response exits 1"
+  assert_contains "$output" "GitHub returned 401" "401 error is identified"
+  assert_contains "$output" "Authenticated user endpoint: https://api.github.com/user returned login=debug-user" "401 error reports authenticated user"
+  if echo "$output" | grep -q "fake-token"; then
+    test_fail "401 diagnostics should not expose the token"
+  else
+    test_pass "401 diagnostics do not expose the token"
+  fi
+}
+
 test_no_args_exits_nonzero() {
   local output="" status=0
   local config="$TEST_TMP_DIR/no-args-config.toml"

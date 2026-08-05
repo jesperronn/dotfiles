@@ -203,14 +203,44 @@ function fetchToken(account) {
 function fetchMeta(token, apiPath) {
   const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest`;
   debug(`GET ${url} (authorization header redacted)`);
-  const raw = execSync(
-    `curl -fsSL -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
+  const response = execSync(
+    `curl -sSL -w "\\n%{http_code}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
     { encoding: 'utf8', maxBuffer: 1024 * 1024 }
   );
+  const responseLines = response.trimEnd().split('\n');
+  const statusLine = responseLines.pop();
+  const raw = responseLines.join('\n');
+  if (statusLine === '401') {
+    const identity = fetchAuthenticatedUser(token);
+    throw new Error(`GitHub returned 401 for ${url}. Authenticated user endpoint: ${identity}`);
+  }
+  if (!/^2\d\d$/.test(statusLine)) {
+    throw new Error(`GitHub returned HTTP ${statusLine} for ${url}: ${raw}`);
+  }
   const json = JSON.parse(raw);
   debug(`Received metrics metadata (${raw.length} bytes, ${json.download_links?.length ?? 0} download link(s))`);
   if (!json.download_links?.length) throw new Error(`No download_links in response: ${raw}`);
   return { raw, json };
+}
+
+function fetchAuthenticatedUser(token) {
+  const url = 'https://api.github.com/user';
+  debug(`401 diagnostic: GET ${url} (authorization header redacted)`);
+  try {
+    const response = execSync(
+      `curl -sSL -w "\\n%{http_code}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
+      { encoding: 'utf8', maxBuffer: 1024 * 1024 }
+    );
+    const responseLines = response.trimEnd().split('\n');
+    const statusLine = responseLines.pop();
+    const raw = responseLines.join('\n');
+    if (statusLine === '401') return `${url} also returned 401 (token is invalid or expired)`;
+    if (!/^2\d\d$/.test(statusLine)) return `${url} returned HTTP ${statusLine}`;
+    const json = JSON.parse(raw);
+    return `${url} returned login=${json.login ?? '(no login)'}`;
+  } catch (error) {
+    return `${url} could not be checked (${error.message.split('\n')[0]})`;
+  }
 }
 
 function downloadAllNdjson(links) {
