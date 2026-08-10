@@ -11,7 +11,7 @@
 #
 # PITFALLS COVERED:
 # - Alias Overlap: Script blocks execution if 'alias docker' is detected in dotfiles.
-# - Transient Sockets: Includes 'podman_fix' to re-sync links when the VM restarts.
+# - Transient Sockets: `podman_troubleshoot --fix` converges links after VM restarts.
 # - Path Conflicts: Surgically removes legacy binaries while sparing Homebrew paths.
 #
 # ARCHITECTURE NOTE:
@@ -109,84 +109,12 @@ init_podman() {
 configure_shell() {
     echo "📝 Injecting configuration into $CONF_FILE..."
 
-    # 1. Inject podman_fix function
-    if ! grep -q "podman_fix()" "$CONF_FILE"; then
-        cat << 'EOF' >> "$CONF_FILE"
-
-# Returns the default Podman machine name so socket helpers and CLI defaults stay aligned.
-podman_default_machine_name() {
-    local MACHINE_LIST
-    MACHINE_LIST="$(podman machine list 2>/dev/null || true)"
-    [ -n "${MACHINE_LIST}" ] || return 1
-    printf '%s\n' "${MACHINE_LIST}" | awk '
-        NR > 1 {
-            name = $1
-            sub(/\*$/, "", name)
-            if ($1 ~ /\*$/) {
-                print name
-                exit
-            }
-            if (NR == 2 && name != "") {
-                single = name
-            }
-        }
-        END {
-            if (single != "") {
-                print single
-            }
-        }
-    '
-}
-
-# Refreshes the user-space symlink to the transient Podman VM socket
-podman_fix() {
-    local MACHINE_NAME
-    MACHINE_NAME="$(podman_default_machine_name)"
-    if [ -z "${MACHINE_NAME}" ]; then
-        MACHINE_NAME="$(podman system connection list --format json 2>/dev/null | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
-        MACHINE_NAME="${MACHINE_NAME%-root}"
-    fi
-
-    if [ -z "${MACHINE_NAME}" ]; then
-        echo "❌ No current Podman machine is configured."
-        return 0
-    fi
-
-    local CURRENT_VM_SOCK
-    CURRENT_VM_SOCK="$(podman machine inspect "${MACHINE_NAME}" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null)"
-    if [ -z "${CURRENT_VM_SOCK}" ]; then
-        echo "❌ Podman machine '${MACHINE_NAME}' is not running."
-        return 0
-    fi
-    local STABLE_SOCK="${HOME}/.local/share/containers/podman/machine/podman.sock"
-    mkdir -p "$(dirname "${STABLE_SOCK}")"
-    ln -sf "${CURRENT_VM_SOCK}" "${STABLE_SOCK}"
-    local CONNECTION_NAME
-    CONNECTION_NAME="$(podman machine inspect "${MACHINE_NAME}" --format '{{.Rootful}}' 2>/dev/null)"
-    if [ "$CONNECTION_NAME" = "true" ]; then
-        CONNECTION_NAME="${MACHINE_NAME}-root"
-    else
-        CONNECTION_NAME="${MACHINE_NAME}"
-    fi
-    podman system connection default "${CONNECTION_NAME}" >/dev/null 2>&1 || true
-    echo "🔗 Symlink refreshed: ${STABLE_SOCK} -> ${CURRENT_VM_SOCK}"
-}
-
-podman-default-machine-name() {
-    podman_default_machine_name "$@"
-}
-
-podman-fix() {
-    podman_fix "$@"
-}
-EOF
-    fi
-
-    # 2. Inject DOCKER_HOST for socket-based tools (lazydocker/compose)
+    # 1. Inject DOCKER_HOST for socket-based tools (lazydocker/compose).
+    # Recovery is provided by bin/podman_troubleshoot --fix.
     grep -q "export DOCKER_HOST" "${CONF_FILE}" || \
         echo "export DOCKER_HOST=\"unix://\${HOME}/${STABLE_USER_SOCK}\"" >> "$CONF_FILE"
 
-    # 2b. Force Podman CLI to reuse Docker's auth store
+    # 2. Force Podman CLI to reuse Docker's auth store
     if ! grep -q "REGISTRY_AUTH_FILE" "$CONF_FILE"; then
         echo "export REGISTRY_AUTH_FILE=\"\${HOME}/.docker/config.json\"" >> "$CONF_FILE"
     fi
