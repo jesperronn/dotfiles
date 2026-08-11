@@ -21,7 +21,7 @@ EOF
   chmod +x "$file_path"
 }
 
-test_init_uses_tracked_ignition_and_starts_machine() {
+test_init_creates_and_starts_machine() {
   local work_dir=""
   local stub_dir=""
   local call_log=""
@@ -65,7 +65,7 @@ exit 0
   assert_status "0" "$status" "podman_machine_init exits successfully"
   assert_contains "$output" "Initializing fresh High-Performance Podman machine" "helper announces initialization when the machine is missing"
   assert_contains "$output" "Starting Podman machine" "helper starts the machine after initialization"
-  assert_contains "$(cat "$call_log")" "machine init --cpus 6 --memory 9000 --disk-size 100 --rootful=false --ignition-path" "helper passes the tracked ignition file to podman machine init"
+  assert_contains "$(cat "$call_log")" "machine init --cpus 9 --memory 8192 --disk-size 100 --rootful=false podman-machine-default" "helper passes the default cpus/memory to podman machine init without a stale ignition file"
   assert_contains "$(cat "$call_log")" "podman-machine-default" "helper uses the positional machine name syntax"
   assert_contains "$(cat "$call_log")" "machine start podman-machine-default" "helper starts the named machine"
 

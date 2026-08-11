@@ -3,10 +3,7 @@
 set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOTFILES_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_MACHINE_NAME="podman-machine-default"
-IGNITION_PATH="${DOTFILES_DIR}/link-dir/.config/containers/podman/machine/applehv/podman-machine-default.ign"
 
 have_command() {
   command -v "$1" >/dev/null 2>&1
@@ -17,7 +14,6 @@ print_usage() {
 Usage: $SCRIPT_NAME [machine_name]
 
 Initializes the tracked Podman machine if it is missing and starts it.
-The tracked ignition file is reused when present so VM-local config is restored.
 See docs/podman-rootless-plan.md for the intended rootless end state.
 EOF
 }
@@ -139,15 +135,11 @@ init_machine() {
   else
     printf '🤖 Initializing fresh High-Performance Podman machine: %s\n' "$machine_name"
     init_args=(
-      --cpus 6
-      --memory 9000
+      --cpus 9
+      --memory 8192
       --disk-size 100
       --rootful=false
     )
-
-    if [[ -f "$IGNITION_PATH" ]]; then
-      init_args+=(--ignition-path "$IGNITION_PATH")
-    fi
 
     podman machine init "${init_args[@]}" "$machine_name"
     printf '🚀 Starting Podman machine: %s\n' "$machine_name"

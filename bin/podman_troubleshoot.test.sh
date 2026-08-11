@@ -662,6 +662,167 @@ esac
   rm -rf "$work_dir"
 }
 
+test_fix_force_recreates_low_memory_machine() {
+  local work_dir=""
+  local stub_dir=""
+  local output=""
+  local status=0
+
+  work_dir="$(mktemp -d)"
+  stub_dir="$work_dir/stub-bin"
+  make_stub_dir "$stub_dir"
+  mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
+  printf '2048\n' >"$work_dir/state/memory"
+
+  write_stub "$stub_dir/podman" '
+state_dir="${PODMAN_TEST_STATE_DIR:?}"
+running_file="$state_dir/running"
+default_file="$state_dir/default_connection"
+memory_file="$state_dir/memory"
+calls_file="$state_dir/calls.log"
+
+case "$1" in
+  ps)
+    printf "CONTAINER ID  IMAGE\n"
+    exit 0
+    ;;
+  info|version)
+    printf "host: ok\n"
+    exit 0
+    ;;
+  machine)
+    printf "%s\n" "$*" >>"$calls_file"
+    case "$2" in
+      list)
+        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false}]\n"
+        ;;
+      inspect)
+        if [[ "$5" == "{{.Rootful}}" ]]; then
+          printf "false\n"
+        elif [[ "$5" == "{{.ConnectionInfo.PodmanSocket.Path}}" ]]; then
+          printf "%s/podman/podman-machine-default-api.sock\n" "${TMPDIR:-/tmp}"
+        elif [[ "$5" == "{{.Resources.Memory}}" ]]; then
+          cat "$memory_file"
+        else
+          printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
+        fi
+        ;;
+      rm)
+        exit 0
+        ;;
+      init)
+        printf "8192\n" >"$memory_file"
+        exit 0
+        ;;
+      ssh)
+        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
+          if [[ -f "$state_dir/port443" ]]; then
+            printf "443\n"
+          else
+            printf "1024\n"
+          fi
+        else
+          : >"$state_dir/port443"
+          printf "net.ipv4.ip_unprivileged_port_start = 443\n"
+        fi
+        ;;
+      start)
+        : >"$running_file"
+        printf "Machine started\n"
+        ;;
+      stop)
+        printf "Machine stopped\n"
+        ;;
+      set)
+        printf "rootful updated\n"
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  system)
+    case "$2" in
+      connection)
+        if [[ "$3" == "list" ]]; then
+          current_default="podman-machine-default"
+          if [[ -f "$default_file" ]]; then
+            current_default="$(cat "$default_file")"
+          fi
+          printf "[{\"Name\":\"%s\",\"Default\":true}]\n" "$current_default"
+        elif [[ "$3" == "default" ]]; then
+          printf "%s\n" "$4" >"$default_file"
+          printf "Default connection set to %s\n" "$4"
+        fi
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+'
+
+  write_stub "$stub_dir/jq" '
+query="${*: -1}"
+input="$(cat)"
+case "$query" in
+  *"select(.Default == true) | .Name"*)
+    if [[ "$input" == *"podman-machine-default-root"* ]]; then
+      printf "podman-machine-default-root\n"
+    else
+      printf "podman-machine-default\n"
+    fi
+    ;;
+  *"select(.Name == \$name and .Running == true) | .Name"*)
+    if [[ "$input" == *"\"Running\":true"* ]]; then
+      printf "podman-machine-default\n"
+      exit 0
+    fi
+    exit 1
+    ;;
+  *".[] | select(.Name == \$name) | .Running"*)
+    if [[ "$input" == *"\"Running\":true"* ]]; then
+      printf "true\n"
+    else
+      printf "false\n"
+    fi
+    ;;
+  *".[] | select(.Name == \$name) | .Starting"*)
+    printf "false\n"
+    ;;
+  *"length"*)
+    printf "1\n"
+    ;;
+  *)
+    cat <<<"$input"
+    ;;
+esac
+'
+
+  capture_command output status env \
+    NO_COLOR=1 \
+    HOME="$work_dir/home" \
+    TMPDIR="$work_dir" \
+    PODMAN_TEST_STATE_DIR="$work_dir/state" \
+    PATH="$stub_dir:$PATH" \
+    bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
+
+  assert_status "0" "$status" "podman_troubleshoot --fix --force completes successfully with a low-memory machine"
+  assert_contains "$output" "has 2048MB memory" "fix mode flags the low-memory machine"
+  assert_contains "$output" "[OK] machine recreated with 8192MB memory" "fix mode recreates the low-memory machine"
+  assert_contains "$(cat "$work_dir/state/calls.log")" "machine stop podman-machine-default" "fix mode stops the machine before recreating it"
+  assert_contains "$(cat "$work_dir/state/calls.log")" "machine rm -f podman-machine-default" "fix mode removes the machine before recreating it"
+  assert_contains "$(cat "$work_dir/state/calls.log")" "machine init --cpus 9 --memory 8192" "fix mode recreates using the new default cpus/memory"
+
+  rm -rf "$work_dir"
+}
+
 test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
   local work_dir=""
   local stub_dir=""

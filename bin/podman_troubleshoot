@@ -14,7 +14,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   bin/podman_troubleshoot [OPTIONS] [image_name]
 #
 # Options:
+#       --init             Initialize/start the tracked Podman machine (creates it if
+#                          missing) and converge its state, then exit. See init_machine().
 #       --fix              Prompt before each recovery step and apply fixes.
+#                          Also recreates the machine if its memory is at or below
+#                          PODMAN_TROUBLESHOOT_MIN_MEMORY_MB.
 #       --force            Skip prompts when --fix is set.
 #       --verbose          Show progress for long-running checks.
 #       --log-health       Log health check failures to a file.
@@ -35,6 +39,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #                         Timeout for podman ps checks (default: 30).
 #   PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SECONDS
 #                         Allowed clock drift before reporting (default: 10).
+#   PODMAN_TROUBLESHOOT_MIN_MEMORY_MB
+#                         Recreate the machine in --fix if its memory is at or below
+#                         this many MB (default: 4096).
+#   PODMAN_TROUBLESHOOT_MACHINE_MEMORY_MB
+#                         Memory (MB) for a machine created via --init or a --fix
+#                         recreate (default: 8192).
+#   PODMAN_TROUBLESHOOT_MACHINE_CPUS
+#                         CPUs for a machine created via --init or a --fix recreate
+#                         (default: 9).
 #
 # Dependencies:
 #   podman, jq, bash >= 4
@@ -45,6 +58,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   For the intended rootless setup and docker.sock model, see docs/podman-rootless-plan.md.
 #   Edit run_main() to comment checks in or out as needed.
 IMAGE_NAME=""
+INIT_MODE=0
 FIX_MODE=0
 FORCE_MODE=0
 VERBOSE_MODE=0
@@ -55,6 +69,10 @@ START_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_START_TIMEOUT_SECONDS:-90}"
 VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS:-30}"
 PODMAN_PS_TIMEOUT_SECONDS="${PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS:-30}"
 VM_CLOCK_DRIFT_THRESHOLD_SECONDS="${PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SECONDS:-10}"
+MIN_MACHINE_MEMORY_MB="${PODMAN_TROUBLESHOOT_MIN_MEMORY_MB:-4096}"
+MACHINE_MEMORY_MB="${PODMAN_TROUBLESHOOT_MACHINE_MEMORY_MB:-8192}"
+MACHINE_CPUS="${PODMAN_TROUBLESHOOT_MACHINE_CPUS:-9}"
+DEFAULT_MACHINE_NAME="podman-machine-default"
 
 if [[ -n "${NO_COLOR:-}" ]]; then
   C_RESET=""
@@ -204,10 +222,11 @@ run_check() {
 
 print_usage() {
   cat <<EOF
-Usage: $SCRIPT_NAME [--fix] [--force] [--verbose] [image_name]
+Usage: $SCRIPT_NAME [--init | --fix] [--force] [--verbose] [image_name]
 
 Examples:
   $SCRIPT_NAME
+  $SCRIPT_NAME --init
   $SCRIPT_NAME --fix
   $SCRIPT_NAME --fix --force
   $SCRIPT_NAME --verbose
@@ -359,6 +378,9 @@ parse_args() {
       -h|--help)
         print_usage
         exit 0
+        ;;
+      --init)
+        INIT_MODE=1
         ;;
       --fix)
         FIX_MODE=1
@@ -550,6 +572,80 @@ privileged_port_policy_report() {
   return 1
 }
 
+machine_memory_mb() {
+  local machine_name="$1"
+  podman_control machine inspect "$machine_name" --format '{{.Resources.Memory}}' 2>/dev/null || true
+}
+
+# Creates the tracked Podman machine if missing (using MACHINE_CPUS/MACHINE_MEMORY_MB),
+# then converges it to rootless, refreshes the stable socket, and allows port 443.
+# Inlined from the former bin/podman_machine_init so --init and the --fix low-memory
+# recreate path share one implementation.
+init_machine() {
+  local machine_name="$1"
+  local -a init_args
+  local connection_name
+  local rootful
+  local socket_path
+
+  if podman_control machine inspect "$machine_name" >/dev/null 2>&1; then
+    printf '🚀 Starting Podman machine: %s\n' "$machine_name"
+  else
+    printf '🤖 Initializing fresh High-Performance Podman machine: %s (cpus=%s memory=%sMB)\n' \
+      "$machine_name" "$MACHINE_CPUS" "$MACHINE_MEMORY_MB"
+    init_args=(
+      --cpus "$MACHINE_CPUS"
+      --memory "$MACHINE_MEMORY_MB"
+      --disk-size 100
+      --rootful=false
+    )
+
+    podman_control machine init "${init_args[@]}" "$machine_name"
+    printf '🚀 Starting Podman machine: %s\n' "$machine_name"
+  fi
+
+  rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+  if [[ "$rootful" == "true" ]]; then
+    printf '🔧 Reconfiguring %s to rootless mode...\n' "$machine_name"
+    podman_control machine stop "$machine_name" >/dev/null 2>&1 || true
+    podman_control machine set --rootful=false "$machine_name"
+  fi
+
+  connection_name="$(podman_machine_connection_name "$machine_name")"
+  if ! podman_machine_running "$machine_name"; then
+    start_podman_machine "$machine_name"
+  else
+    printf 'ℹ️ Machine already running.\n'
+  fi
+
+  socket_path="$(podman_control machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+  if [[ -n "$socket_path" ]]; then
+    mkdir -p "$HOME/.local/share/containers/podman/machine"
+    ln -sf "$socket_path" "$HOME/.local/share/containers/podman/machine/podman.sock"
+  fi
+  podman_control system connection default "$connection_name" >/dev/null 2>&1 || true
+
+  if ! port_443_sysctl_allows_rootless; then
+    configure_rootless_port_443
+  fi
+
+  printf '🔗 Active Podman connection: %s\n' "$connection_name"
+}
+
+run_init_mode() {
+  log_section "Podman Init"
+
+  local machine_name="${IMAGE_NAME:-}"
+  if [[ -z "$machine_name" ]]; then
+    machine_name="$(podman_current_machine_name || true)"
+  fi
+  if [[ -z "$machine_name" ]]; then
+    machine_name="$DEFAULT_MACHINE_NAME"
+  fi
+
+  init_machine "$machine_name"
+}
+
 run_fix_mode() {
   log_section "Podman Fix"
 
@@ -577,6 +673,22 @@ run_fix_mode() {
   show_detail "machine: $machine_name
 rootful: ${rootful:-unknown}
 connection: $connection_name"
+
+  local current_memory_mb
+  current_memory_mb="$(machine_memory_mb "$machine_name")"
+  if [[ "$current_memory_mb" =~ ^[0-9]+$ ]] && (( current_memory_mb <= MIN_MACHINE_MEMORY_MB )); then
+    log_troubleshoot "machine $machine_name has ${current_memory_mb}MB memory (<= ${MIN_MACHINE_MEMORY_MB}MB threshold)"
+    if run_fix_step \
+      "machine recreated with ${MACHINE_MEMORY_MB}MB memory" \
+      "recreate $machine_name (stop, rm -f, init with ${MACHINE_CPUS} cpus / ${MACHINE_MEMORY_MB}MB memory) to fix low memory" \
+      bash -c "podman machine stop '$machine_name' 2>/dev/null; podman machine rm -f '$machine_name'"; then
+      init_machine "$machine_name"
+      rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+      connection_name="$(podman_machine_connection_name "$machine_name")"
+    fi
+  else
+    log_ok "machine $machine_name memory is above the ${MIN_MACHINE_MEMORY_MB}MB threshold"
+  fi
 
   if [[ "$rootful" == "true" ]]; then
     run_fix_step \
@@ -1527,6 +1639,11 @@ check_vm_clock_sync() {
 run_main() {
   require_podman
   parse_args "$@"
+
+  if [[ "$INIT_MODE" == "1" ]]; then
+    run_init_mode
+    return $?
+  fi
 
   if [[ "$FIX_MODE" == "1" ]]; then
     run_fix_mode
