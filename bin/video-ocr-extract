@@ -27,6 +27,7 @@ DIFF_THRESHOLD=15
 SIMILARITY_THRESHOLD=0.9
 START_TIME=""
 END_TIME=""
+OCR_LANG_CODES=()   # populated from --lang; joined with "+" into tesseract's -l value
 
 # ---------- helpers ----------
 
@@ -106,8 +107,18 @@ Options:
   --fps N                    Frame extraction rate (default: ${FPS})
   --diff-threshold N          Scene-change sensitivity for frame selection (default: ${DIFF_THRESHOLD})
   --similarity-threshold N    Text dedup similarity ratio 0-1 (default: ${SIMILARITY_THRESHOLD})
+  --lang CODE                 Tesseract language(s) (default: eng). Repeatable and/or
+                               comma-separated: --lang eng --lang dan, --lang eng,dan,
+                               and --lang eng+dan are all equivalent.
   --start HH:MM:SS            Trim start time (optional)
   --end HH:MM:SS              Trim end time (optional)
+
+Note: --lang requires the matching tesseract traineddata to be installed.
+OCR always disables tesseract's dictionary/word-guessing correction so it
+recognizes literal characters instead of autocorrecting toward known words.
+
+Available tesseract languages on this machine:
+$(tesseract --list-langs 2>/dev/null | tail -n +2 | paste -sd' ' - 2>/dev/null || echo "  (tesseract not found — run 'video-ocr-extract check')")
 EOF
 }
 
@@ -133,11 +144,20 @@ cmd_run() {
       --fps) FPS="$2"; shift 2 ;;
       --diff-threshold) DIFF_THRESHOLD="$2"; shift 2 ;;
       --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
+      --lang)
+        IFS=',+' read -ra _lang_parts <<<"$2"
+        OCR_LANG_CODES+=("${_lang_parts[@]}")
+        shift 2
+        ;;
       --start) START_TIME="$2"; shift 2 ;;
       --end) END_TIME="$2"; shift 2 ;;
       *) echo "Unknown option: $1" >&2; usage_run; exit 1 ;;
     esac
   done
+
+  [[ ${#OCR_LANG_CODES[@]} -eq 0 ]] && OCR_LANG_CODES=(eng)
+  local OCR_LANG
+  OCR_LANG="$(IFS=+; echo "${OCR_LANG_CODES[*]}")"
 
   echo "Running dependency check..."
   if ! cmd_check; then
@@ -146,6 +166,20 @@ cmd_run() {
     exit 1
   fi
   echo ""
+
+  local available_langs
+  available_langs="$(tesseract --list-langs 2>/dev/null | tail -n +2)"
+  local lang_code missing_lang=0
+  for lang_code in ${OCR_LANG//+/ }; do
+    if ! grep -qx "$lang_code" <<<"$available_langs"; then
+      echo "❌ tesseract language data not installed: $lang_code" >&2
+      missing_lang=1
+    fi
+  done
+  if [[ "$missing_lang" -eq 1 ]]; then
+    echo "   → brew install tesseract-lang   (bundles all language traineddata, including dan)" >&2
+    exit 1
+  fi
 
   local video_dir video_base out_dir timestamp
   video_dir="$(cd "$(dirname "$video_path")" && pwd)"
@@ -164,6 +198,7 @@ cmd_run() {
     echo "fps:   $FPS"
     echo "diff-threshold: $DIFF_THRESHOLD"
     echo "similarity-threshold: $SIMILARITY_THRESHOLD"
+    echo "lang: $OCR_LANG"
     echo "start: ${START_TIME:-<none>}  end: ${END_TIME:-<none>}"
     echo "started: $(date)"
     echo ""
@@ -182,14 +217,18 @@ cmd_run() {
   uv run "$SELECT_FRAMES_PY" "${out_dir}/frames" --out "${out_dir}/best_frames" \
     --diff-threshold "$DIFF_THRESHOLD" 2>&1 | tee -a "$log_file"
 
-  echo "→ Running OCR (tesseract) on selected frames..." | tee -a "$log_file"
+  echo "→ Running OCR (tesseract, lang=${OCR_LANG}) on selected frames..." | tee -a "$log_file"
   for frame in "${out_dir}/best_frames"/*.png; do
     [[ -e "$frame" ]] || continue
     local name
     name="$(basename "$frame" .png)"
     local txt_out="${out_dir}/ocr/${name}.txt"
 
-    tesseract "$frame" stdout --psm 6 > "$txt_out" 2>>"$log_file" || echo "  ⚠️ tesseract failed on $frame" | tee -a "$log_file"
+    # Dictionary/word-guessing correction disabled so tesseract recognizes
+    # literal characters instead of autocorrecting toward known words.
+    tesseract "$frame" stdout -l "$OCR_LANG" --psm 6 \
+      -c load_system_dawg=0 -c load_freq_dawg=0 -c language_model_penalty_non_dict_word=0 \
+      > "$txt_out" 2>>"$log_file" || echo "  ⚠️ tesseract failed on $frame" | tee -a "$log_file"
   done
 
   echo "→ Deduping OCR text (similarity >= ${SIMILARITY_THRESHOLD})..." | tee -a "$log_file"

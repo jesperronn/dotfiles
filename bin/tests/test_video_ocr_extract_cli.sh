@@ -178,6 +178,131 @@ else
 fi
 rm "$tmpfile"
 
+# ===== Test: run --help lists available tesseract languages =====
+
+echo ""
+echo "Testing: run --help"
+test_output_contains "Available tesseract languages" "run --help lists available languages" "$VIDEO_OCR_EXTRACT" run --help
+test_exit_code 0 "run --help exits 0" "$VIDEO_OCR_EXTRACT" run --help
+
+# ===== Test: --lang accepts repeatable / comma / plus forms equivalently =====
+#
+# These build a tiny 1-frame synthetic video so the full (fast) pipeline runs,
+# then check the logged "lang:" line to confirm all three spellings of
+# eng+dan resolve to the identical tesseract -l value. Requires ffmpeg and a
+# writable tmpdir; skips gracefully if ffmpeg is missing.
+
+echo ""
+echo "Testing: --lang multi-value forms"
+
+if have_ffmpeg=$(command -v ffmpeg 2>/dev/null); [[ -n "$have_ffmpeg" ]]; then
+    lang_tmpdir=$(mktemp -d)
+    trap "rm -rf '$lang_tmpdir'" EXIT
+    ffmpeg -y -loglevel error -f lavfi -i "color=c=white:s=64x64:d=1:r=1" \
+        "${lang_tmpdir}/tiny.mp4" >/dev/null 2>&1
+
+    lang_line_repeat=$("$VIDEO_OCR_EXTRACT" run "${lang_tmpdir}/tiny.mp4" --lang eng --lang dan --fps 1 2>&1 | grep "^lang:" || true)
+    rm -rf "${lang_tmpdir}/tiny-out-"*
+    lang_line_comma=$("$VIDEO_OCR_EXTRACT" run "${lang_tmpdir}/tiny.mp4" --lang eng,dan --fps 1 2>&1 | grep "^lang:" || true)
+    rm -rf "${lang_tmpdir}/tiny-out-"*
+    lang_line_plus=$("$VIDEO_OCR_EXTRACT" run "${lang_tmpdir}/tiny.mp4" --lang eng+dan --fps 1 2>&1 | grep "^lang:" || true)
+    rm -rf "${lang_tmpdir}/tiny-out-"*
+
+    if [[ -n "$lang_line_repeat" && "$lang_line_repeat" == "$lang_line_comma" && "$lang_line_comma" == "$lang_line_plus" ]]; then
+        echo -e "${GREEN}✓${NC} --lang eng --lang dan / eng,dan / eng+dan all resolve identically ($lang_line_repeat)"
+        ((PASS_COUNT++))
+    else
+        echo -e "${RED}✗${NC} --lang forms did not resolve identically"
+        echo "  repeat: $lang_line_repeat"
+        echo "  comma:  $lang_line_comma"
+        echo "  plus:   $lang_line_plus"
+        ((FAIL_COUNT++))
+    fi
+
+    rm -rf "$lang_tmpdir"
+    trap - EXIT
+else
+    echo "  (skipped: ffmpeg not found)"
+fi
+
+# ===== Test: --lang rejects a language with no installed traineddata =====
+
+echo ""
+echo "Testing: --lang with missing traineddata"
+if have_ffmpeg=$(command -v ffmpeg 2>/dev/null); [[ -n "$have_ffmpeg" ]]; then
+    badlang_tmpdir=$(mktemp -d)
+    trap "rm -rf '$badlang_tmpdir'" EXIT
+    ffmpeg -y -loglevel error -f lavfi -i "color=c=white:s=64x64:d=1:r=1" \
+        "${badlang_tmpdir}/tiny.mp4" >/dev/null 2>&1
+
+    test_exit_code 1 "run with unavailable --lang returns exit code 1" "$VIDEO_OCR_EXTRACT" run "${badlang_tmpdir}/tiny.mp4" --lang zz_not_a_real_lang --fps 1
+    test_output_contains "language data not installed" "missing traineddata error message" "$VIDEO_OCR_EXTRACT" run "${badlang_tmpdir}/tiny.mp4" --lang zz_not_a_real_lang --fps 1
+
+    rm -rf "$badlang_tmpdir"
+    trap - EXIT
+else
+    echo "  (skipped: ffmpeg not found)"
+fi
+
+# ===== Test: Danish OCR quality (på/æøå) with --lang dan =====
+#
+# Regression test for: tesseract's default English data mangles Danish
+# diacritics (så/på -> "sA"/"pA", æøå unreadable), and its dictionary-based
+# word-guessing rewrites literal characters toward known English words.
+# Requires ffmpeg, uv (for Pillow), and the "dan" tesseract traineddata
+# (brew install tesseract-lang); skips gracefully if any are missing.
+
+echo ""
+echo "Testing: Danish OCR quality (på / æøå) with --lang dan"
+
+dan_available=""
+if command -v tesseract >/dev/null 2>&1; then
+    dan_available=$(tesseract --list-langs 2>/dev/null | grep -x "dan" || true)
+fi
+
+if [[ -z "$dan_available" ]]; then
+    echo "  (skipped: tesseract 'dan' language data not installed — brew install tesseract-lang)"
+elif ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "  (skipped: ffmpeg not found)"
+elif ! command -v uv >/dev/null 2>&1; then
+    echo "  (skipped: uv not found)"
+else
+    dan_tmpdir=$(mktemp -d)
+    trap "rm -rf '$dan_tmpdir'" EXIT
+
+    uv run --with pillow python3 - "$dan_tmpdir" <<'PYEOF'
+import sys
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
+
+out_dir = Path(sys.argv[1])
+img = Image.new("RGB", (500, 100), "white")
+d = ImageDraw.Draw(img)
+font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", 32)
+d.text((20, 30), "Sidder på gulvet æøå", fill="black", font=font)
+img.save(out_dir / "danish.png")
+PYEOF
+
+    ffmpeg -y -loglevel error -framerate 1 -i "${dan_tmpdir}/danish.png" -pix_fmt yuv420p \
+        "${dan_tmpdir}/danish.mp4" >/dev/null 2>&1
+
+    "$VIDEO_OCR_EXTRACT" run "${dan_tmpdir}/danish.mp4" --lang dan --fps 1 >/dev/null 2>&1
+
+    ocr_text=$(cat "${dan_tmpdir}"/danish-out-*/ocr_deduped/deduped.txt 2>/dev/null || true)
+
+    if echo "$ocr_text" | grep -q "på" && echo "$ocr_text" | grep -q "æøå"; then
+        echo -e "${GREEN}✓${NC} --lang dan correctly recognizes på and æøå"
+        ((PASS_COUNT++))
+    else
+        echo -e "${RED}✗${NC} --lang dan did not produce expected Danish characters"
+        echo "  Got: $ocr_text"
+        ((FAIL_COUNT++))
+    fi
+
+    rm -rf "$dan_tmpdir"
+    trap - EXIT
+fi
+
 # ===== Summary =====
 
 echo ""
