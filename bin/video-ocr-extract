@@ -1,0 +1,242 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# video-ocr-extract
+#
+# Subcommands:
+#   check          Verify required tools are installed, print install commands for anything missing
+#   run <path>     Extract frames (optionally trimmed), pick sharpest per scene, OCR, dedup text
+#
+# NOTE: CSV parsing/stitching is intentionally OUT OF SCOPE here — this video
+# switches between multiple programs, so turning OCR text into structured CSV
+# needs its own program-aware script. This tool stops at deduped OCR text.
+#
+# Roadmap / later:
+#   - `check`: validate the actual video file (ffprobe codec sniff)
+#   - `check`: real OCR smoke-test against a generated 200x200 test frame
+#   - `run`: --resume flag to reuse an existing out-* folder instead of always creating new
+#   - separate script: program-aware CSV extraction from deduped OCR text
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELECT_FRAMES_PY="${SCRIPT_DIR}/video-ocr-extract-select-frames.py"
+DEDUP_TEXT_PY="${SCRIPT_DIR}/video-ocr-extract-dedup-text.py"
+
+# ---------- defaults ----------
+FPS=5
+DIFF_THRESHOLD=15
+SIMILARITY_THRESHOLD=0.9
+START_TIME=""
+END_TIME=""
+
+# ---------- helpers ----------
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+check_uv_cv2() {
+  uv run --with opencv-python --with numpy python3 -c "import cv2, numpy" >/dev/null 2>&1
+}
+
+# ---------- check subcommand ----------
+
+cmd_check() {
+  local missing_required=0
+  echo "Checking dependencies for video-ocr-extract..."
+  echo ""
+
+  # ffmpeg (required)
+  if have ffmpeg; then
+    echo "  ✅ ffmpeg       ($(ffmpeg -version | head -n1 | awk '{print $3}'))"
+  else
+    echo "  ❌ ffmpeg       — not found"
+    echo "     → brew install ffmpeg"
+    missing_required=1
+  fi
+
+  # uv (required, runs the python helper)
+  if have uv; then
+    echo "  ✅ uv           ($(uv --version | awk '{print $2}'))"
+  else
+    echo "  ❌ uv           — not found"
+    echo "     → brew install uv"
+    missing_required=1
+  fi
+
+  # tesseract (required OCR engine)
+  if have tesseract; then
+    echo "  ✅ tesseract    ($(tesseract --version 2>&1 | head -n1 | awk '{print $2}'))"
+  else
+    echo "  ❌ tesseract    — not found"
+    echo "     → brew install tesseract"
+    missing_required=1
+  fi
+
+  # python3 + cv2/numpy via uv (required, for frame selection)
+  if have uv; then
+    if check_uv_cv2; then
+      echo "  ✅ python cv2/numpy (via uv, auto-managed)"
+    else
+      echo "  ❌ python cv2/numpy — import failed via uv"
+      echo "     → uv run --with opencv-python --with numpy python3 -c \"import cv2\""
+      echo "       (uv should auto-install these; re-run 'video-ocr-extract check' after)"
+      missing_required=1
+    fi
+  else
+    echo "  ❌ python cv2/numpy — cannot check without uv installed first"
+    missing_required=1
+  fi
+
+  echo ""
+  if [[ "$missing_required" -eq 0 ]]; then
+    echo "All required dependencies present. You're good to go."
+    return 0
+  else
+    echo "Missing required dependencies. Run the command(s) above, then re-run:"
+    echo "  video-ocr-extract check"
+    return 1
+  fi
+}
+
+# ---------- run subcommand ----------
+
+usage_run() {
+  cat <<EOF
+Usage: video-ocr-extract run <video-path> [options]
+
+Options:
+  --fps N                    Frame extraction rate (default: ${FPS})
+  --diff-threshold N          Scene-change sensitivity for frame selection (default: ${DIFF_THRESHOLD})
+  --similarity-threshold N    Text dedup similarity ratio 0-1 (default: ${SIMILARITY_THRESHOLD})
+  --start HH:MM:SS            Trim start time (optional)
+  --end HH:MM:SS              Trim end time (optional)
+EOF
+}
+
+cmd_run() {
+  if [[ $# -lt 1 ]]; then
+    usage_run
+    exit 1
+  fi
+
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    usage_run
+    exit 0
+  fi
+
+  local video_path="$1"; shift
+  if [[ ! -f "$video_path" ]]; then
+    echo "❌ Video not found: $video_path" >&2
+    exit 1
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --fps) FPS="$2"; shift 2 ;;
+      --diff-threshold) DIFF_THRESHOLD="$2"; shift 2 ;;
+      --similarity-threshold) SIMILARITY_THRESHOLD="$2"; shift 2 ;;
+      --start) START_TIME="$2"; shift 2 ;;
+      --end) END_TIME="$2"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; usage_run; exit 1 ;;
+    esac
+  done
+
+  echo "Running dependency check..."
+  if ! cmd_check; then
+    echo ""
+    echo "❌ Aborting run: fix the missing dependencies above first." >&2
+    exit 1
+  fi
+  echo ""
+
+  local video_dir video_base out_dir timestamp
+  video_dir="$(cd "$(dirname "$video_path")" && pwd)"
+  video_base="$(basename "$video_path")"
+  video_base="${video_base%.*}"
+  timestamp="$(date +%Y-%m-%d-%H-%M)"
+  out_dir="${video_dir}/${video_base}-out-${timestamp}"
+
+  mkdir -p "$out_dir"/{frames,best_frames,ocr,ocr_deduped}
+  local log_file="${out_dir}/run.log"
+
+  {
+    echo "video-ocr-extract run"
+    echo "video: $video_path"
+    echo "out:   $out_dir"
+    echo "fps:   $FPS"
+    echo "diff-threshold: $DIFF_THRESHOLD"
+    echo "similarity-threshold: $SIMILARITY_THRESHOLD"
+    echo "start: ${START_TIME:-<none>}  end: ${END_TIME:-<none>}"
+    echo "started: $(date)"
+    echo ""
+  } | tee "$log_file"
+
+  # Build ffmpeg trim args
+  local ffmpeg_trim_args=()
+  [[ -n "$START_TIME" ]] && ffmpeg_trim_args+=(-ss "$START_TIME")
+  [[ -n "$END_TIME" ]] && ffmpeg_trim_args+=(-to "$END_TIME")
+
+  echo "→ Extracting frames at ${FPS}fps${START_TIME:+ from $START_TIME}${END_TIME:+ to $END_TIME}..." | tee -a "$log_file"
+  ffmpeg -loglevel error "${ffmpeg_trim_args[@]}" -i "$video_path" \
+    -vf "fps=${FPS}" "${out_dir}/frames/frame_%05d.png" 2>&1 | tee -a "$log_file"
+
+  echo "→ Selecting sharpest frame per scene..." | tee -a "$log_file"
+  uv run "$SELECT_FRAMES_PY" "${out_dir}/frames" --out "${out_dir}/best_frames" \
+    --diff-threshold "$DIFF_THRESHOLD" 2>&1 | tee -a "$log_file"
+
+  echo "→ Running OCR (tesseract) on selected frames..." | tee -a "$log_file"
+  for frame in "${out_dir}/best_frames"/*.png; do
+    [[ -e "$frame" ]] || continue
+    local name
+    name="$(basename "$frame" .png)"
+    local txt_out="${out_dir}/ocr/${name}.txt"
+
+    tesseract "$frame" stdout --psm 6 > "$txt_out" 2>>"$log_file" || echo "  ⚠️ tesseract failed on $frame" | tee -a "$log_file"
+  done
+
+  echo "→ Deduping OCR text (similarity >= ${SIMILARITY_THRESHOLD})..." | tee -a "$log_file"
+  uv run "$DEDUP_TEXT_PY" "${out_dir}/ocr" --out "${out_dir}/ocr_deduped" \
+    --similarity-threshold "$SIMILARITY_THRESHOLD" 2>&1 | tee -a "$log_file"
+
+  echo "" | tee -a "$log_file"
+  echo "Done. Output in: $out_dir" | tee -a "$log_file"
+  echo "  frames:       ${out_dir}/frames" | tee -a "$log_file"
+  echo "  best_frames:  ${out_dir}/best_frames" | tee -a "$log_file"
+  echo "  ocr:          ${out_dir}/ocr" | tee -a "$log_file"
+  echo "  ocr_deduped:  ${out_dir}/ocr_deduped  (deduped.txt is the combined result)" | tee -a "$log_file"
+  echo "" | tee -a "$log_file"
+  echo "Note: CSV extraction from this text is a separate step — not handled by this script." | tee -a "$log_file"
+}
+
+# ---------- dispatch ----------
+
+usage_main() {
+  cat <<EOF
+Usage: video-ocr-extract <check|run> [args]
+
+Subcommands:
+  check          Verify required tools are installed
+  run <path>     Extract frames, pick sharpest per scene, OCR, dedup text
+
+Run 'video-ocr-extract run --help' for run options.
+EOF
+}
+
+main() {
+  if [[ $# -lt 1 ]]; then
+    usage_main >&2
+    exit 1
+  fi
+
+  local subcommand="$1"; shift
+  case "$subcommand" in
+    check) cmd_check ;;
+    run) cmd_run "$@" ;;
+    -h|--help|help) usage_main ;;
+    *)
+      echo "Unknown subcommand: $subcommand" >&2
+      usage_main >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
