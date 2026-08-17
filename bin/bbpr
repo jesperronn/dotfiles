@@ -1,0 +1,745 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+BBPR_COLOR_ENABLED=0
+BBPR_JSON=0
+BBPR_SHORT=0
+BBPR_LONG=1
+BBPR_BASE_URL="https://stash.stil.dk"
+BBPR_TOKEN=""
+BBPR_CURRENT_SLUG=""
+BBPR_PR_PROJECT=""
+BBPR_PR_REPO=""
+BBPR_ARGS=()
+BBPR_SHOW_HELP=0
+
+BBPR_C_RESET=$'\033[0m'
+BBPR_C_DIM=$'\033[2m'
+BBPR_C_BOLD=$'\033[1m'
+BBPR_C_RED=$'\033[31m'
+BBPR_C_GREEN=$'\033[32m'
+BBPR_C_SECTION=$'\033[33m'
+BBPR_C_BLUE=$'\033[34m'
+BBPR_C_ACCENT=$'\033[35m'
+BBPR_C_CYAN=$'\033[36m'
+
+bbpr_reset_state() {
+  BBPR_COLOR_ENABLED=0
+  BBPR_JSON=0
+  BBPR_SHORT=0
+  BBPR_LONG=1
+  BBPR_BASE_URL="https://stash.stil.dk"
+  BBPR_TOKEN=""
+  BBPR_CURRENT_SLUG=""
+  BBPR_PR_PROJECT=""
+  BBPR_PR_REPO=""
+  BBPR_ARGS=()
+  BBPR_VERBOSE=0
+}
+
+bbpr_usage() {
+  local section_style="" tool_style="" command_style="" placeholder_style="" flag_style="" reset_style=""
+
+  if (( BBPR_COLOR_ENABLED )); then
+    section_style="${BBPR_C_BOLD}${BBPR_C_SECTION}"
+    tool_style="${BBPR_C_BOLD}${BBPR_C_ACCENT}"
+    command_style="${BBPR_C_GREEN}"
+    placeholder_style="${BBPR_C_CYAN}"
+    flag_style="${BBPR_C_BLUE}"
+    reset_style="${BBPR_C_RESET}"
+  fi
+
+  printf 'Interact with Atlassian Bitbucket Server REST API.\n\n'
+  printf '  %sbbpr%s %s<subcommand>%s [options]\n\n' \
+    "$tool_style" "$reset_style" "$command_style" "$reset_style"
+
+  printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
+  printf '  %sping%s              Check API connectivity.\n' "$command_style" "$reset_style"
+  printf '  %smine%s              List PRs I authored.\n' "$command_style" "$reset_style"
+  printf '  %sreview%s            List PRs I am reviewing.\n' "$command_style" "$reset_style"
+  printf '  %sopen%s              List all open PRs.\n' "$command_style" "$reset_style"
+  printf '  %sshow%s %sPROJ/REPO/NNN%s  Show full PR details.\n' "$command_style" "$placeholder_style" "$reset_style" "$reset_style"
+  printf '  %scomments%s %sPROJ/REPO/NNN%s  Show resolved + blocker comments.\n' "$command_style" "$placeholder_style" "$reset_style" "$reset_style"
+
+  printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s--base-url <url>%s   Bitbucket Server base URL.\n' "$flag_style" "$reset_style"
+  printf '  %s--token <token>%s    Override token (default: 1Password).\n' "$flag_style" "$reset_style"
+  printf '  %s--json%s             Emit machine-parseable JSON.\n' "$flag_style" "$reset_style"
+  printf '  %s--short%s            Emit PR identifiers for use with show.\n' "$flag_style" "$reset_style"
+  printf '  %s--long%s             Emit clickable URL, author initials, and title (default).\n' "$flag_style" "$reset_style"
+  printf '  %s-h, --help%s         Show this help.\n' "$flag_style" "$reset_style"
+  printf "  %s--verbose%s          Log all API calls and responses.\n" "$flag_style" "$reset_style"
+
+  printf '\n%sExamples:%s\n' "$section_style" "$reset_style"
+  printf '  %sbbpr%s ping\n' "$tool_style" "$reset_style"
+  printf '  %sbbpr%s mine\n' "$tool_style" "$reset_style"
+  printf '  %sbbpr%s review --json\n' "$tool_style" "$reset_style"
+  printf '  %sbbpr%s show MM/PROJ#42\n' "$tool_style" "$reset_style"
+  printf '  %sbbpr%s comments MM/PROJ/42\n' "$tool_style" "$reset_style"
+
+  printf '\n%sNotes:%s\n' "$section_style" "$reset_style"
+  printf '  - Default server: %s\n' "$BBPR_BASE_URL"
+  printf '  - Token from 1Password keychain entry "BITBUCKET_TOKEN_JRJ".\n'
+}
+
+bbpr_color_print() {
+  local color="$1"
+  shift
+  if (( BBPR_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$BBPR_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+bbpr_info()    { bbpr_color_print "${BBPR_C_BOLD}${BBPR_C_BLUE}" "$*"; }
+bbpr_success() { bbpr_color_print "$BBPR_C_GREEN" "$*"; }
+bbpr_warn()    { bbpr_color_print "$BBPR_C_RED" "Warning: $*" >&2; }
+bbpr_error()   { bbpr_color_print "$BBPR_C_RED" "$*" >&2; }
+
+parse_opts() {
+  # Handle flags and extract subcommand
+  local temp_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --verbose) BBPR_VERBOSE=1; shift ;;
+      --json) BBPR_JSON=1; shift ;;
+      --short) BBPR_SHORT=1; shift ;;
+      --long) BBPR_LONG=1; BBPR_SHORT=0; shift ;;
+      --help|-h) BBPR_SHOW_HELP=1; shift ;;
+      --base-url) [[ $# -ge 2 ]] && { BBPR_BASE_URL="$2"; shift 2; } || shift ;;
+      --base-url=*) BBPR_BASE_URL="${1#--base-url=}"; shift ;;
+      --token) [[ $# -ge 2 ]] && { BBPR_TOKEN="$2"; shift 2; } || shift ;;
+      --token=*) BBPR_TOKEN="${1#--token=}"; shift ;;
+      *) temp_args+=("$1"); shift ;;
+    esac
+  done
+
+  # Now process with remaining args
+  if [[ ${#temp_args[@]} -eq 0 ]]; then
+    BBPR_SHOW_HELP=1
+    return 0
+  fi
+
+  local subcommand="${temp_args[0]}"
+  BBPR_SUBCOMMAND="$subcommand"  # Store subcommand in global variable
+  BBPR_ARGS=("${temp_args[@]:1}")
+  case "$subcommand" in
+    ping|mine|review|open|show|comments) ;;
+    *) bbpr_error "Unknown subcommand: $subcommand"; bbpr_usage; return 1 ;;
+  esac
+
+  return 0
+}
+
+
+
+parse_prereqs() {
+  if command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+    BBPR_COLOR_ENABLED=1
+  else
+    BBPR_COLOR_ENABLED=0
+  fi
+}
+
+bbpr_fetch_token() {
+  if [[ -n "$BBPR_TOKEN" ]]; then
+    printf '%s' "$BBPR_TOKEN"
+    return 0
+  fi
+  local token=""
+  if command -v op >/dev/null 2>&1; then
+    token="$(op item get "BITBUCKET_TOKEN_JRJ" --fields label=token --reveal 2>/dev/null)" || token=""
+  fi
+  if [[ -z "$token" ]]; then
+    bbpr_error "No token available. Set --token or install 'op' (1Password CLI)."
+    return 1
+  fi
+  printf '%s' "$token"
+}
+
+bbpr_last_http_code=""
+
+bbpr_fetch() {
+  local method="${1:-GET}" endpoint="$2" data="${3:-}"
+  local token url curl_output http_code body
+
+  token="$(bbpr_fetch_token)" || return 1
+
+  # Verbose logging: print call details with masked token
+  if (( BBPR_VERBOSE )); then
+    local masked_token="****"
+    if [[ -n "$token" ]] && (( ${#token} > 8 )); then
+      masked_token="${token:0:3}***${token: -3}"
+    fi
+    printf '  [API] %s %s\n' "$method" "$BBPR_BASE_URL$endpoint" >&2
+    printf '  [AUTH] Bearer %s\n' "$masked_token" >&2
+    if [[ -n "$data" ]]; then
+      printf '  [DATA] %s\n' "$data" >&2
+    fi
+  fi
+  url="$BBPR_BASE_URL$endpoint"
+
+  if [[ -n "$data" ]]; then
+    curl_output="$(curl -sS -w "\n%{http_code}" -X "$method" \
+      -H "Authorization: Bearer $token" -H "Accept: application/json;charset=UTF-8" -H "Content-Type: application/json" \
+      -d "$data" "$url")"
+  else
+    curl_output="$(curl -sS -w "\n%{http_code}" -X "$method" \
+      -H "Authorization: Bearer $token" -H "Accept: application/json;charset=UTF-8" "$url")"
+  fi
+
+  http_code="$(printf '%s' "$curl_output" | tail -n1)"
+  body="$(printf '%s' "$curl_output" | sed '$d')"
+  bbpr_last_http_code="$http_code"
+  [[ -z "$body" ]] && body="null"
+
+  # Verbose logging: print response summary
+  if (( BBPR_VERBOSE )); then
+    printf '  [HTTP] %s\n' "$http_code" >&2
+    while IFS= read -r payload_line; do
+      printf '%b  [PAYLOAD] %s%b\n' "$BBPR_C_DIM" "$payload_line" "$BBPR_C_RESET" >&2
+    done <<< "$body"
+  fi
+
+  printf '%s' "$body"
+}
+
+
+bbpr_paginate() {
+  local endpoint="$1" start=0 limit="${2:-50}" collected="" is_last="false" items_json=""
+  collected="$(bbpr_fetch "GET" "${endpoint}&start=${start}&limit=${limit}")"
+  # Skip pagination if response is not JSON (e.g., error page)
+  if ! printf '%s' "$collected" | jq empty 2>/dev/null; then
+    printf '[]'
+    return 0
+  fi
+  is_last="$(printf '%s' "$collected" | jq -r '.isLastPage // "false"')"
+  items_json="$(printf '%s' "$collected" | jq '.values // []')"
+
+  while [[ "$is_last" != "true" ]]; do
+    start=$((start + limit))
+    local nc ni
+    nc="$(bbpr_fetch "GET" "${endpoint}&start=${start}&limit=\${limit}")"
+    # Skip non-JSON responses
+    if ! printf '%s' "$nc" | jq empty 2>/dev/null; then
+      break
+    fi
+    is_last="$(printf '%s' "$nc" | jq -r '.isLastPage // "false"')"
+    ni="$(printf '%s' "$nc" | jq '.values // []')"
+    items_json="$(printf '%s' "$items_json" | jq --argjson e "$ni" '. + $e')"
+  done
+  printf '%s' "$items_json"
+}
+
+bbpr_parse_pr_id() {
+  local spec="$1"
+  if [[ "$spec" =~ ^https?://[^/]+/projects/([A-Z][A-Z0-9_]*)/repos/([A-Za-z0-9._-]+)/pull-requests/([0-9]+)(/overview)?/?$ ]]; then
+    spec="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
+  elif [[ "$spec" =~ ^projects/([A-Z][A-Z0-9_]*)/repos/([A-Za-z0-9._-]+)/pull-requests/([0-9]+)(/overview)?/?$ ]]; then
+    spec="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
+  fi
+  if [[ "$spec" =~ ^[A-Z][A-Z0-9_]*\/[A-Za-z0-9._-]+\/[0-9]+$ ]]; then
+    BBPR_PR_PROJECT="${spec%%/*}"
+    local repo_and_id="${spec#*/}"
+    BBPR_PR_REPO="${repo_and_id%%/*}"
+    BBPR_PR_ID="${repo_and_id#*/}"
+    printf '%s' "$BBPR_PR_ID"
+  else
+    bbpr_error "Invalid PR specification: $spec (expected PROJ/REPO/NNN)"
+    return 1
+  fi
+}
+
+bbpr_current_slug() {
+  if [[ -n "$BBPR_CURRENT_SLUG" ]]; then
+    printf '%s' "$BBPR_CURRENT_SLUG"
+    return 0
+  fi
+
+  # Strategy 1: Try /myself (some servers expose it)
+  local myself_body
+  myself_body="$(bbpr_fetch "GET" "/rest/api/1.0/myself" 2>/dev/null)" || myself_body=""
+
+  if [[ -n "$myself_body" ]]; then
+    local slug
+    slug="$(printf '%s' "$myself_body" | jq -r '.slug // empty' 2>/dev/null)"
+    if [[ -n "$slug" ]]; then
+      BBPR_CURRENT_SLUG="$slug"
+      printf '%s' "$BBPR_CURRENT_SLUG"
+      return 0
+    fi
+  fi
+
+  # Strategy 2: Try /users/current (older servers)
+  local current_body
+  current_body="$(bbpr_fetch "GET" "/rest/api/1.0/users/current" 2>/dev/null)" || current_body=""
+
+  if [[ -n "$current_body" ]]; then
+    local slug
+    slug="$(printf '%s' "$current_body" | jq -r '.slug // empty' 2>/dev/null)"
+    if [[ -n "$slug" ]]; then
+      BBPR_CURRENT_SLUG="$slug"
+      printf '%s' "$BBPR_CURRENT_SLUG"
+      return 0
+    fi
+  fi
+
+  # Strategy 3: Read X-AUSERNAME from application-properties response header,
+  # then resolve with GET /rest/api/1.0/users/{X-AUSERNAME}.
+  # This is the documented workaround for Bitbucket Server 9.x.
+  local header_file
+  header_file="$(mktemp)"
+  local fetched_token
+  if fetched_token="$(bbpr_fetch_token 2>/dev/null)"; then
+    curl -sS -D "$header_file" -o /dev/null \
+      -H "Authorization: Bearer $fetched_token" \
+      "$BBPR_BASE_URL/rest/api/1.0/application-properties" \
+      >/dev/null 2>&1
+    local user_slug
+    user_slug="$(awk '/^X-AUSERNAME:/ || /^Vary:.*X-AUSERNAME:/{if(/^X-AUSERNAME:/){sub(/\r$/,""); sub(/^[^:]*:[[:space:]]*/,""); print; exit} else if(/^Vary:.*X-AUSERNAME:/){sub(/Vary:.*X-AUSERNAME:/,""); sub(/^[^:]*:[[:space:]]*/,""); print; exit}}' "$header_file")"
+    if [[ -n "$user_slug" ]]; then
+      local user_body
+      user_body="$(bbpr_fetch "GET" "/rest/api/1.0/users/${user_slug}")" || user_body=""
+      if [[ -n "$user_body" ]]; then
+        local slug
+        slug="$(printf '%s' "$user_body" | jq -r '.slug // empty' 2>/dev/null)"
+        if [[ -n "$slug" ]]; then
+          BBPR_CURRENT_SLUG="$slug"
+          rm -f "$header_file"
+          printf '%s' "$BBPR_CURRENT_SLUG"
+          return 0
+        fi
+      fi
+    fi
+  fi
+  rm -f "$header_file"
+
+  # Strategy 4: Search by token name (fallback)
+  local fetched_token
+  if fetched_token="$(bbpr_fetch_token 2>/dev/null)"; then
+    local search_pattern
+    search_pattern="$(echo "$fetched_token" | sed 's/.*_TOKEN_//;s/[^a-z0-9]//g' | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$search_pattern" ]]; then
+      local search_body
+      search_body="$(bbpr_fetch "GET" "/rest/api/1.0/users?search=${search_pattern}&limit=1" 2>/dev/null)" || search_body=""
+      if [[ -n "$search_body" ]]; then
+        local slug
+        slug="$(printf '%s' "$search_body" | jq -r '.values[0].slug // empty' 2>/dev/null)"
+        if [[ -n "$slug" ]]; then
+          BBPR_CURRENT_SLUG="$slug"
+          printf '%s' "$BBPR_CURRENT_SLUG"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
+  bbpr_error "Could not auto-detect current user."
+  bbpr_error "Provide your slug via --me <slug>."
+  return 1
+}
+
+# ──────────────── Subcommands ────────────────
+
+bbpr_cmd_ping() {
+  local token
+  token="$(bbpr_fetch_token 2>/dev/null)" || return 1
+  local url="$BBPR_BASE_URL/rest/api/1.0/application-properties"
+  if (( BBPR_VERBOSE )); then
+    local masked_token="****"
+    if (( ${#token} > 6 )); then
+      masked_token="${token:0:3}***${token: -3}"
+    fi
+    printf '  [API] GET %s\n' "$url" >&2
+    printf '  [AUTH] Bearer %s\n' "$masked_token" >&2
+  fi
+  local response http_code
+  response="$(curl -sS -D - -o /dev/null -w '\n%{http_code}' \
+    -H "Authorization: Bearer $token" -H "Accept: application/json;charset=UTF-8" "$url")" || http_code="000"
+  http_code="$(printf '%s\n' "$response" | tail -n1)"
+  if (( BBPR_VERBOSE )); then printf '  [HTTP] %s\n' "$http_code" >&2; fi
+  local user_slug
+  user_slug="$(printf '%s\n' "$response" | awk '/^X-AUSERNAME:[[:space:]]*/ {sub(/\r$/, ""); sub(/^X-AUSERNAME:[[:space:]]*/, ""); print; exit}')"
+  if (( http_code < 200 || http_code >= 300 )) || [[ -z "$user_slug" ]]; then
+    bbpr_error "Could not identify current user from X-AUSERNAME response header."
+    return 1
+  fi
+  printf '[%s] %s\n' "$http_code" "$url"
+  printf '  slug=%s\n' "$user_slug"
+}
+
+
+bbpr_cmd_list_prs() {
+  local filter_type="$1"
+  local raw
+  local endpoint="/rest/api/latest/dashboard/pull-requests?order=participant_status&order=draft_status&state=OPEN"
+  if [[ "$filter_type" == "AUTHOR" || "$filter_type" == "REVIEWER" ]]; then
+    endpoint+="&role=$filter_type"
+  fi
+  raw="$(bbpr_paginate "$endpoint" 25)"
+
+  if [[ "$filter_type" == "all" ]]; then
+    printf '%s' "$raw"
+    return 0
+  fi
+
+  printf '%s' "$raw"
+}
+
+bbpr_print_long_prs() {
+  local prs="$1"
+  printf '%s' "$prs" | jq -r --arg base "$BBPR_BASE_URL" '
+    .[] |
+    ((.author.user.displayName // "?") | split(" ") | map(.[0:1]) | join("")) as $initials |
+    (.links.self[0].href // ($base + "/projects/" + (.fromRef.repository.project.key // "?") + "/repos/" + (.fromRef.repository.slug // "?") + "/pull-requests/" + (.id | tostring))) as $url |
+    "\($url) \($initials) \(.title // .description // "")"
+  '
+}
+
+bbpr_cmd_mine() {
+  local prs
+  prs="$(bbpr_cmd_list_prs "AUTHOR")" || return 1
+  if (( BBPR_SHORT )); then
+    printf '%s' "$prs" | jq -r '.[] | "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)"'
+    return 0
+  fi
+  if (( BBPR_LONG && ! BBPR_JSON )); then
+    bbpr_print_long_prs "$prs"
+    return 0
+  fi
+
+  if (( BBPR_JSON )); then
+    printf '%s' "$prs" | jq '[.[] | {
+      id: .id, title: .title, state: .state,
+      author: (.author.user.slug // null),
+      created: .createdDate,
+      reviewers: [.participants[] | select(.role == "REVIEWER") | {slug: .user.slug, status: .status}]
+    }]'
+    return 0
+  fi
+
+  local count
+  count="$(printf '%s' "$prs" | jq 'length')"
+  if (( count == 0 )); then
+    bbpr_info "No PRs authored by you are currently open."
+    return 0
+  fi
+
+  printf '\n'
+  printf '%b%-4s  %-48s  %-30s  %-14s  %-12s  %s%b\n' \
+    "$BBPR_C_BOLD" "#" "Title" "Project/Repo" "Author" "Created" "Reviewers" "$BBPR_C_RESET"
+
+  printf '%s' "$prs" | jq -r '
+    .[] |
+    "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \(.createdDate[:10])\u00a0 \([.participants[] | select(.role=="REVIEWER") | .status] | join(", ") // "-")"
+  '
+  printf '\n  %d PR(s)\n' "$count"
+}
+
+bbpr_cmd_review() {
+  local prs
+  prs="$(bbpr_cmd_list_prs "REVIEWER")" || return 1
+  if (( BBPR_SHORT )); then
+    printf '%s' "$prs" | jq -r '.[] | "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)"'
+    return 0
+  fi
+  if (( BBPR_LONG && ! BBPR_JSON )); then
+    bbpr_print_long_prs "$prs"
+    return 0
+  fi
+
+  if (( BBPR_JSON )); then
+    printf '%s' "$prs" | jq '[.[] | {
+      id: .id, title: .title, state: .state,
+      author: (.author.user.slug // null),
+      created: .createdDate,
+      reviewers: [.participants[] | select(.role == "REVIEWER") | {slug: .user.slug, status: .status}]
+    }]'
+    return 0
+  fi
+
+  local count
+  count="$(printf '%s' "$prs" | jq 'length')"
+  if (( count == 0 )); then
+    bbpr_info "You have no pending review assignments."
+    return 0
+  fi
+
+  printf '\n'
+  printf '%b%-4s  %-48s  %-30s  %-14s  %-12s  %-12s%b\n' \
+    "$BBPR_C_BOLD" "#" "Title" "Project/Repo" "Author" "Status" "Created" "$BBPR_C_RESET"
+
+  printf '%s' "$prs" | jq -r '
+    .[] |
+    (if .participants | any(.role == "REVIEWER" and .status == "APPROVED") then "APPROVED"
+     elif .participants | any(.role == "REVIEWER" and .status == "NEEDS_WORK") then "NEEDS WORK"
+     else "UNAPPROVED"
+     end) as $status |
+    "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \($status)\u00a0 \(.createdDate[:10])"
+  '
+  printf '\n  %d PR(s)\n' "$count"
+}
+
+bbpr_cmd_open() {
+  local prs
+  prs="$(bbpr_cmd_list_prs "all")" || return 1
+  if (( BBPR_SHORT )); then
+    printf '%s' "$prs" | jq -r '.[] | "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)"'
+    return 0
+  fi
+  if (( BBPR_LONG && ! BBPR_JSON )); then
+    bbpr_print_long_prs "$prs"
+    return 0
+  fi
+
+  if (( BBPR_JSON )); then
+    printf '%s' "$prs" | jq '[.[] | {
+      id: .id, title: .title, state: .state,
+      author: (.author.user.slug // null),
+      created: .createdDate,
+      reviewers: [.participants[] | select(.role == "REVIEWER") | {slug: .user.slug, status: .status}]
+    }]'
+    return 0
+  fi
+
+  local count
+  count="$(printf '%s' "$prs" | jq 'length')"
+  if (( count == 0 )); then
+    bbpr_info "No open PRs found."
+    return 0
+  fi
+
+  printf '%b%-4s  %-48s  %-30s  %-14s  %-12s%b\n' \
+    "$BBPR_C_BOLD" "#" "Title" "Project/Repo" "Author" "Created" "$BBPR_C_RESET"
+
+  printf '%s' "$prs" | jq -r '
+    .[] |
+    "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \(.createdDate[:10])"
+  '
+  printf '\n  %d PR(s)\n' "$count"
+}
+
+bbpr_cmd_show() {
+  local spec="$1"
+  local pr_id
+  bbpr_parse_pr_id "$spec" >/dev/null || return 1
+  pr_id="$BBPR_PR_ID"
+
+  local pr_json open_comments resolved_body blocker_body
+  local pr_path="/rest/api/latest/projects/$BBPR_PR_PROJECT/repos/$BBPR_PR_REPO/pull-requests/$pr_id"
+  pr_json="$(bbpr_fetch "GET" "$pr_path?withProperties=true")" \
+    || { bbpr_error "Could not fetch PR #$pr_id."; return 1; }
+
+  local activities_body
+  activities_body="$(bbpr_fetch "GET" "$pr_path/activities")" || activities_body="{}"
+  open_comments="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state != "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state == "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  blocker_body="$(bbpr_fetch "GET" "$pr_path/blocker-comments")" \
+    || blocker_body="{}"
+
+  if (( BBPR_JSON )); then
+    printf '%s' "$pr_json" | jq --argjson oc "$open_comments" --argjson rc "$resolved_body" --argjson bc "$blocker_body" '
+      {
+        id: .id, title: .title, state: .state,
+        author: (.author.user.slug // null),
+        created: .createdDate, updated: .updatedDate,
+        sourceBranch: .fromRef.displayId,
+        destinationBranch: .toRef.displayId,
+        participants: [.participants[] | {role: .role, status: .status, user: .user.slug}],
+        comments: (
+          ([.comments.values[]?] + [$oc.values[]?] + [$bc.values[]?]) |
+          [.[] | {
+            id: .id, type: .type, state: .state,
+            author: (.author.user?.slug // null),
+            text: (.text.content // .text // ""),
+            anchor: .anchor, locations: (if .anchor.path then [{file: .anchor.path, line: .anchor.line, lineType: .anchor.lineType, fileType: .anchor.fileType}] else [] end), version: .version,
+            replies: (.comments // [])
+          }]
+        )
+      }
+    '
+    return 0
+  fi
+
+  # Human output for show
+  local title state author_slug src_branch dst_branch created updated
+
+  title="$(printf '%s' "$pr_json" | jq -r '.title')"
+  state="$(printf '%s' "$pr_json" | jq -r '.state')"
+  author_slug="$(printf '%s' "$pr_json" | jq -r '.author.user.slug')"
+  src_branch="$(printf '%s' "$pr_json" | jq -r '.fromRef.displayId')"
+  dst_branch="$(printf '%s' "$pr_json" | jq -r '.toRef.displayId')"
+  created="$(printf '%s' "$pr_json" | jq -r '.createdDate')"
+  updated="$(printf '%s' "$pr_json" | jq -r '.updatedDate')"
+
+  bbpr_success "PR #${pr_id}: ${title}"
+  printf '  State:       %s\n' "$state"
+  printf '  Author:      %s\n' "$author_slug"
+  printf '  Source:      %s\n' "$src_branch"
+  printf '  Destination: %s\n' "$dst_branch"
+  printf '  Created:     %s\n' "$created"
+  printf '  Updated:     %s\n' "$updated"
+
+  printf '\n%sParticipants:%s\n' "$BBPR_C_BOLD" "$BBPR_C_RESET"
+  printf '%s' "$pr_json" | jq -r '.participants[] |
+    "  [\(.role)] \(.user.slug) — \(.status // "no status")"'
+
+  printf '\n%sComments:%s\n' "$BBPR_C_BOLD" "$BBPR_C_RESET"
+
+  # Open comments
+  local ocount
+  ocount="$(printf '%s' "$open_comments" | jq -r '[.values[]?] | length')"
+  if (( ocount > 0 )); then
+    printf '  %s (Open)\n' "$BBPR_C_DIM"
+    printf '%s' "$open_comments" | jq -r '
+      .values[]? |
+      (if .anchor.path then "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")" else "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")" end) ,
+      "  \(.text.content // .text // "—")" ,
+      (if (.comments // []) | length > 0 then "  Replies:" else empty end) ,
+      (.comments // [] | .[] | "    [\(.type // "REPLY")] \(.author.user.displayName // .author.slug // "?") — \(.text.content // .text // "—")")
+    '
+  fi
+
+  # Resolved comments
+  local rcount
+  rcount="$(printf '%s' "$resolved_body" | jq -r '[.values[]?] | length')"
+  if (( rcount > 0 )); then
+    printf '\n  %s (Resolved — awaiting re-check)\n' "$BBPR_C_DIM"
+    printf '%s' "$resolved_body" | jq -r '
+      .values[]? |
+      (if .anchor.path then "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")  resolved=\(.resolvedDate // "never")" else "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")  resolved=\(.resolvedDate // "never")" end) ,
+      "  \(.text.content // .text // "—")"
+    '
+  fi
+
+  # Blocker comments
+  local bcount
+  bcount="$(printf '%s' "$blocker_body" | jq -r '[.values[]?] | length')"
+  if (( bcount > 0 )); then
+    printf '\n  %s (Blocker)\n' "$BBPR_C_RED"
+    printf '%s' "$blocker_body" | jq -r '
+      .values[]? |
+      (if .anchor.path then "  ★ BLOCKER [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")" else "  ★ BLOCKER [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")" end) ,
+      "  \(.text.content // .text // "—")"
+    '
+  fi
+
+  return 0
+}
+
+bbpr_cmd_comments() {
+  local spec="$1"
+  local pr_id
+  bbpr_parse_pr_id "$spec" >/dev/null || return 1
+  pr_id="$BBPR_PR_ID"
+
+  local resolved_body blocker_body
+  local pr_path="/rest/api/latest/projects/$BBPR_PR_PROJECT/repos/$BBPR_PR_REPO/pull-requests/$pr_id"
+  local activities_body
+  activities_body="$(bbpr_fetch "GET" "$pr_path/activities")" || activities_body="{}"
+  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state == "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  blocker_body="$(bbpr_fetch "GET" "$pr_path/blocker-comments")" \
+    || blocker_body="{}"
+
+  local rcount bcount
+  rcount="$(printf '%s' "$resolved_body" | jq -r '[.values[]?] | length')"
+  bcount="$(printf '%s' "$blocker_body" | jq -r '[.values[]?] | length')"
+
+  if (( BBPR_JSON )); then
+    printf '%s' "$resolved_body" | jq --argjson bc "$blocker_body" --arg id "$pr_id" '
+      {
+        id: ($id | tonumber),
+        comments: (
+          [.values[]? | {
+            id: .id, type: .type, state: .state,
+            author: (.author.user?.slug // null),
+            text: (.text.content // .text // ""),
+            anchor: .anchor, locations: (if .anchor.path then [{file: .anchor.path, line: .anchor.line, lineType: .anchor.lineType, fileType: .anchor.fileType}] else [] end), resolvedDate: .resolvedDate,
+            replies: (.comments // [])
+          }] +
+          [$bc.values[]? | {
+            id: .id, type: "BLOCKER",
+            state: .state,
+            author: (.author.user?.slug // null),
+            text: (.text.content // .text // ""),
+            anchor: .anchor, locations: (if .anchor.path then [{file: .anchor.path, line: .anchor.line, lineType: .anchor.lineType, fileType: .anchor.fileType}] else [] end), resolvedDate: null,
+            replies: (.comments // [])
+          }]
+        )
+      }
+    '
+    return 0
+  fi
+
+  if (( rcount == 0 && bcount == 0 )); then
+    bbpr_info "No comments found for PR #$pr_id."
+    return 0
+  fi
+
+  if (( bcount > 0 )); then
+    printf '\n%sBlocker Comments:%s  (%d)\n\n' "$BBPR_C_RED" "$BBPR_C_RESET" "$bcount"
+    printf '%s' "$blocker_body" | jq -r '
+      .values[]? |
+      "  #\(.id)  [\(.type // "BLOCKER")]  \(.author.user.displayName // .author.slug // "?")" ,
+      "        \(.anchor.path // "*"):\(.anchor.line // "?")" ,
+      "        \(.text.content // .text // "—")"
+    '
+  fi
+
+if (( rcount > 0 )); then
+  printf '\n%sResolved Comments (awaiting re-check):%s  (%d)\n\n' \
+    "$BBPR_C_SECTION" "$BBPR_C_RESET" "$rcount"
+  printf '%s' "$resolved_body" | jq -r '
+    .values[]? |
+    "  #\(.id)  [\(.type // "\"COMMENT\"")]"  \(.author.user.displayName // .author.slug // "?")" ,
+    "        \(.anchor.path // "*"):\(.anchor.line // "?")" ,
+    "        resolved=\(.resolvedDate // "never")" ,
+    "        \(.text.content // .text // "—")"
+    '
+  fi
+
+  printf '\n  Total: %d comment(s)\n' "$((rcount + bcount))"
+  return 0
+}
+
+run_main() {
+  bbpr_reset_state
+  BBPR_SUBCOMMAND=""
+  parse_opts "$@" || return $?
+  parse_prereqs
+
+  if (( BBPR_SHOW_HELP )); then
+    bbpr_usage
+    return 0
+  fi
+
+  local subcommand="$BBPR_SUBCOMMAND"
+  if [[ -z "$subcommand" ]]; then
+    bbpr_error "No subcommand specified. Run 'bbpr --help' for usage."
+    return 1
+  fi
+
+  local main_status=0
+  case "$subcommand" in
+    ping)    bbpr_cmd_ping;    main_status=$? ;;
+    mine)    bbpr_cmd_mine;    main_status=$? ;;
+    review)  bbpr_cmd_review;  main_status=$? ;;
+    open)    bbpr_cmd_open;    main_status=$? ;;
+    show)
+      [[ ${#BBPR_ARGS[@]} -ge 1 ]] || { bbpr_error "Usage: bbpr show PROJ/REPO/NNN"; return 1; }
+      bbpr_cmd_show "${BBPR_ARGS[0]}"; main_status=$? ;;
+    comments)
+      [[ ${#BBPR_ARGS[@]} -ge 1 ]] || { bbpr_error "Usage: bbpr comments PROJ/REPO/NNN"; return 1; }
+      bbpr_cmd_comments "${BBPR_ARGS[0]}"; main_status=$? ;;
+    *) bbpr_error "Unknown subcommand: $subcommand"; bbpr_usage; return 1 ;;
+  esac
+
+  return "$main_status"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi
