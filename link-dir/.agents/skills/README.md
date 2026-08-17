@@ -1,6 +1,6 @@
 # Skills Index
 
-21 skills — grouped by domain.
+29 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -16,7 +16,12 @@
 | **build** | Executes §T tasks top-to-bottom, flips status (·→~→x), commits per task. Auto-backprop on failure. |
 | **caveman** | Compression codec for spec writes: drops filler, uses symbols (→ ∴ ∀). ~75% token cut. Used by spec/build/check. |
 | **check** | Read-only drift detector. Diffs SPEC.md vs code, reports HOLD/VIOLATE/DRIFT/MISSING with file:line. |
+| **executing-plans** | Executes an approved implementation plan with review checkpoints. |
 | **spec** | Sole mutator of SPEC.md. Modes: NEW/DISTILL/BACKPROP/AMEND. Sections: §G §C §I §V §T §B. |
+| **subagent-driven-development** | Executes implementation plans through independent subagent tasks and review. |
+| **systematic-debugging** | Investigates bugs and failures systematically to establish root cause. |
+| **test-driven-development** | Drives implementation from focused tests written before production code. |
+| **writing-plans** | Creates detailed implementation plans from requirements before coding. |
 
 ---
 
@@ -26,17 +31,6 @@
 |-------|------|
 | **bash-shell-testing** | Colocated *.test.sh structure, bin/test + bin/lint templates, colored [PASS]/[FAIL] output. |
 | **fancy-interactive-bash** | Quality Bash pattern: parse_opts/parse_prereqs/run_main, sourceable functions, color UX, testable by function. |
-
----
-
-## Wiki / Obsidian
-
-| Skill | Does |
-|-------|------|
-| **cross-linker** | Discovers and inserts missing [[wikilinks]], scores candidates, adds frontmatter relationships. |
-| **daily-update** | Wiki maintenance: checks source freshness, updates index.md, regenerates hot.md, writes notification state. |
-| **graph-colorize** | Rewrites .obsidian/graph.json colorGroups by tag/category/visibility. Backs up before writing. |
-| **memory-bridge** | Browse/compare wiki knowledge by AI source (claude/codex/hermes). Diff mode finds blind spots. |
 
 ---
 
@@ -65,8 +59,15 @@
 
 | Skill | Does |
 |-------|------|
-| **impl-validator** | Second-opinion checker: artifact existence, completeness, correctness. Returns PASS/WARN/FAIL. |
-| **skill-creator** | Interview → draft → test with subagents → evaluate → iterate → optimize trigger → package .skill. |
+| **brainstorming** | Clarifies intent and presents an approved design before implementation. |
+| **dispatching-parallel-agents** | Coordinates independent tasks across isolated parallel agents. |
+| **finishing-a-development-branch** | Guides integration decisions after implementation and verification are complete. |
+| **receiving-code-review** | Evaluates code review feedback rigorously before applying changes. |
+| **requesting-code-review** | Prepares completed work for focused review against its requirements. |
+| **using-git-worktrees** | Creates isolated worktrees for safe feature and plan execution. |
+| **using-superpowers** | Selects and invokes applicable skills before taking task actions. |
+| **verification-before-completion** | Requires evidence from verification before claiming work is complete. |
+| **writing-skills** | Creates, improves, and validates reusable agent skills. |
 
 ---
 
@@ -78,4 +79,4 @@
 
 ---
 
-*Last updated: 2026-06-27 · 21 skills*
+*Last updated: 2026-08-17 · 29 skills*
