@@ -1,0 +1,522 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash disable=SC2034
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+SKILLS_ENABLED_ROOT="${SKILLS_ENABLED_ROOT:-$ROOT_DIR/link-dir/.agents/skills}"
+SKILLS_DISABLED_ROOT="${SKILLS_DISABLED_ROOT:-$ROOT_DIR/link-dir/.agents/skills-disabled}"
+
+SKILLS_SUBCOMMAND=""
+SKILLS_SHOW_DISABLED=0
+SKILLS_VERBOSE=0
+SKILLS_SHOW_HELP=0
+SKILLS_COLOR_MODE="auto"
+SKILLS_COLOR_ENABLED=0
+SKILLS_ENABLE_ID=""
+
+if [[ -n "${NO_COLOR:-}" ]]; then
+  SKILLS_C_RESET=""
+  SKILLS_C_BOLD=""
+  SKILLS_C_GREEN=""
+  SKILLS_C_RED=""
+  SKILLS_C_SECTION=""
+  SKILLS_C_DIM=""
+else
+  SKILLS_C_RESET=$'\033[0m'
+  SKILLS_C_BOLD=$'\033[1m'
+  SKILLS_C_GREEN=$'\033[32m'
+  SKILLS_C_RED=$'\033[31m'
+  SKILLS_C_SECTION=$'\033[33m'
+  SKILLS_C_DIM=$'\033[2m'
+fi
+
+skills_usage() {
+  local section_style="" flag_style="" reset_style=""
+  if (( SKILLS_COLOR_ENABLED )); then
+    section_style="${SKILLS_C_SECTION}"
+    flag_style="${SKILLS_C_GREEN}"
+    reset_style="${SKILLS_C_RESET}"
+  fi
+
+  printf 'Manage agent skills: list, enable, disable.\n\n'
+  printf '%sUsage:%s %sbin/skills%s <subcommand> [options]\n\n' "$section_style" "$reset_style" "$section_style" "$reset_style"
+  printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
+  printf '  %slist%s              Show enabled skills (optionally disabled)\n' "$flag_style" "$reset_style"
+  printf '  %sstatus%s            Show enabled and disabled skills with counts\n' "$flag_style" "$reset_style"
+  printf '  %senable%s <id>     Enable a disabled skill\n' "$flag_style" "$reset_style"
+  printf '  %sdisable%s <id>    Disable an enabled skill\n' "$flag_style" "$reset_style"
+  printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
+  printf '  %s-h, --help%s        Show this help.\n' "$flag_style" "$reset_style"
+  printf '  %s--color%s           Force colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s--no-color%s        Disable colored output.\n' "$flag_style" "$reset_style"
+  printf '  %s--verbose%s       Show full descriptions.\n' "$flag_style" "$reset_style"
+}
+
+skills_error() { printf '%s\n' "$*" >&2; }
+
+skills_color_print() {
+  local color="$1"
+  shift
+
+  if (( SKILLS_COLOR_ENABLED )); then
+    printf '%b%s%b\n' "$color" "$*" "$SKILLS_C_RESET"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+skills_info() {
+  if (( SKILLS_COLOR_ENABLED )); then
+    skills_color_print "$SKILLS_C_DIM" "$*"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+skills_success() {
+  if (( SKILLS_COLOR_ENABLED )); then
+    skills_color_print "$SKILLS_C_GREEN" "$*"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+skills_warn() {
+  printf '%sWarning: %s\n' "$SKILLS_C_RESET" "$*" >&2
+}
+
+skills_verbose() {
+  if (( SKILLS_VERBOSE )); then
+    skills_info "$*"
+  fi
+}
+
+skills_list_row() {
+  local id="$1"
+  local is_enabled="${2:-0}"  # 1=enabled, 0=disabled
+  local description="${3:-}"
+
+  if (( is_enabled )); then
+    if (( SKILLS_COLOR_ENABLED )); then
+      printf '  %s✓%s %s%s%s' "$SKILLS_C_GREEN" "$SKILLS_C_RESET" "$SKILLS_C_BOLD" "$id" "$SKILLS_C_RESET"
+    else
+      printf '  ✓ %s' "$id"
+    fi
+  else
+    if (( SKILLS_COLOR_ENABLED )); then
+      printf '  %s-%s %s%s%s' "$SKILLS_C_DIM" "$SKILLS_C_RESET" "$SKILLS_C_BOLD" "$id" "$SKILLS_C_RESET"
+    else
+      printf '  - %s' "$id"
+    fi
+  fi
+
+  if [[ -n "$description" ]]; then
+    printf ': %s' "$description"
+  fi
+  printf '\n'
+}
+
+skills_list_ids() {
+  local root="$1"
+  local id=""
+
+  if [[ ! -d "$root" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    if [[ -d "$root/$id" && -f "$root/$id/SKILL.md" ]]; then
+      printf '%s\n' "$id"
+    fi
+  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | while IFS= read -r dir; do basename "$dir"; done)
+}
+
+skills_read_metadata() {
+  local skill_dir="$1"
+  local skill_file="$skill_dir/SKILL.md"
+  local summary=""
+  local description=""
+  local in_description=0
+  local desc_lines=""
+  local first_line=1
+
+  if [[ ! -f "$skill_file" ]]; then
+    printf '%s\n' "$(basename "$skill_dir")"
+    printf '\n'
+    return 0
+  fi
+
+  while IFS= read -r line; do
+    # Skip blank lines at the top (between heading and metadata)
+    if [[ $first_line -eq 1 ]]; then
+      first_line=0
+      if [[ -z "$line" || "$line" == "# "* ]]; then
+        continue
+      fi
+    fi
+
+    # Skip the heading line (starts with #)
+    if [[ "$line" == "# "* ]]; then
+      continue
+    fi
+
+    # Check for summary field
+    if [[ $in_description -eq 0 && "$line" =~ ^summary:\ *(.*) ]]; then
+      summary="${BASH_REMATCH[1]}"
+      summary="$(printf '%s' "$summary" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      continue
+    fi
+
+    # Check for description field
+    if [[ $in_description -eq 0 && "$line" == "description:"* ]]; then
+      in_description=1
+      local desc_value="${line#description:}"
+      desc_value="$(printf '%s' "$desc_value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+      # Check for YAML block literal (> marker)
+      if [[ "$desc_value" == ">" ]]; then
+        desc_lines=""
+      else
+        # Single-line description
+        desc_value="$(printf '%s' "$desc_value" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        printf '%s\n' "$summary"
+        printf '%s\n' "$desc_value"
+      fi
+      continue
+    fi
+
+    # Inside a YAML block description
+    if [[ $in_description -eq 1 ]]; then
+      if [[ -z "$line" ]]; then
+        # Blank line ends the block
+        in_description=0
+      else
+        local clean_line
+        clean_line="$(printf '%s' "${line}" | sed 's/^[[:space:]]*//')"
+        if [[ -n "$desc_lines" ]]; then
+          desc_lines="${desc_lines}"$'\n'"${clean_line}"
+        else
+          desc_lines="$clean_line"
+        fi
+      fi
+    fi
+  done < "$skill_file"
+
+  # Output: summary on first line, description on second
+  printf '%s\n' "$summary"
+  printf '%s\n' "$desc_lines"
+}
+
+skills_discover() {
+  local location="$1"
+  local root=""
+
+  case "$location" in
+    enabled)
+      root="$SKILLS_ENABLED_ROOT"
+      ;;
+    disabled)
+      root="$SKILLS_DISABLED_ROOT"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  local id=""
+  for id in $(skills_list_ids "$root"); do
+    printf '%s\n' "$id"
+  done
+}
+
+skills_read_skill_summary() {
+  local skill_dir="$1"
+  local result
+  result="$(skills_read_metadata "$skill_dir")"
+  printf '%s' "$result" | head -n 1
+}
+
+skills_read_skill_description() {
+  local skill_dir="$1"
+  local result
+  result="$(skills_read_metadata "$skill_dir")"
+  printf '%s' "$result" | sed -n '2p'
+}
+
+skills_parse_prereqs() {
+  case "$SKILLS_COLOR_MODE" in
+    always) SKILLS_COLOR_ENABLED=1 ;;
+    never) SKILLS_COLOR_ENABLED=0 ;;
+    auto)
+      if [[ -n "${NO_COLOR:-}" ]]; then
+        SKILLS_COLOR_ENABLED=0
+      elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+        SKILLS_COLOR_ENABLED=1
+      else
+        SKILLS_COLOR_ENABLED=0
+      fi
+      ;;
+  esac
+}
+
+skills_parse_opts() {
+  local subcommand_set=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)
+        SKILLS_SHOW_HELP=1
+        shift
+        ;;
+      --color)
+        SKILLS_COLOR_MODE="always"
+        shift
+        ;;
+      --no-color)
+        SKILLS_COLOR_MODE="never"
+        shift
+        ;;
+      --verbose)
+        SKILLS_VERBOSE=1
+        shift
+        ;;
+      --disabled)
+        SKILLS_SHOW_DISABLED=1
+        shift
+        ;;
+      -*)
+        skills_error "Unknown option: $1"
+        return 1
+        ;;
+      *)
+        if [[ $subcommand_set -eq 0 ]]; then
+          # First positional must be a subcommand
+          case "$1" in
+            list|status|enable|disable)
+              SKILLS_SUBCOMMAND="$1"
+              subcommand_set=1
+              ;;
+            *)
+              skills_error "Unknown subcommand: $1"
+              return 1
+              ;;
+          esac
+          shift
+        else
+          # After a subcommand, positional can be:
+          # - skill ID for enable/disable
+          # - second subcommand (error)
+          case "$1" in
+            list|status|enable|disable)
+              skills_error "Only one subcommand is supported."
+              return 1
+              ;;
+            *)
+              case "$SKILLS_SUBCOMMAND" in
+                enable|disable)
+                  SKILLS_ENABLE_ID="$1"
+                  shift
+                  ;;
+                *)
+                  skills_error "Unexpected argument for subcommand '$SKILLS_SUBCOMMAND'"
+                  return 1
+                  ;;
+              esac
+            ;;
+          esac
+        fi
+        ;;
+    esac
+  done
+
+  if [[ $subcommand_set -eq 0 ]]; then
+    if [[ "$SKILLS_SHOW_HELP" -eq 1 ]]; then
+      skills_usage
+      return 0
+    fi
+    skills_usage
+    return 1
+  fi
+}
+
+skills_run() {
+  if (( SKILLS_SHOW_HELP )); then
+    case "$SKILLS_SUBCOMMAND" in
+      enable)
+        printf 'Enable a disabled skill.\n\n'
+        printf 'Usage: %s enable <skill-id>\n' "$(basename "$0")"
+        printf 'Options:\n'
+        printf '  -h, --help    Show this help.\n'
+        printf '  --color       Force colored output.\n'
+        printf '  --no-color    Disable colored output.\n'
+        return 0
+        ;;
+      disable)
+        printf 'Disable an enabled skill.\n\n'
+        printf 'Usage: %s disable <skill-id>\n' "$(basename "$0")"
+        printf 'Options:\n'
+        printf '  -h, --help    Show this help.\n'
+        printf '  --color       Force colored output.\n'
+        printf '  --no-color    Disable colored output.\n'
+        return 0
+        ;;
+      *)
+        ;;  # list and status don't need subcommand-specific help
+    esac
+  fi
+  case "$SKILLS_SUBCOMMAND" in
+    list)   skills_list ;;
+    status) skills_status ;;
+    enable) skills_enable "$SKILLS_ENABLE_ID" ;;
+    disable) skills_disable "$SKILLS_ENABLE_ID" ;;
+  esac
+}
+skills_list() {
+  local id=""
+  local root=""
+  local is_disabled_list=0
+
+  if (( SKILLS_SHOW_DISABLED )); then
+    root="$SKILLS_DISABLED_ROOT"
+    is_disabled_list=1
+  else
+    root="$SKILLS_ENABLED_ROOT"
+  fi
+
+  for id in $(skills_list_ids "$root"); do
+    if (( is_disabled_list )); then
+      skills_list_row "$id" 0 "$(skills_read_skill_summary "$root/$id" 2>/dev/null || true)"
+      skills_verbose "  $(skills_read_skill_description "$root/$id" 2>/dev/null || true)"
+    else
+      skills_list_row "$id" 1 "$(skills_read_skill_summary "$root/$id" 2>/dev/null || true)"
+      skills_verbose "  $(skills_read_skill_description "$root/$id" 2>/dev/null || true)"
+    fi
+  done
+}
+
+skills_status() {
+  local id=""
+  local total=0
+  local enabled_count=0
+  local disabled_count=0
+  local enabled_ids=()
+  local disabled_ids=()
+
+  mapfile -t enabled_ids < <(skills_discover enabled)
+  mapfile -t disabled_ids < <(skills_discover disabled 2>/dev/null)
+
+  for id in "${enabled_ids[@]}"; do
+    [[ -n "$id" ]] || continue
+    skills_list_row "$id" 1 "$(skills_read_skill_summary "$SKILLS_ENABLED_ROOT/$id" 2>/dev/null || true)"
+    skills_verbose "  $(skills_read_skill_description "$SKILLS_ENABLED_ROOT/$id" 2>/dev/null || true)"
+    enabled_count=$((enabled_count + 1))
+  done
+
+  if (( enabled_count > 0 )); then
+    printf '\n'
+  fi
+
+  for id in "${disabled_ids[@]}"; do
+    [[ -n "$id" ]] || continue
+    skills_list_row "$id" 0 "$(skills_read_skill_summary "$SKILLS_DISABLED_ROOT/$id" 2>/dev/null || true)"
+    skills_verbose "  $(skills_read_skill_description "$SKILLS_DISABLED_ROOT/$id" 2>/dev/null || true)"
+    disabled_count=$((disabled_count + 1))
+  done
+
+  total=$((enabled_count + disabled_count))
+  printf '\n'
+  printf '  total:  %d\n' "$total"
+  printf '  enabled: %d\n' "$enabled_count"
+  printf '  disabled: %d\n' "$disabled_count"
+}
+
+skills_validate_id() {
+  local id="$1"
+
+  # Reject empty
+  if [[ -z "$id" ]]; then
+    skills_error "Skill ID must not be empty."
+    return 1
+  fi
+
+  # Reject path separators and dangerous patterns
+  if [[ "$id" == *"/"* || "$id" == *".."* || "$id" == "." || "$id" == *"."*/* || "$id" == *"."* ]]; then
+    skills_error "Skill ID must not contain path separators, '..', or '.': $id"
+    return 1
+  fi
+
+  return 0
+}
+
+skills_enable() {
+  local id="$1"
+
+  if [[ -z "$id" ]]; then
+    skills_error "Usage: skills enable <skill-id>"
+    return 1
+  fi
+
+  if ! skills_validate_id "$id"; then
+    return 1
+  fi
+
+  local src_dir="$SKILLS_DISABLED_ROOT/$id"
+  local dst_dir="$SKILLS_ENABLED_ROOT/$id"
+
+  if [[ ! -d "$src_dir" ]]; then
+    skills_error "Skill '$id' not found in disabled skills."
+    skills_error "Make sure it exists under: ${SKILLS_DISABLED_ROOT#"$ROOT_DIR"/}/$id"
+    return 1
+  fi
+
+  if [[ -e "$dst_dir" ]]; then
+    skills_error "Skill '$id' already exists in enabled skills."
+    return 1
+  fi
+
+  mkdir -p "$SKILLS_ENABLED_ROOT"
+  mv "$src_dir" "$dst_dir"
+  skills_success "Enabled skill '$id'."
+}
+
+skills_disable() {
+  local id="$1"
+
+  if [[ -z "$id" ]]; then
+    skills_error "Usage: skills disable <skill-id>"
+    return 1
+  fi
+
+  if ! skills_validate_id "$id"; then
+    return 1
+  fi
+
+  local src_dir="$SKILLS_ENABLED_ROOT/$id"
+  local dst_dir="$SKILLS_DISABLED_ROOT/$id"
+
+  if [[ ! -d "$src_dir" ]]; then
+    skills_error "Skill '$id' not found in enabled skills."
+    skills_error "Make sure it exists under: ${SKILLS_ENABLED_ROOT#"$ROOT_DIR"/}/$id"
+    return 1
+  fi
+
+  if [[ -e "$dst_dir" ]]; then
+    skills_error "Skill '$id' already exists in disabled skills."
+    return 1
+  fi
+
+  mkdir -p "$SKILLS_DISABLED_ROOT"
+  mv "$src_dir" "$dst_dir"
+  skills_success "Disabled skill '$id'."
+}
+
+run_main() {
+  skills_parse_opts "$@" || return $?
+  skills_parse_prereqs
+  skills_run
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  run_main "$@"
+fi

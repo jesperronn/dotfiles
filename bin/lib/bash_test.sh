@@ -108,6 +108,18 @@ assert_status() {
   test_pass "$label"
 }
 
+assert_not_status() {
+  local unexpected="$1"
+  local actual="$2"
+  local label="$3"
+
+  if [[ "$unexpected" == "$actual" ]]; then
+    test_fail "$label" "Unexpected status: [$actual]"
+  fi
+
+  test_pass "$label"
+}
+
 capture_command() {
   local output_var="$1"
   local status_var="$2"
