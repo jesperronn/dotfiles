@@ -28,12 +28,14 @@ set -euo pipefail
 url="${!#}"
 if [[ "$url" == *"application-properties"* && "$*" == *"-D -"* ]]; then
   printf 'HTTP/1.1 200 OK\r\nX-AUSERNAME: test-user\r\n\r\n200'
-elif [[ "$url" == *"pull-requests/42"* ]]; then
-  printf '{"id":42,"title":"Test PR","state":"OPEN","author":{"user":{"slug":"test-user"}},"createdDate":"2026-01-01","updatedDate":"2026-01-01","fromRef":{"displayId":"feature"},"toRef":{"displayId":"main"},"participants":[],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}\n200\n'
-elif [[ "$url" == *"dashboard/pull-requests"* ]]; then
-  printf '{"isLastPage":true,"values":[{"id":42,"title":"Test PR","state":"OPEN","author":{"user":{"slug":"author","displayName":"Test Author"}},"createdDate":"2026-01-01","fromRef":{"repository":{"slug":"repo","name":"Repo","project":{"key":"PROJ"}}},"participants":[{"role":"REVIEWER","user":{"slug":"test-user"},"status":"UNAPPROVED"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}]}\n200\n'
-elif [[ "$url" == *"activities"* || "$url" == *"blocker-comments"* ]]; then
+elif [[ "$url" == *"activities"* ]]; then
+  printf '{"isLastPage":true,"values":[{"comment":{"id":7,"state":"OPEN","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Please fix this branch.","anchor":{"path":"src/app.rb","line":12,"lineType":"ADDED","fileType":"TO"},"comments":[{"author":{"slug":"author","displayName":"Test Author"},"text":"Fixed in latest commit.","state":"OPEN"}]}},{"comment":{"id":8,"state":"RESOLVED","updatedDate":"2026-01-02","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Old concern.","anchor":{"path":"test/app_test.rb","line":4,"lineType":"CONTEXT","fileType":"TO"},"comments":[]}}]}\n200\n'
+elif [[ "$url" == *"blocker-comments"* ]]; then
   printf '{"isLastPage":true,"values":[]}\n200\n'
+elif [[ "$url" == *"pull-requests/42"* ]]; then
+  printf '{"id":42,"title":"Test PR","state":"OPEN","author":{"user":{"slug":"test-user","displayName":"Test Author"}},"createdDate":"2026-01-01","updatedDate":"2026-01-01","fromRef":{"displayId":"feature","latestCommit":"abcdef1234567890","repository":{"slug":"repo","name":"Repo","project":{"key":"PROJ"}}},"toRef":{"displayId":"main"},"participants":[{"role":"REVIEWER","user":{"slug":"reviewer","displayName":"Review Person"},"status":"UNAPPROVED"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}\n200\n'
+elif [[ "$url" == *"dashboard/pull-requests"* ]]; then
+  printf '{"isLastPage":true,"values":[{"id":42,"title":"Test PR","state":"OPEN","author":{"user":{"slug":"author","displayName":"Test Author"}},"createdDate":"2026-01-01","fromRef":{"displayId":"feature","latestCommit":"abcdef1234567890","repository":{"slug":"repo","name":"Repo","project":{"key":"PROJ"}}},"toRef":{"displayId":"main"},"participants":[{"role":"REVIEWER","user":{"slug":"test-user"},"status":"UNAPPROVED"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}]}\n200\n'
 else
   printf '{}\n200\n'
 fi
@@ -51,6 +53,7 @@ test_help_lists_output_modes() {
   assert_contains "$output" "--short" "help lists --short"
   assert_contains "$output" "--long" "help lists --long"
   assert_contains "$output" "PROJ/REPO/NNN" "help lists slash PR identifiers"
+  assert_contains "$output" "-i, --interactive" "help lists interactive show mode"
 }
 
 test_show_accepts_bitbucket_urls() {
@@ -83,6 +86,35 @@ test_op_is_mocked_when_token_is_not_supplied() {
   assert_eq "mock-op" "$(cat "$BBPR_OP_MARKER")" "ping invokes the test op mock"
 }
 
+test_fetch_token_prints_waiting_message_for_op() {
+  local output="" status=0
+  : >"$BBPR_OP_MARKER"
+  capture_command output status "$BBPR_BIN" review --short
+  assert_status "0" "$status" "review --short succeeds with mocked op"
+  assert_contains "$output" "Waiting for 1Password" "op-backed token lookup reports waiting text"
+  assert_eq "mock-op" "$(cat "$BBPR_OP_MARKER")" "review still invokes the op mock"
+}
+
+test_review_default_emits_structured_markdown() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" review
+  assert_status "0" "$status" "review exits successfully"
+  assert_contains "$output" "## Review Queue" "review prints a Markdown heading"
+  assert_contains "$output" "- [ ] PROJ/repo/42" "review prints checkbox-style PR entries"
+  assert_contains "$output" "Author: Test Author" "review includes reviewer context"
+  assert_not_contains "$output" "https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42 TA Test PR" "review no longer defaults to long flat lines"
+}
+
+test_review_short_adds_next_step_hint() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" review --short
+  assert_status "0" "$status" "review --short exits successfully"
+  assert_contains "$output" "PROJ/repo/42" "review --short still emits a show identifier"
+  assert_contains "$output" "next: bbpr show PROJ/repo/42" "review --short adds the next-step hint"
+}
+
 test_review_short_and_long_output() {
   local output="" status=0
   capture_command output status "$BBPR_BIN" review --short
@@ -93,6 +125,83 @@ test_review_short_and_long_output() {
   assert_status "0" "$status" "review --long exits successfully"
   assert_contains "$output" "https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42" "review --long emits a clickable URL"
   assert_contains "$output" "TA Test PR" "review --long emits author initials and title"
+}
+
+test_review_long_preserves_clickable_lines() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" review --long
+  assert_status "0" "$status" "review --long exits successfully"
+  assert_contains "$output" "https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42" "review --long keeps clickable URLs"
+  assert_contains "$output" "TA Test PR" "review --long keeps author initials and title"
+  assert_not_contains "$output" "## Review Queue" "review --long bypasses Markdown mode"
+}
+
+test_show_default_emits_structured_reviewer_handoff() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" show PROJ/repo/42
+  assert_status "0" "$status" "show exits successfully"
+  assert_contains "$output" "## PR #42: Test PR" "show prints a structured Markdown heading"
+  assert_contains "$output" "Branch: feature -> main" "show includes source and destination branches"
+  assert_contains "$output" "Latest Commit: abcdef1234567890" "show includes the latest source commit"
+  assert_contains "$output" "Relevant Files: src/app.rb, test/app_test.rb" "show summarizes relevant files from review comments"
+  assert_contains "$output" "Review Person: Please fix this branch." "show includes open comments"
+  assert_contains "$output" "Test Author: Fixed in latest commit." "show includes comment replies"
+  assert_contains "$output" "Resolved Comments" "show includes resolved review context"
+}
+
+test_show_json_behavior_is_preserved() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" show --json PROJ/repo/42
+  assert_status "0" "$status" "show --json exits successfully"
+  assert_contains "$output" '"id": 42' "show --json keeps the PR id field"
+  assert_contains "$output" '"sourceBranch": "feature"' "show --json keeps branch fields"
+  assert_contains "$output" '"comments": [' "show --json keeps comments collection"
+  assert_contains "$output" '"text": "Please fix this branch."' "show --json keeps comment text"
+}
+
+test_show_interactive_requires_fzf() {
+  local output="" status=0
+  local path_without_fzf="$TEST_TMP_DIR/bin:/usr/bin:/bin"
+
+  rm -f "$TEST_TMP_DIR/bin/fzf"
+  capture_command output status env PATH="$path_without_fzf" "$BBPR_BIN" show --interactive
+  assert_status "1" "$status" "show --interactive fails without fzf"
+  assert_contains "$output" "fzf is not installed or not on PATH" "interactive mode explains the missing dependency"
+}
+
+test_show_interactive_short_flag_requires_fzf() {
+  local output="" status=0
+  local path_without_fzf="$TEST_TMP_DIR/bin:/usr/bin:/bin"
+
+  rm -f "$TEST_TMP_DIR/bin/fzf"
+  capture_command output status env PATH="$path_without_fzf" "$BBPR_BIN" show -i
+  assert_status "1" "$status" "show -i fails without fzf"
+  assert_contains "$output" "fzf is not installed or not on PATH" "short interactive flag explains the missing dependency"
+}
+
+test_show_interactive_uses_fzf_preview() {
+  local output="" status=0
+
+  cat >"$TEST_TMP_DIR/bin/fzf" <<'MOCK_FZF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"${BBPR_FZF_ARGS_LOG:?}"
+cat >"${BBPR_FZF_INPUT_LOG:?}"
+printf 'PROJ/repo/42\tTest PR\tTest Author\n'
+MOCK_FZF
+  chmod +x "$TEST_TMP_DIR/bin/fzf"
+
+  export BBPR_FZF_ARGS_LOG="$TEST_TMP_DIR/fzf.args"
+  export BBPR_FZF_INPUT_LOG="$TEST_TMP_DIR/fzf.input"
+
+  capture_command output status "$BBPR_BIN" show --interactive
+  assert_status "0" "$status" "show --interactive succeeds with mocked fzf"
+  assert_contains "$(cat "$BBPR_FZF_ARGS_LOG")" "--preview" "interactive mode configures fzf preview"
+  assert_contains "$(cat "$BBPR_FZF_ARGS_LOG")" "bbpr show" "interactive preview reuses the show subcommand"
+  assert_contains "$(cat "$BBPR_FZF_INPUT_LOG")" "PROJ/repo/42" "interactive mode offers review PR identifiers to fzf"
+  assert_contains "$output" "## PR #42: Test PR" "interactive selection prints the chosen PR details"
 }
 
 test_list_commands_use_dashboard_api() {

@@ -7,6 +7,8 @@ BBPR_COLOR_ENABLED=0
 BBPR_JSON=0
 BBPR_SHORT=0
 BBPR_LONG=1
+BBPR_LONG_REQUESTED=0
+BBPR_INTERACTIVE=0
 BBPR_BASE_URL="https://stash.stil.dk"
 BBPR_TOKEN=""
 BBPR_CURRENT_SLUG=""
@@ -30,6 +32,8 @@ bbpr_reset_state() {
   BBPR_JSON=0
   BBPR_SHORT=0
   BBPR_LONG=1
+  BBPR_LONG_REQUESTED=0
+  BBPR_INTERACTIVE=0
   BBPR_BASE_URL="https://stash.stil.dk"
   BBPR_TOKEN=""
   BBPR_CURRENT_SLUG=""
@@ -58,9 +62,10 @@ bbpr_usage() {
   printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
   printf '  %sping%s              Check API connectivity.\n' "$command_style" "$reset_style"
   printf '  %smine%s              List PRs I authored.\n' "$command_style" "$reset_style"
-  printf '  %sreview%s            List PRs I am reviewing.\n' "$command_style" "$reset_style"
+  printf '  %sreview%s            Show reviewer Markdown by default.\n' "$command_style" "$reset_style"
   printf '  %sopen%s              List all open PRs.\n' "$command_style" "$reset_style"
   printf '  %sshow%s %sPROJ/REPO/NNN%s  Show full PR details.\n' "$command_style" "$placeholder_style" "$reset_style" "$reset_style"
+  printf '  %sshow%s %s-i, --interactive%s  Pick a PR with fzf and preview details.\n' "$command_style" "$reset_style" "$flag_style" "$reset_style"
   printf '  %scomments%s %sPROJ/REPO/NNN%s  Show resolved + blocker comments.\n' "$command_style" "$placeholder_style" "$reset_style" "$reset_style"
 
   printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
@@ -96,6 +101,7 @@ bbpr_color_print() {
 
 bbpr_info()    { bbpr_color_print "${BBPR_C_BOLD}${BBPR_C_BLUE}" "$*"; }
 bbpr_success() { bbpr_color_print "$BBPR_C_GREEN" "$*"; }
+bbpr_dim()     { bbpr_color_print "$BBPR_C_DIM" "$*"; }
 bbpr_warn()    { bbpr_color_print "$BBPR_C_RED" "Warning: $*" >&2; }
 bbpr_error()   { bbpr_color_print "$BBPR_C_RED" "$*" >&2; }
 
@@ -107,7 +113,8 @@ parse_opts() {
       --verbose) BBPR_VERBOSE=1; shift ;;
       --json) BBPR_JSON=1; shift ;;
       --short) BBPR_SHORT=1; shift ;;
-      --long) BBPR_LONG=1; BBPR_SHORT=0; shift ;;
+      --long) BBPR_LONG=1; BBPR_LONG_REQUESTED=1; BBPR_SHORT=0; shift ;;
+      -i|--interactive) BBPR_INTERACTIVE=1; shift ;;
       --help|-h) BBPR_SHOW_HELP=1; shift ;;
       --base-url) [[ $# -ge 2 ]] && { BBPR_BASE_URL="$2"; shift 2; } || shift ;;
       --base-url=*) BBPR_BASE_URL="${1#--base-url=}"; shift ;;
@@ -151,6 +158,7 @@ bbpr_fetch_token() {
   fi
   local token=""
   if command -v op >/dev/null 2>&1; then
+    bbpr_dim "Waiting for 1Password: op item get BITBUCKET_TOKEN_JRJ" >&2
     token="$(op item get "BITBUCKET_TOKEN_JRJ" --fields label=token --reveal 2>/dev/null)" || token=""
   fi
   if [[ -z "$token" ]]; then
@@ -399,6 +407,48 @@ bbpr_print_long_prs() {
   '
 }
 
+bbpr_render_review_markdown() {
+  local prs="$1"
+
+  printf '%s' "$prs" | jq -r --arg base "$BBPR_BASE_URL" '
+    if length == 0 then
+      "## Review Queue\n\n_No pending review assignments._"
+    else
+      [
+        "## Review Queue",
+        "",
+        (.[] |
+          ((.fromRef.repository.project.key // "?") + "/" + (.fromRef.repository.slug // "?") + "/" + (.id | tostring)) as $spec |
+          (.links.self[0].href // ($base + "/projects/" + (.fromRef.repository.project.key // "?") + "/repos/" + (.fromRef.repository.slug // "?") + "/pull-requests/" + (.id | tostring))) as $url |
+          (if .participants | any(.role == "REVIEWER" and .status == "APPROVED") then "APPROVED"
+           elif .participants | any(.role == "REVIEWER" and .status == "NEEDS_WORK") then "NEEDS WORK"
+           else "UNAPPROVED"
+           end) as $status |
+          [
+            "- [ ] \($spec)",
+            "  Title: \(.title // "Untitled PR")",
+            "  Author: \(.author.user.displayName // .author.user.slug // "?")",
+            "  URL: \($url)",
+            "  Status: \($status)"
+          ] | join("\n")
+        )
+      ] | join("\n")
+    end
+  '
+}
+
+bbpr_print_review_short_with_hint() {
+  local prs="$1"
+  local short_ids first_id
+
+  short_ids="$(printf '%s' "$prs" | jq -r '.[] | "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)"')"
+  printf '%s\n' "$short_ids"
+  first_id="$(printf '%s\n' "$short_ids" | sed -n '1p')"
+  if [[ -n "$first_id" ]]; then
+    printf '\nnext: bbpr show %s\n' "$first_id"
+  fi
+}
+
 bbpr_cmd_mine() {
   local prs
   prs="$(bbpr_cmd_list_prs "AUTHOR")" || return 1
@@ -443,10 +493,10 @@ bbpr_cmd_review() {
   local prs
   prs="$(bbpr_cmd_list_prs "REVIEWER")" || return 1
   if (( BBPR_SHORT )); then
-    printf '%s' "$prs" | jq -r '.[] | "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)"'
+    bbpr_print_review_short_with_hint "$prs"
     return 0
   fi
-  if (( BBPR_LONG && ! BBPR_JSON )); then
+  if (( BBPR_LONG_REQUESTED && ! BBPR_JSON )); then
     bbpr_print_long_prs "$prs"
     return 0
   fi
@@ -461,26 +511,7 @@ bbpr_cmd_review() {
     return 0
   fi
 
-  local count
-  count="$(printf '%s' "$prs" | jq 'length')"
-  if (( count == 0 )); then
-    bbpr_info "You have no pending review assignments."
-    return 0
-  fi
-
-  printf '\n'
-  printf '%b%-4s  %-48s  %-30s  %-14s  %-12s  %-12s%b\n' \
-    "$BBPR_C_BOLD" "#" "Title" "Project/Repo" "Author" "Status" "Created" "$BBPR_C_RESET"
-
-  printf '%s' "$prs" | jq -r '
-    .[] |
-    (if .participants | any(.role == "REVIEWER" and .status == "APPROVED") then "APPROVED"
-     elif .participants | any(.role == "REVIEWER" and .status == "NEEDS_WORK") then "NEEDS WORK"
-     else "UNAPPROVED"
-     end) as $status |
-    "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \($status)\u00a0 \(.createdDate[:10])"
-  '
-  printf '\n  %d PR(s)\n' "$count"
+  bbpr_render_review_markdown "$prs"
 }
 
 bbpr_cmd_open() {
@@ -564,8 +595,19 @@ bbpr_cmd_show() {
     return 0
   fi
 
-  # Human output for show
+  local changes_body latest_commit_json latest_commit_id comments_body
   local title state author_slug src_branch dst_branch created updated
+  local latest_commit_author latest_commit_message latest_commit_date
+
+  changes_body="$(bbpr_fetch "GET" "$pr_path/changes")" || changes_body="{}"
+  latest_commit_id="$(printf '%s' "$pr_json" | jq -r '.fromRef.latestCommit // empty')"
+  latest_commit_json="{}"
+  if [[ -n "$latest_commit_id" ]]; then
+    latest_commit_json="$(bbpr_fetch "GET" "/rest/api/latest/projects/$BBPR_PR_PROJECT/repos/$BBPR_PR_REPO/commits/$latest_commit_id")" \
+      || latest_commit_json="{}"
+  fi
+  comments_body="$(jq -n --argjson oc "$open_comments" --argjson rc "$resolved_body" --argjson bc "$blocker_body" \
+    '{values: ($oc.values + $rc.values + $bc.values)}')"
 
   title="$(printf '%s' "$pr_json" | jq -r '.title')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
@@ -574,60 +616,83 @@ bbpr_cmd_show() {
   dst_branch="$(printf '%s' "$pr_json" | jq -r '.toRef.displayId')"
   created="$(printf '%s' "$pr_json" | jq -r '.createdDate')"
   updated="$(printf '%s' "$pr_json" | jq -r '.updatedDate')"
+  latest_commit_author="$(printf '%s' "$latest_commit_json" | jq -r '.author.displayName // .author.name // .author.user.displayName // .author.user.slug // "?"')"
+  latest_commit_message="$(printf '%s' "$latest_commit_json" | jq -r '.message // .displayId // .id // "Unknown commit"')"
+  latest_commit_date="$(printf '%s' "$latest_commit_json" | jq -r '.authorTimestamp // .committerTimestamp // empty')"
 
-  bbpr_success "PR #${pr_id}: ${title}"
-  printf '  State:       %s\n' "$state"
-  printf '  Author:      %s\n' "$author_slug"
-  printf '  Source:      %s\n' "$src_branch"
-  printf '  Destination: %s\n' "$dst_branch"
-  printf '  Created:     %s\n' "$created"
-  printf '  Updated:     %s\n' "$updated"
+  printf '# PR #%s: %s\n\n' "$pr_id" "$title"
 
-  printf '\n%sParticipants:%s\n' "$BBPR_C_BOLD" "$BBPR_C_RESET"
-  printf '%s' "$pr_json" | jq -r '.participants[] |
-    "  [\(.role)] \(.user.slug) — \(.status // "no status")"'
+  printf '## Metadata\n\n'
+  printf '- State: `%s`\n' "$state"
+  printf '- Author: `%s`\n' "$author_slug"
+  printf '- Created: `%s`\n' "$created"
+  printf '- Updated: `%s`\n' "$updated"
 
-  printf '\n%sComments:%s\n' "$BBPR_C_BOLD" "$BBPR_C_RESET"
+  printf '\n## Branch\n\n'
+  printf '- Source: `%s`\n' "$src_branch"
+  printf '- Destination: `%s`\n' "$dst_branch"
 
-  # Open comments
-  local ocount
-  ocount="$(printf '%s' "$open_comments" | jq -r '[.values[]?] | length')"
-  if (( ocount > 0 )); then
-    printf '  %s (Open)\n' "$BBPR_C_DIM"
-    printf '%s' "$open_comments" | jq -r '
-      .values[]? |
-      (if .anchor.path then "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")" else "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")" end) ,
-      "  \(.text.content // .text // "—")" ,
-      (if (.comments // []) | length > 0 then "  Replies:" else empty end) ,
-      (.comments // [] | .[] | "    [\(.type // "REPLY")] \(.author.user.displayName // .author.slug // "?") — \(.text.content // .text // "—")")
-    '
+  printf '\n## Latest Commit\n\n'
+  if [[ -n "$latest_commit_id" ]]; then
+    printf '- Commit: `%s`\n' "$latest_commit_id"
+    printf '- Message: %s\n' "$latest_commit_message"
+    printf '- Author: `%s`\n' "$latest_commit_author"
+    if [[ -n "$latest_commit_date" ]]; then
+      printf '- Timestamp: `%s`\n' "$latest_commit_date"
+    fi
+  else
+    printf '_No latest commit available._\n'
   fi
 
-  # Resolved comments
-  local rcount
-  rcount="$(printf '%s' "$resolved_body" | jq -r '[.values[]?] | length')"
-  if (( rcount > 0 )); then
-    printf '\n  %s (Resolved — awaiting re-check)\n' "$BBPR_C_DIM"
-    printf '%s' "$resolved_body" | jq -r '
+  printf '\n## Relevant Files\n\n'
+  if printf '%s' "$changes_body" | jq -e '.values | length > 0' >/dev/null 2>&1; then
+    printf '%s' "$changes_body" | jq -r '
       .values[]? |
-      (if .anchor.path then "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")  resolved=\(.resolvedDate // "never")" else "  [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")  resolved=\(.resolvedDate // "never")" end) ,
-      "  \(.text.content // .text // "—")"
+      "- `" + ((.path.toString // ((.path.components // []) | join("/")) // "?")) + "`"
     '
+  else
+    printf '_No changed files reported._\n'
   fi
 
-  # Blocker comments
-  local bcount
-  bcount="$(printf '%s' "$blocker_body" | jq -r '[.values[]?] | length')"
-  if (( bcount > 0 )); then
-    printf '\n  %s (Blocker)\n' "$BBPR_C_RED"
-    printf '%s' "$blocker_body" | jq -r '
+  printf '\n## Comments and replies\n\n'
+  if printf '%s' "$comments_body" | jq -e '.values | length > 0' >/dev/null 2>&1; then
+    printf '%s' "$comments_body" | jq -r '
       .values[]? |
-      (if .anchor.path then "  ★ BLOCKER [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?") — \(.anchor.path):\(.anchor.line // "?")" else "  ★ BLOCKER [\(.type // "COMMENT")] \(.author.user.displayName // .author.slug // "?")" end) ,
-      "  \(.text.content // .text // "—")"
+      "- **" + (.author.user.displayName // .author.user.slug // "?") + "**" +
+      (if .anchor.path then " at `" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + "`" else "" end) +
+      ": " + (.text.content // .text // "—") +
+      (if (.comments // []) | length > 0 then
+        "\n" + ((.comments // []) | map("  - **" + (.author.user.displayName // .author.user.slug // "?") + "**: " + (.text.content // .text // "—")) | join("\n"))
+       else "" end)
     '
+  else
+    printf '_No comments or replies._\n'
   fi
 
   return 0
+}
+
+bbpr_require_fzf() {
+  if ! command -v fzf >/dev/null 2>&1; then
+    bbpr_error "fzf is required for bbpr show --interactive."
+    return 1
+  fi
+}
+
+bbpr_cmd_show_interactive() {
+  bbpr_require_fzf || return 1
+
+  local prs selection spec
+  prs="$(bbpr_cmd_list_prs "REVIEWER")" || return 1
+  selection="$(
+    printf '%s' "$prs" | jq -r '
+      .[] |
+      "\(.fromRef.repository.project.key)/\(.fromRef.repository.slug)/\(.id)\t\(.title // "Untitled PR")\t\(.author.user.displayName // .author.user.slug // "?")"
+    ' | fzf --ansi --delimiter=$'\t' --with-nth=1,2,3 --preview='bbpr show {1}' --preview-window='right:70%:wrap'
+  )" || return $?
+  [[ -n "$selection" ]] || return 0
+  spec="${selection%%$'\t'*}"
+  bbpr_cmd_show "$spec"
 }
 
 bbpr_cmd_comments() {
@@ -729,8 +794,12 @@ run_main() {
     review)  bbpr_cmd_review;  main_status=$? ;;
     open)    bbpr_cmd_open;    main_status=$? ;;
     show)
-      [[ ${#BBPR_ARGS[@]} -ge 1 ]] || { bbpr_error "Usage: bbpr show PROJ/REPO/NNN"; return 1; }
-      bbpr_cmd_show "${BBPR_ARGS[0]}"; main_status=$? ;;
+      if (( BBPR_INTERACTIVE )); then
+        bbpr_cmd_show_interactive; main_status=$?
+      else
+        [[ ${#BBPR_ARGS[@]} -ge 1 ]] || { bbpr_error "Usage: bbpr show PROJ/REPO/NNN"; return 1; }
+        bbpr_cmd_show "${BBPR_ARGS[0]}"; main_status=$?
+      fi ;;
     comments)
       [[ ${#BBPR_ARGS[@]} -ge 1 ]] || { bbpr_error "Usage: bbpr comments PROJ/REPO/NNN"; return 1; }
       bbpr_cmd_comments "${BBPR_ARGS[0]}"; main_status=$? ;;
