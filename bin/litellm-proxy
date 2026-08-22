@@ -17,10 +17,11 @@
 #   curl "$LITELLM_BASE_URL/chat/completions" -d '{"model":"lms/ornith-1.0-9b",...}'
 #   curl "$LITELLM_BASE_URL/chat/completions" -d '{"model":"omlx/Ornith-1.0-9B-4bit",...}'
 #
-# Managing models via the admin API (requires $LITELLM_MASTER_KEY):
-#   curl "$LITELLM_BASE_URL/model/new" -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+# Managing models via the admin API — no auth needed unless you've set
+# $LITELLM_MASTER_KEY (unset by default; this proxy binds to 127.0.0.1 only):
+#   curl "$LITELLM_BASE_URL/model/new" \
 #     -d '{"model_name":"mtplx/my-model","litellm_params":{"model":"openai/my-model","api_base":"'"$MTPLX_BASE_URL"'"}}'
-#   curl "$LITELLM_BASE_URL/model/info" -H "Authorization: Bearer $LITELLM_MASTER_KEY"
+#   curl "$LITELLM_BASE_URL/model/info"
 #
 # LOCAL ONLY: the generated config lists no cloud providers and no fallbacks —
 # a request whose backend is down fails rather than silently rerouting to a
@@ -58,7 +59,10 @@ MTPLX_API_KEY="${MTPLX_API_KEY:-mtplx}"
 
 LITELLM_PORT="${LITELLM_PORT:-4444}"
 LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://127.0.0.1:${LITELLM_PORT}/v1}"
-LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-sk-local-litellm}"
+# Unset by default: litellm does not require a key for any endpoint (including
+# the store_model_in_db admin routes like /model/new) unless one is set. This
+# proxy binds only to 127.0.0.1, so no key is needed on a single-user machine.
+LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-}"
 LITELLM_PG_CONTAINER="${LITELLM_PG_CONTAINER:-litellm-postgres}"
 LITELLM_PG_PORT="${LITELLM_PG_PORT:-5443}"
 
@@ -172,7 +176,13 @@ cmd_start() {
 
   docker rm -f "$PROXY_CONTAINER" >/dev/null 2>&1 || true
 
-  echo "litellm-proxy: master key is \$LITELLM_MASTER_KEY (default: sk-local-litellm) — required for /model/new etc."
+  if [ -n "$LITELLM_MASTER_KEY" ]; then
+    echo "litellm-proxy: auth enabled — \$LITELLM_MASTER_KEY required on every request"
+    MASTER_KEY_ARGS=(-e LITELLM_MASTER_KEY="$LITELLM_MASTER_KEY")
+  else
+    echo "litellm-proxy: no LITELLM_MASTER_KEY set — running without auth (localhost-only proxy)"
+    MASTER_KEY_ARGS=()
+  fi
 
   docker run -d \
     --name "$PROXY_CONTAINER" \
@@ -180,7 +190,7 @@ cmd_start() {
     --restart unless-stopped \
     -p "127.0.0.1:${LITELLM_PORT}:${LITELLM_PORT}" \
     -e DATABASE_URL="postgresql://litellm:litellm@${LITELLM_PG_CONTAINER}:5432/litellm" \
-    -e LITELLM_MASTER_KEY="$LITELLM_MASTER_KEY" \
+    "${MASTER_KEY_ARGS[@]}" \
     -e STORE_MODEL_IN_DB=true \
     -e LITELLM_LMS_BASE="$(_host_url "$LMS_BASE_URL")" \
     -e LITELLM_OLLAMA_BASE="$(_host_url "$OLLAMA_BASE_URL")" \
@@ -230,7 +240,9 @@ cmd_status() {
 cmd_logs() { _need_docker; exec docker logs -f "$PROXY_CONTAINER"; }
 
 cmd_models() {
-  curl -fsS -m 15 "$LITELLM_BASE_URL/models" -H "Authorization: Bearer $LITELLM_MASTER_KEY" 2>/dev/null \
+  local auth=()
+  [ -n "$LITELLM_MASTER_KEY" ] && auth=(-H "Authorization: Bearer $LITELLM_MASTER_KEY")
+  curl -fsS -m 15 "$LITELLM_BASE_URL/models" "${auth[@]}" 2>/dev/null \
     | jq -r '.data[].id' 2>/dev/null | sort \
     || { echo "litellm proxy: not reachable at $LITELLM_BASE_URL (start it with: litellm-proxy start)" >&2; exit 1; }
 }
