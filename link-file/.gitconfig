@@ -1,6 +1,6 @@
 [user]
-	name = 
-	email = 
+	name =
+	email =
   # These values are set in ~/.gitconfig_local
   # see https://stackoverflow.com/a/42571751/109305
 [include]
@@ -78,15 +78,14 @@
   default      = current
 	autoSetupRemote = true
 [rebase]
-	autosquash = true
-	autostash = true
+  autosquash = true
+  autostash = true
 [rerere]
   enable       = true
 [remote "origin"]
   prune        = true
-
 [credential]
-  helper       = store --file=~/.git-credentials
+  helper = osxkeychain
 [filter "lfs"]
         required = true
         clean = git-lfs clean -- %f
