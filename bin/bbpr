@@ -105,6 +105,54 @@ bbpr_dim()     { bbpr_color_print "$BBPR_C_DIM" "$*"; }
 bbpr_warn()    { bbpr_color_print "$BBPR_C_RED" "Warning: $*" >&2; }
 bbpr_error()   { bbpr_color_print "$BBPR_C_RED" "$*" >&2; }
 
+bbpr_style_text() {
+  local style="$1"
+  local text="$2"
+
+  if (( BBPR_COLOR_ENABLED )) && [[ -n "$style" ]]; then
+    printf '%b%s%b' "$style" "$text" "$BBPR_C_RESET"
+  else
+    printf '%s' "$text"
+  fi
+}
+
+bbpr_review_key() {
+  bbpr_style_text "$BBPR_C_DIM" "$1"
+}
+
+bbpr_review_title() {
+  bbpr_style_text "${BBPR_C_BOLD}${BBPR_C_CYAN}" "$1"
+}
+
+bbpr_review_author() {
+  bbpr_style_text "$BBPR_C_GREEN" "$1"
+}
+
+bbpr_review_url() {
+  bbpr_style_text "$BBPR_C_DIM" "$1"
+}
+
+bbpr_review_spec() {
+  bbpr_style_text "${BBPR_C_BOLD}${BBPR_C_BLUE}" "$1"
+}
+
+bbpr_review_draft_marker() {
+  bbpr_style_text "$BBPR_C_ACCENT" "DRAFT"
+}
+
+bbpr_review_status() {
+  local status="$1"
+  local color="$BBPR_C_SECTION"
+
+  case "$status" in
+    APPROVED) color="$BBPR_C_GREEN" ;;
+    "NEEDS WORK") color="$BBPR_C_RED" ;;
+    *) color="$BBPR_C_SECTION" ;;
+  esac
+
+  bbpr_style_text "$color" "$status"
+}
+
 parse_opts() {
   # Handle flags and extract subcommand
   local temp_args=()
@@ -409,32 +457,50 @@ bbpr_print_long_prs() {
 
 bbpr_render_review_markdown() {
   local prs="$1"
+  local count
+  count="$(printf '%s' "$prs" | jq 'length')"
 
-  printf '%s' "$prs" | jq -r --arg base "$BBPR_BASE_URL" '
-    if length == 0 then
-      "## Review Queue\n\n_No pending review assignments._"
-    else
+  if (( count == 0 )); then
+    printf '## Review Queue\n\n_No pending review assignments._\n'
+    return 0
+  fi
+
+  printf '## Review Queue\n\n'
+  while IFS=$'\t' read -r spec url status title author is_draft; do
+    [[ -n "$spec" ]] || continue
+
+    local spec_text draft_prefix title_text author_text status_text
+    spec_text="$(bbpr_review_spec "$spec")"
+    draft_prefix=""
+    if [[ "$is_draft" == "true" ]]; then
+      draft_prefix="$(bbpr_review_draft_marker) "
+    fi
+    title_text="$(bbpr_review_title "$title")"
+    author_text="$(bbpr_review_author "$author")"
+    status_text="$(bbpr_review_status "$status")"
+
+    printf '%s\n' "$spec_text"
+    printf '%s**%s**\n' "$draft_prefix" "$title_text"
+    printf '%s %s\n' "$author_text" "$status_text"
+  done < <(
+    printf '%s' "$prs" | jq -r --arg base "$BBPR_BASE_URL" '
+      .[] |
+      ((.fromRef.repository.project.key // "?") + "/" + (.fromRef.repository.slug // "?") + "/" + (.id | tostring)) as $spec |
+      (.links.self[0].href // ($base + "/projects/" + (.fromRef.repository.project.key // "?") + "/repos/" + (.fromRef.repository.slug // "?") + "/pull-requests/" + (.id | tostring))) as $url |
+      (if .participants | any(.role == "REVIEWER" and .status == "APPROVED") then "APPROVED"
+       elif .participants | any(.role == "REVIEWER" and .status == "NEEDS_WORK") then "NEEDS WORK"
+       else "UNAPPROVED"
+       end) as $status |
       [
-        "## Review Queue",
-        "",
-        (.[] |
-          ((.fromRef.repository.project.key // "?") + "/" + (.fromRef.repository.slug // "?") + "/" + (.id | tostring)) as $spec |
-          (.links.self[0].href // ($base + "/projects/" + (.fromRef.repository.project.key // "?") + "/repos/" + (.fromRef.repository.slug // "?") + "/pull-requests/" + (.id | tostring))) as $url |
-          (if .participants | any(.role == "REVIEWER" and .status == "APPROVED") then "APPROVED"
-           elif .participants | any(.role == "REVIEWER" and .status == "NEEDS_WORK") then "NEEDS WORK"
-           else "UNAPPROVED"
-           end) as $status |
-          [
-            "- [ ] \($spec)",
-            "  Title: \(.title // "Untitled PR")",
-            "  Author: \(.author.user.displayName // .author.user.slug // "?")",
-            "  URL: \($url)",
-            "  Status: \($status)"
-          ] | join("\n")
-        )
-      ] | join("\n")
-    end
-  '
+        $spec,
+        $url,
+        $status,
+        (.title // "Untitled PR"),
+        (.author.user.displayName // .author.user.slug // "?"),
+        ((.draft // .isDraft // false) | tostring)
+      ] | @tsv
+    '
+  )
 }
 
 bbpr_print_review_short_with_hint() {
@@ -595,11 +661,10 @@ bbpr_cmd_show() {
     return 0
   fi
 
-  local changes_body latest_commit_json latest_commit_id comments_body
-  local title state author_slug src_branch dst_branch created updated
-  local latest_commit_author latest_commit_message latest_commit_date
+  local latest_commit_json latest_commit_id comments_body
+  local title state author_slug src_branch dst_branch
+  local latest_commit_author latest_commit_message
 
-  changes_body="$(bbpr_fetch "GET" "$pr_path/changes")" || changes_body="{}"
   latest_commit_id="$(printf '%s' "$pr_json" | jq -r '.fromRef.latestCommit // empty')"
   latest_commit_json="{}"
   if [[ -n "$latest_commit_id" ]]; then
@@ -607,66 +672,59 @@ bbpr_cmd_show() {
       || latest_commit_json="{}"
   fi
   comments_body="$(jq -n --argjson oc "$open_comments" --argjson rc "$resolved_body" --argjson bc "$blocker_body" \
-    '{values: ($oc.values + $rc.values + $bc.values)}')"
+    '{values: ($oc.values + $rc.values + $bc.values)}')" || comments_body='{"values":[]}'
 
   title="$(printf '%s' "$pr_json" | jq -r '.title')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
   author_slug="$(printf '%s' "$pr_json" | jq -r '.author.user.slug')"
   src_branch="$(printf '%s' "$pr_json" | jq -r '.fromRef.displayId')"
   dst_branch="$(printf '%s' "$pr_json" | jq -r '.toRef.displayId')"
-  created="$(printf '%s' "$pr_json" | jq -r '.createdDate')"
-  updated="$(printf '%s' "$pr_json" | jq -r '.updatedDate')"
   latest_commit_author="$(printf '%s' "$latest_commit_json" | jq -r '.author.displayName // .author.name // .author.user.displayName // .author.user.slug // "?"')"
   latest_commit_message="$(printf '%s' "$latest_commit_json" | jq -r '.message // .displayId // .id // "Unknown commit"')"
-  latest_commit_date="$(printf '%s' "$latest_commit_json" | jq -r '.authorTimestamp // .committerTimestamp // empty')"
 
-  printf '# PR #%s: %s\n\n' "$pr_id" "$title"
-
-  printf '## Metadata\n\n'
-  printf '- State: `%s`\n' "$state"
-  printf '- Author: `%s`\n' "$author_slug"
-  printf '- Created: `%s`\n' "$created"
-  printf '- Updated: `%s`\n' "$updated"
-
-  printf '\n## Branch\n\n'
-  printf '- Source: `%s`\n' "$src_branch"
-  printf '- Destination: `%s`\n' "$dst_branch"
-
-  printf '\n## Latest Commit\n\n'
+  printf '## PR #%s: %s\n' "$pr_id" "$title"
+  printf 'State: %s | Author: %s\n' "$state" "$author_slug"
+  printf 'Branch: %s -> %s\n' "$src_branch" "$dst_branch"
   if [[ -n "$latest_commit_id" ]]; then
-    printf '- Commit: `%s`\n' "$latest_commit_id"
-    printf '- Message: %s\n' "$latest_commit_message"
-    printf '- Author: `%s`\n' "$latest_commit_author"
-    if [[ -n "$latest_commit_date" ]]; then
-      printf '- Timestamp: `%s`\n' "$latest_commit_date"
-    fi
+    printf 'Latest Commit: %s (%s, %s)\n' "$latest_commit_id" "$latest_commit_message" "$latest_commit_author"
   else
-    printf '_No latest commit available._\n'
+    printf 'Latest Commit: unknown\n'
   fi
 
-  printf '\n## Relevant Files\n\n'
-  if printf '%s' "$changes_body" | jq -e '.values | length > 0' >/dev/null 2>&1; then
-    printf '%s' "$changes_body" | jq -r '
-      .values[]? |
-      "- `" + ((.path.toString // ((.path.components // []) | join("/")) // "?")) + "`"
-    '
-  else
-    printf '_No changed files reported._\n'
+  local relevant_files
+  relevant_files="$(printf '%s' "$comments_body" | jq -r '
+    [ .values[]? | (.anchor.path // empty) ] | unique | join(", ")
+  ')"
+  if [[ -n "$relevant_files" ]]; then
+    printf 'Relevant Files: %s\n' "$relevant_files"
   fi
 
-  printf '\n## Comments and replies\n\n'
-  if printf '%s' "$comments_body" | jq -e '.values | length > 0' >/dev/null 2>&1; then
-    printf '%s' "$comments_body" | jq -r '
-      .values[]? |
-      "- **" + (.author.user.displayName // .author.user.slug // "?") + "**" +
-      (if .anchor.path then " at `" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + "`" else "" end) +
-      ": " + (.text.content // .text // "—") +
-      (if (.comments // []) | length > 0 then
-        "\n" + ((.comments // []) | map("  - **" + (.author.user.displayName // .author.user.slug // "?") + "**: " + (.text.content // .text // "—")) | join("\n"))
-       else "" end)
-    '
-  else
-    printf '_No comments or replies._\n'
+  local open_lines resolved_lines has_resolved
+  open_lines="$(printf '%s' "$comments_body" | jq -r '
+    [ .values[]? | select(.state != "RESOLVED") ] as $open |
+    if ($open | length) == 0 then "_No open comments._" else
+      [ $open[] |
+        (.author.user.displayName // .author.slug // .author.name // "?") + ": " +
+        ((.text.content // .text // "-")) +
+        (if .anchor.path then " (" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + ")" else "" end),
+        ( (.comments // [])[]? | "  " + ((.author.user.displayName // .author.slug // .author.name // "?") + ": " + (.text.content // .text // "-")) )
+      ] | join("\n") end
+  ')"
+  resolved_lines="$(printf '%s' "$comments_body" | jq -r '
+    [ .values[]? | select(.state == "RESOLVED") ] as $resolved |
+    if ($resolved | length) == 0 then "_No resolved comments._" else
+      [ $resolved[] |
+        (.author.user.displayName // .author.slug // .author.name // "?") + ": " +
+        ((.text.content // .text // "-")) +
+        (if .anchor.path then " (" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + ")" else "" end),
+        ( (.comments // [])[]? | "  " + ((.author.user.displayName // .author.slug // .author.name // "?") + ": " + (.text.content // .text // "-")) )
+      ] | join("\n") end
+  ')"
+  has_resolved="$(printf '%s' "$comments_body" | jq '[.values[]? | select(.state == "RESOLVED")] | length')"
+
+  printf '\nComments and replies\n%s\n' "$open_lines"
+  if (( has_resolved > 0 )); then
+    printf '\nResolved Comments\n%s\n' "$resolved_lines"
   fi
 
   return 0
@@ -674,11 +732,10 @@ bbpr_cmd_show() {
 
 bbpr_require_fzf() {
   if ! command -v fzf >/dev/null 2>&1; then
-    bbpr_error "fzf is required for bbpr show --interactive."
+    bbpr_error "fzf is not installed or not on PATH (required for bbpr show --interactive)."
     return 1
   fi
 }
-
 bbpr_cmd_show_interactive() {
   bbpr_require_fzf || return 1
 
@@ -759,7 +816,7 @@ if (( rcount > 0 )); then
     "$BBPR_C_SECTION" "$BBPR_C_RESET" "$rcount"
   printf '%s' "$resolved_body" | jq -r '
     .values[]? |
-    "  #\(.id)  [\(.type // "\"COMMENT\"")]"  \(.author.user.displayName // .author.slug // "?")" ,
+    "  #\(.id)  [\(.type // "COMMENT")]  \(.author.user.displayName // .author.slug // "?")" ,
     "        \(.anchor.path // "*"):\(.anchor.line // "?")" ,
     "        resolved=\(.resolvedDate // "never")" ,
     "        \(.text.content // .text // "—")"

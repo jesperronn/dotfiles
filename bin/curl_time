@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Quick per-URL HTTP check — outputs 2-3 rows per URL (same format as curl_check).
+# Usage: curl_time URL [URL2 ... URL9] [--verbose]
+#
+
+set -uo pipefail
+
+CONNECT_TIMEOUT=2.7
+
+# ── Colors (match curl_check) ─────────────────────────────────────────────
+C_GREEN='\033[0;32m'
+C_RED='\033[0;31m'
+C_BOLD='\033[1m'
+C_DIM='\033[2m'
+C_0='\033[0m'
+C_YELLOW='\033[0;33m'
+
+# ── Functions ─────────────────────────────────────────────────────────────
+usage() {
+  cat <<EOF
+Usage: $0 URL [URL2 ... URL9] [--verbose]
+
+Quick per-URL HTTP check. Outputs 2-3 rows per URL:
+  ✓ https://example.com
+    Status: 200 OK       IP: 1.2.3.4     Total: 123 ms  TTFB: 45 ms  DNS: 12 ms
+
+Options:
+  --verbose    Show raw curl output and error details
+  --help       Show this help message
+EOF
+}
+
+check_prereqs() {
+  command -v curl >/dev/null 2>&1 || { printf 'Error: curl not found\n' >&2; exit 1; }
+}
+
+check_arg_count() {
+  # Strip flags to count positional args
+  local positional=()
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--help|-h) ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+
+  if [[ ${#positional[@]} -eq 0 ]]; then
+    printf 'Error: no URL provided\n' >&2
+    usage >&2
+    exit 1
+  fi
+
+  if [[ ${#positional[@]} -gt 9 ]]; then
+    printf 'Error: too many URLs (max 9)\n' >&2
+    exit 1
+  fi
+}
+
+check_help() {
+  for arg in "$@"; do
+    case "$arg" in
+      --help|-h) usage; exit 0 ;;
+    esac
+  done
+  return 1
+}
+
+check_url() {
+  local url="$1" verbose="${2:-false}"
+
+  errfile=$(mktemp)
+  response=$(curl --connect-timeout "$CONNECT_TIMEOUT" \
+    -w '%{response_code}|%{url_effective}|%{remote_ip}|%{time_total}|%{time_namelookup}|%{time_pretransfer}|%{time_starttransfer}' \
+    -o /dev/null -s --show-error "$url" 2>"$errfile" || true)
+  error_output=$(<"$errfile"); rm -f "$errfile"
+
+  IFS='|' read -r response_code url_effective remote_ip \
+    time_total time_namelookup _ time_starttransfer <<< "$response" || true
+
+  response_code=${response_code:-000}
+  url_effective=${url_effective:-$url}
+  remote_ip=${remote_ip:-NA}
+
+  if [[ $response_code =~ ^2 ]]; then
+    color=$C_GREEN; symbol="✓"; word="OK"
+  else
+    color=$C_RED;   symbol="✗"; word="FAIL"
+  fi
+
+  total_ms=$(awk "BEGIN{printf \"%.0f\", ${time_total:-0} * 1000}")
+  ttfb_ms=$(awk  "BEGIN{printf \"%.0f\", ${time_starttransfer:-0} * 1000}")
+  dns_ms=$(awk   "BEGIN{printf \"%.0f\", ${time_namelookup:-0} * 1000}")
+
+  printf '%b%s \e]8;;%s\e\\%s\e]8;;\e\\%b\n' \
+    "$color$C_BOLD" "$symbol" "$url_effective" "$url_effective" "$C_0"
+  printf '  %bStatus:%b %-8s %bIP:%b %-15s   %bTotal:%b %-9s %bTTFB:%b %-9s %bDNS:%b %s\n' \
+    "$C_DIM" "$C_0" "$response_code $word" \
+    "$C_DIM" "$C_0" "$remote_ip" \
+    "$C_DIM" "$C_0" "$total_ms ms" \
+    "$C_DIM" "$C_0" "$ttfb_ms ms" \
+    "$C_DIM" "$C_0" "$dns_ms ms"
+
+  if $verbose && [[ -n "$error_output" ]]; then
+    printf '   %bVerbose error:%b %s\n' "$C_YELLOW" "$C_0" "$error_output"
+  fi
+}
+
+run_main() {
+  check_help "$@" || check_prereqs
+  check_arg_count "$@"
+
+  local verbose=false
+  for arg in "$@"; do
+    [[ "$arg" == "--verbose" ]] && verbose=true
+  done
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|--help|-h) continue ;;
+      *) check_url "$arg" "$verbose" ;;
+    esac
+  done
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  run_main "$@"
+fi

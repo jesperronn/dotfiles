@@ -15,7 +15,32 @@
         "qwen/qwen2.5-coder-7b": { "name": "Qwen2.5 Coder 7B", "options": {"maxTokens": 32000} },
         "qwen/qwen3-coder-next": { "name": "Qwen3 Coder Next", "options": {"maxTokens": 32000} },
         "qwen/qwen3.5-9b": { "name": "Qwen3.5 9B", "options": {"maxTokens": 32000} },
-        "qwen/qwen3.6-35b-a3b": { "name": "Qwen3.6 35B A3B", "options": {"maxTokens": 32000} }
+        "qwen/qwen3.6-35b-a3b": { "name": "Qwen3.6 35B A3B", "options": {"maxTokens": 32000} },
+        // KAT-Coder only works through LM Studio's GGUF build. The safetensors
+        // copy in ~/.omlx ships a VLM config (Qwen3_5MoeForConditionalGeneration
+        // with vision_config) over text-only weights — 31,333 tensors, zero
+        // vision_tower.* — so omlx fails it with "Missing 333 parameters".
+        "kwaipilot_kat-coder-v2.5-dev": { "name": "KAT-Coder V2.5 Dev (GGUF)" }
+      }
+    },
+    // oMLX — OpenAI-compatible server on port 4000. Model ids here must match
+    // what `curl localhost:4000/v1/models` reports, not the HF repo name.
+    "omlx": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "oMLX",
+      "options": {
+        "apiKey": "DUMMY",
+        "baseURL": "http://127.0.0.1:4000/v1"
+      },
+      "models": {
+        // Verified end to end through opencode's agent loop, tools included.
+        "Qwen3-Coder-30B-A3B-Instruct-MLX-4bit": { "name": "Qwen3 Coder 30B A3B (MLX 4bit)" },
+        // Fast on raw /v1/chat/completions (~3s) but stalled past 400s inside
+        // the agent loop — usable for plain prompts, not yet trusted with tools.
+        "Qwen3-Coder-30B-A3B-Instruct-4bit": { "name": "Qwen3 Coder 30B A3B (4bit)" },
+        "Qwen3.6-35B-A3B-4bit": { "name": "Qwen3.6 35B A3B (4bit)" },
+        "Ornith-1.0-35B-4bit": { "name": "Ornith 1.0 35B (4bit)" },
+        "Ornith-1.0-9B-4bit": { "name": "Ornith 1.0 9B (4bit)" }
       }
     },
     "ollama": {
@@ -64,5 +89,7 @@
       }
     }
   },
-  "model": "lmstudio/qwen/qwen3.6-35b-a3b"
+  // Was lmstudio/qwen/qwen3.6-35b-a3b, which LM Studio does not currently serve —
+  // every default run died with "Invalid model identifier".
+  "model": "omlx/Ornith-1.0-35B-4bit"
 }

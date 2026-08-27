@@ -1,8 +1,8 @@
 model:
-  api_key: ollama
-  base_url: http://127.0.0.1:1234/v1
-  default: qwen/qwen3.6-35b-a3b
-  provider: lmstudio
+  default: Ornith-1.0-35B-4bit
+  provider: custom:omlx
+  max_tokens: 32768
+  api_mode: chat_completions
 providers:
   mlx:
     name: MLX
@@ -14,10 +14,10 @@ providers:
     api: http://127.0.0.1:11434/v1
     default_model: qwen3.6:35b-a3b-coding-mxfp8
     models:
-    - qwen3.6:35b-a3b-coding-mxfp8
-    - qwen3.6:latest
-    - gemma4:e4b-mxfp8
-    - gemma4:e4b-mlx
+      - qwen3.6:35b-a3b-coding-mxfp8
+      - qwen3.6:latest
+      - gemma4:e4b-mxfp8
+      - gemma4:e4b-mlx
     name: Ollama
   lmstudio:
     name: LM Studio
@@ -25,31 +25,35 @@ providers:
     api_key: lm-studio
     default_model: ibm/granite-4.1-30b
     models:
-    - ibm/granite-4.1-30b
-    - google/gemma-4-26b-a4b
-    - qwen/qwen3.6-27b
-    - qwen/qwen3-coder-next
-    - google/gemma-4-e4b-qat
-    - gemma-4-e4b-it-qat
-    - google/gemma-4-e2b
-    - google/gemma-4-e2b-qat
-    - gemma-4-e2b-it-qat
-    - qwen/qwen3-coder-30b
-    - google/gemma-4-26b-a4b-qat
-    - google/gemma-4-12b-qat
-    - google/gemma-4-e4b
-    - qwen/qwen3.5-9b
-    - qwen/qwen3.6-35b-a3b
+      - ibm/granite-4.1-30b
+      - google/gemma-4-26b-a4b
+      - qwen/qwen3.6-27b
+      - qwen/qwen3-coder-next
+      - google/gemma-4-e4b-qat
+      - gemma-4-e4b-it-qat
+      - google/gemma-4-e2b
+      - google/gemma-4-e2b-qat
+      - gemma-4-e2b-it-qat
+      - qwen/qwen3-coder-30b
+      - google/gemma-4-26b-a4b-qat
+      - google/gemma-4-12b-qat
+      - google/gemma-4-e4b
+      - qwen/qwen3.5-9b
+      - qwen/qwen3.6-35b-a3b
+  omlx:
+    name: oMLX
+    base_url: http://127.0.0.1:8000/v1
+    api_key: omlx
+    api_mode: chat_completions
+    default_model: Ornith-1.0-35B-4bit
 fallback_providers: []
-credential_pool_strategies: {}
 toolsets:
-- hermes-cli
-- web
-- file
-- terminal
-max_concurrent_sessions: null
+  - hermes-cli
+  - web
+  - file
+  - terminal
 agent:
-  max_turns: 150
+  max_turns: 90
   gateway_timeout: 1800
   restart_drain_timeout: 180
   api_max_retries: 3
@@ -65,7 +69,30 @@ agent:
   gateway_notify_interval: 180
   gateway_auto_continue_freshness: 3600
   image_input_mode: auto
-  disabled_toolsets: []
+  disabled_toolsets:
+    - bfl
+    - browser
+    - computer_use
+    - context_engine
+    - cronjob
+    - discord
+    - discord_admin
+    - feishu_doc
+    - feishu_drive
+    - homeassistant
+    - image_gen
+    - kanban
+    - project
+    - search
+    - spotify
+    - stt
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
 terminal:
   backend: local
   modal_mode: auto
@@ -77,10 +104,10 @@ terminal:
   auto_source_bashrc: true
   docker_image: nikolaik/python-nodejs:python3.11-nodejs20
   docker_forward_env: []
-  docker_env: {}
   singularity_image: docker://nikolaik/python-nodejs:python3.11-nodejs20
   modal_image: nikolaik/python-nodejs:python3.11-nodejs20
   daytona_image: nikolaik/python-nodejs:python3.11-nodejs20
+  vercel_runtime: node24
   container_cpu: 4
   container_memory: 5120
   container_disk: 10000
@@ -90,7 +117,6 @@ terminal:
   docker_extra_args: []
   docker_run_as_host_user: false
   persistent_shell: true
-  vercel_runtime: node24
 web:
   backend: ddgs
   search_backend: ''
@@ -122,9 +148,8 @@ checkpoints:
   max_file_size_mb: 10
   auto_prune: true
   retention_days: 7
-  delete_orphans: true
   min_interval_hours: 24
-context_file_max_chars: null
+  delete_orphans: true
 file_read_max_chars: 100000
 mcp_discovery_timeout: 1.5
 tool_output:
@@ -143,7 +168,7 @@ tool_loop_guardrails:
     same_tool_failure: 8
     idempotent_no_progress: 5
 compression:
-  enabled: true
+  enabled: false
   threshold: 0.5
   target_ratio: 0.2
   protect_last_n: 20
@@ -151,18 +176,6 @@ compression:
   protect_first_n: 3
   abort_on_summary_failure: false
   codex_gpt55_autoraise: true
-kanban:
-  dispatch_in_gateway: true
-  dispatch_interval_seconds: 60
-  failure_limit: 2
-  worker_log_rotate_bytes: 2097152
-  worker_log_backup_count: 1
-  orchestrator_profile: ''
-  default_assignee: ''
-  max_in_progress_per_profile: null
-  auto_decompose: true
-  auto_decompose_per_tick: 3
-  dispatch_stale_timeout_seconds: 14400
 prompt_caching:
   cache_ttl: 5m
 openrouter:
@@ -187,7 +200,6 @@ auxiliary:
     base_url: ''
     api_key: ''
     timeout: 120
-    extra_body: {}
     download_timeout: 30
   web_extract:
     provider: auto
@@ -195,84 +207,72 @@ auxiliary:
     base_url: ''
     api_key: ''
     timeout: 360
-    extra_body: {}
   compression:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 120
-    extra_body: {}
   skills_hub:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
-    extra_body: {}
   approval:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 120
-    extra_body: {}
   mcp:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
-    extra_body: {}
   title_generation:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
-    extra_body: {}
   tts_audio_tags:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 30
-    extra_body: {}
   triage_specifier:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 120
-    extra_body: {}
   kanban_decomposer:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 180
-    extra_body: {}
   profile_describer:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 60
-    extra_body: {}
   curator:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 600
-    extra_body: {}
   monitor:
     provider: auto
     model: ''
     base_url: ''
     api_key: ''
     timeout: 60
-    extra_body: {}
   session_search:
     api_key: ''
     base_url: ''
@@ -317,7 +317,6 @@ display:
     last_lines: 2
   interim_assistant_messages: true
   tool_progress_command: false
-  tool_progress_overrides: {}
   tool_preview_length: 0
   tool_progress_grouping: accumulate
   ephemeral_system_ttl: 0
@@ -329,10 +328,11 @@ display:
   runtime_footer:
     enabled: false
     fields:
-    - model
-    - context_pct
-    - cwd
+      - model
+      - context_pct
+      - cwd
   copy_shortcut: auto
+  tool_progress_overrides: {}
   tool_progress: all
 dashboard:
   theme: default
@@ -409,8 +409,8 @@ human_delay:
 context:
   engine: compressor
 memory:
-  memory_enabled: true
-  user_profile_enabled: true
+  memory_enabled: false
+  user_profile_enabled: false
   write_approval: false
   memory_char_limit: 2200
   user_char_limit: 1375
@@ -426,10 +426,10 @@ delegation:
   child_timeout_seconds: 600
   reasoning_effort: ''
   max_concurrent_children: 3
-  max_async_children: 3
   max_spawn_depth: 1
   orchestrator_enabled: true
   subagent_auto_approve: false
+  max_async_children: 3
 prefill_messages_file: ''
 goals:
   max_turns: 20
@@ -440,6 +440,8 @@ skills:
   inline_shell_timeout: 10
   guard_agent_created: false
   write_approval: false
+  disabled:
+    - yuanbao
 curator:
   enabled: true
   interval_hours: 168
@@ -451,13 +453,11 @@ curator:
   backup:
     enabled: true
     keep: 5
-honcho: {}
 timezone: ''
 slack:
   require_mention: true
   free_response_channels: ''
   allowed_channels: ''
-  channel_prompts: {}
 discord:
   require_mention: true
   free_response_channels: ''
@@ -467,7 +467,6 @@ discord:
   history_backfill: true
   history_backfill_limit: 50
   reactions: true
-  channel_prompts: {}
   dm_role_auth_guild: ''
   server_actions: ''
   allow_any_attachment: false
@@ -481,15 +480,13 @@ discord:
     speech_gain: 1.0
     ack_enabled: true
     ack_phrases:
-    - Let me look into that.
-    - One moment.
-    - Checking on that now.
-    - Give me a sec.
-    - On it.
-whatsapp: {}
+      - Let me look into that.
+      - One moment.
+      - Checking on that now.
+      - Give me a sec.
+      - On it.
 telegram:
   reactions: false
-  channel_prompts: {}
   allowed_chats: ''
   extra:
     rich_messages: true
@@ -497,7 +494,6 @@ mattermost:
   require_mention: true
   free_response_channels: ''
   allowed_channels: ''
-  channel_prompts: {}
 matrix:
   require_mention: true
   free_response_rooms: ''
@@ -509,11 +505,7 @@ approvals:
   mcp_reload_confirm: true
   destructive_slash_confirm: true
 command_allowlist: []
-quick_commands: {}
-platform_hints: {}
-hooks: {}
 hooks_auto_accept: false
-personalities: {}
 security:
   allow_private_urls: false
   redact_secrets: true
@@ -535,7 +527,17 @@ cron:
     expected_audience: ''
     nas_jwks_url: ''
   wrap_response: true
-  max_parallel_jobs: null
+kanban:
+  dispatch_in_gateway: true
+  dispatch_interval_seconds: 60
+  failure_limit: 2
+  worker_log_rotate_bytes: 2097152
+  worker_log_backup_count: 1
+  orchestrator_profile: ''
+  default_assignee: ''
+  auto_decompose: true
+  auto_decompose_per_tick: 3
+  dispatch_stale_timeout_seconds: 14400
 code_execution:
   mode: project
 tools:
@@ -555,7 +557,6 @@ model_catalog:
   enabled: true
   url: https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
   ttl_hours: 1
-  providers: {}
 network:
   force_ipv4: false
 gateway:
@@ -570,7 +571,7 @@ streaming:
   transport: auto
   edit_interval: 0.8
   buffer_threshold: 24
-  cursor: " \u2589"
+  cursor: ' ▉'
   fresh_final_after_seconds: 60.0
 sessions:
   auto_prune: false
@@ -593,7 +594,6 @@ lsp:
   wait_mode: document
   wait_timeout: 5
   install_strategy: auto
-  servers: {}
 x_search:
   model: grok-4.20-reasoning
   timeout_seconds: 180
@@ -617,27 +617,49 @@ session_reset:
   mode: none
 platform_toolsets:
   cli:
-  - browser
-  - clarify
-  - code_execution
-  - computer_use
-  - cronjob
-  - delegation
-  - file
-  - image_gen
-  - kanban
-  - memory
-  - messaging
-  - session_search
-  - skills
-  - terminal
-  - todo
-  - tts
-  - vision
-  - web
+    - clarify
+    - code_execution
+    - delegation
+    - file
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
 known_plugin_toolsets:
   cli:
-  - spotify
+    - spotify
+smart_model_routing:
+  enabled: false
+known_builtin_toolsets:
+  cli:
+    - bfl
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - context_engine
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - homeassistant
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - spotify
+    - stt
+    - terminal
+    - todo
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
 
 # ── Fallback Model ────────────────────────────────────────────────────
 # Automatic provider failover when primary is unavailable.

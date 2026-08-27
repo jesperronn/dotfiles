@@ -598,6 +598,7 @@ init_machine() {
       --memory "$MACHINE_MEMORY_MB"
       --disk-size 100
       --rootful=false
+      --provider applehv
     )
 
     podman_control machine init "${init_args[@]}" "$machine_name"

@@ -1,6 +1,6 @@
 {
-  "lastChangelogVersion": "0.80.3",
+  "lastChangelogVersion": "0.84.3",
   "theme": "dark",
-  "defaultProvider": "lmstudio",
-  "defaultModel": "qwen/qwen3.6-35b-a3b"
+  "defaultProvider": "omlx",
+  "defaultModel": "Qwen3.6-35B-A3B-MLX-4bit"
 }

@@ -8,9 +8,9 @@
       "Bash"
     ]
   },
-  "model": "opus",
+  "model": "sonnet",
   "alwaysThinkingEnabled": true,
-  "effortLevel": "medium",
+  "effortLevel": "low",
   "skipWorkflowUsageWarning": true,
   "theme": "auto",
   "verbose": true,

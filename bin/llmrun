@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # llmrun — universal adapter launcher (standalone)
-# Generated: 2026-08-17
+# Generated: 2026-08-24
 # Source project: /Users/jesper/src/local-model-evaluator-bench
 # Regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun
 #
 # Usage:
-#   llmrun [--agent <name>] [--runtime <lms|ollama|mlx|omlx>] [--model <id>] [--dry-run] [prompt...]
-#   llmrun runtime status|start|stop|logs [lms|ollama|mlx|omlx|all] ...
+#   llmrun [--agent <name>] [--model <id>] [--dry-run] [prompt...]
+#   llmrun runtime status|start|stop|logs [lms|ollama|mlx|omlx|mtplx|all] ...
 #
 # --dry-run resolves tool/runtime/model/adapter as usual but prints the
 # resolved adapter path and env instead of exec'ing it — no model is loaded.
@@ -22,6 +22,8 @@ _LMS_URL="${LMS_BASE_URL:-http://127.0.0.1:1234/v1}"
 _LMS_KEY="${LMS_API_KEY:-lm-studio}"
 _OMLX_URL="${OMLX_BASE_URL:-http://127.0.0.1:8000/v1}"
 _OMLX_KEY="${OMLX_API_KEY:-omlx}"
+_MTPLX_URL="${MTPLX_BASE_URL:-http://127.0.0.1:8001/v1}"
+_MTPLX_KEY="${MTPLX_API_KEY:-mtplx}"
 
 # ── Inline helpers ────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -35,11 +37,11 @@ ok()        { printf '%s\n' "${C_GRN}[OK]${C_RST} $*"; }
 warn()      { printf '%s\n' "${C_YEL}[WARN]${C_RST} $*" >&2; }
 err()       { printf '%s\n' "${C_RED}[FAIL]${C_RST} $*" >&2; }
 die()       { err "$*"; exit 1; }
-read_list() { grep -vE '^\s*(#|$)' "$1" 2>/dev/null || true; }
 lms_up()    { curl -fsS --max-time 5 "$_LMS_URL/models" >/dev/null 2>&1; }
 ollama_up() { curl -fsS --max-time 5 "http://localhost:11434/api/tags" >/dev/null 2>&1; }
 mlx_up()    { curl -fsS --max-time 5 "http://localhost:8080/v1/models" >/dev/null 2>&1; }
 omlx_up()   { curl -fsS --max-time 5 "$_OMLX_URL/models" >/dev/null 2>&1; }
+mtplx_up()  { curl -fsS --max-time 5 "$_MTPLX_URL/models" >/dev/null 2>&1; }
 
 # ── runtime: status/start/stop/logs (lms|ollama|mlx lifecycle, no repo needed) ──
 _rt_lms_loaded() {
@@ -64,6 +66,10 @@ _rt_mlx_models() {
 }
 _rt_omlx_models() {
   curl -fsS --max-time 2 "$_OMLX_URL/models" 2>/dev/null \
+    | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
+}
+_rt_mtplx_models() {
+  curl -fsS --max-time 2 "$_MTPLX_URL/models" 2>/dev/null \
     | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
 }
 # Strip trailing slash from TMPDIR (typically ends with /) to avoid double-slash paths
@@ -121,16 +127,29 @@ rt_status_one() {
         printf '%s\n' "${C_DIM}down${C_RST}"
       fi
       ;;
-    *) die "unknown runtime: $rt (valid: lms ollama mlx omlx)";;
+    mtplx)
+      printf '%s   ' "${C_BLU}MTPLX${C_RST}"
+      if mtplx_up 2>/dev/null; then
+        local served; served=$(_rt_mtplx_models)
+        if [ -n "$served" ]; then
+          printf '%s  %sserved:%s %s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}" "$(echo "$served" | paste -sd, -)"
+        else
+          printf '%s  %s(no models served)%s\n' "${C_GRN}up${C_RST}" "${C_DIM}" "${C_RST}"
+        fi
+      else
+        printf '%s\n' "${C_DIM}down${C_RST}"
+      fi
+      ;;
+    *) die "unknown runtime: $rt (valid: lms ollama mlx omlx mtplx)";;
   esac
 }
 
 cmd_runtime_status() {
   local target="${1:-all}"
   case "$target" in
-    all) rt_status_one lms; rt_status_one ollama; rt_status_one mlx; rt_status_one omlx;;
-    lms|ollama|mlx|omlx) rt_status_one "$target";;
-    *) die "unknown runtime: $target (valid: lms ollama mlx omlx all)";;
+    all) rt_status_one lms; rt_status_one ollama; rt_status_one mlx; rt_status_one omlx; rt_status_one mtplx;;
+    lms|ollama|mlx|omlx|mtplx) rt_status_one "$target";;
+    *) die "unknown runtime: $target (valid: lms ollama mlx omlx mtplx all)";;
   esac
 }
 
@@ -182,9 +201,22 @@ cmd_runtime_start() {
       ;;
     omlx)
       _require_project "runtime start omlx"
-      "$_PROJECT/bin/omlx" start
+      "${OMLX_CLI:-/Applications/oMLX.app/Contents/MacOS/omlx-cli}" start
       ;;
-    *) die "unknown runtime: $target (valid: lms ollama mlx omlx)";;
+    mtplx)
+      if mtplx_up 2>/dev/null; then info "mtplx: already running"; return; fi
+      [ -z "$model" ] && die "usage: llmrun runtime start mtplx <model>"
+      command -v mtplx >/dev/null 2>&1 || die "mtplx CLI not found on PATH"
+      info "starting mtplx quickstart with $model on port ${MTPLX_PORT:-8001}..."
+      nohup mtplx quickstart --port "${MTPLX_PORT:-8001}" --model "$model" >"$_rt_tmpdir/llmrun-mtplx.log" 2>&1 &
+      disown
+      for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        mtplx_up 2>/dev/null && { ok "mtplx: started"; return; }
+        sleep 2
+      done
+      die "mtplx server did not come up within 30s — check $_rt_tmpdir/llmrun-mtplx.log"
+      ;;
+    *) die "unknown runtime: $target (valid: lms ollama mlx omlx mtplx)";;
   esac
 }
 
@@ -223,10 +255,15 @@ cmd_runtime_stop() {
       ;;
     omlx)
       _require_project "runtime stop omlx"
-      "$_PROJECT/bin/omlx" stop
+      "$_PROJECT/bin/rt" stop omlx
       ;;
-    all) cmd_runtime_stop lms; cmd_runtime_stop ollama; cmd_runtime_stop mlx; cmd_runtime_stop omlx;;
-    *) die "unknown runtime: $target (valid: lms ollama mlx omlx all)";;
+    mtplx)
+      local pid; pid=$(lsof -ti ":${MTPLX_PORT:-8001}" 2>/dev/null | head -1)
+      if [ -z "$pid" ]; then info "mtplx: nothing on port ${MTPLX_PORT:-8001}"
+      else kill "$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true; ok "mtplx: stopped"; fi
+      ;;
+    all) cmd_runtime_stop lms; cmd_runtime_stop ollama; cmd_runtime_stop mlx; cmd_runtime_stop omlx; cmd_runtime_stop mtplx;;
+    *) die "unknown runtime: $target (valid: lms ollama mlx omlx mtplx all)";;
   esac
 }
 
@@ -236,7 +273,7 @@ cmd_runtime_logs() {
     case "$a" in
       -f|--follow) follow=1;;
       --all) show_all=1;;
-      lms|ollama|mlx|omlx) TGT="$a";;
+      lms|ollama|mlx|omlx|mtplx) TGT="$a";;
       *[0-9]*) n="$a";;
     esac
   done
@@ -247,7 +284,7 @@ cmd_runtime_logs() {
   fi
 
   local tgt="${TGT:-}"
-  [ -z "$tgt" ] && die "usage: llmrun runtime logs [--all] [<lms|ollama|mlx|omlx>] [-f] [N]"
+  [ -z "$tgt" ] && die "usage: llmrun runtime logs [--all] [<lms|ollama|mlx|omlx|mtplx>] [-f] [N]"
   case "$tgt" in
     lms)
       command -v lms >/dev/null 2>&1 || die "lms CLI not found on PATH"
@@ -280,9 +317,14 @@ cmd_runtime_logs() {
       if [ "$follow" = 1 ]; then tail -n "$n" -f "$_rt_mlx_logfile"; else tail -n "$n" "$_rt_mlx_logfile"; fi
       ;;
     omlx)
-      die "oMLX has no llmrun-managed log file — check the oMLX.app UI, or: bin/omlx status"
+      die "oMLX has no llmrun-managed log file — check the oMLX.app UI, or: bin/rt omlx status"
       ;;
-    *) die "unknown runtime: $tgt (valid: lms ollama mlx omlx all)";;
+    mtplx)
+      local log="$_rt_tmpdir/llmrun-mtplx.log"
+      [ -f "$log" ] || die "no mtplx log found at \${TMPDIR}/llmrun-mtplx.log (started outside llmrun?)"
+      if [ "$follow" = 1 ]; then tail -n "$n" -f "$log"; else tail -n "$n" "$log"; fi
+      ;;
+    *) die "unknown runtime: $tgt (valid: lms ollama mlx omlx mtplx all)";;
   esac
 }
 
@@ -375,10 +417,10 @@ if [ "${1:-}" = "runtime" ]; then
     logs)   cmd_runtime_logs   "$@";;
     -h|--help|help)
       cat <<'EOF'
-llmrun runtime status [lms|ollama|mlx|omlx|all]        show up/down + loaded model
-llmrun runtime start  <lms|ollama|mlx|omlx> [model]    start a runtime (mlx needs a model)
-llmrun runtime stop   <lms|ollama|mlx|omlx|all>        unload models and stop the runtime
-llmrun runtime logs   [--all] [<lms|ollama|mlx|omlx>] [-f] [N]  tail runtime logs (--all: all runtimes)
+llmrun runtime status [lms|ollama|mlx|omlx|mtplx|all]        show up/down + loaded model
+llmrun runtime start  <lms|ollama|mlx|omlx|mtplx> [model]    start a runtime (mlx/mtplx need a model)
+llmrun runtime stop   <lms|ollama|mlx|omlx|mtplx|all>        unload models and stop the runtime
+llmrun runtime logs   [--all] [<lms|ollama|mlx|omlx|mtplx>] [-f] [N]  tail runtime logs (--all: all runtimes)
 EOF
       ;;
     *) die "unknown runtime subcommand: $RSUB (valid: status start stop logs)";;
@@ -419,6 +461,12 @@ _model_list_omlx() {
     _rt_omlx_models | sed 's/^/  /'
   elif [ "${1:-}" = required ]; then die "omlx not reachable"; fi
 }
+_model_list_mtplx() {
+  if mtplx_up 2>/dev/null; then
+    printf '%s\n' "${C_BLU}[mtplx]${C_RST}"
+    _rt_mtplx_models | sed 's/^/  /'
+  elif [ "${1:-}" = required ]; then die "mtplx not reachable"; fi
+}
 
 cmd_model_list() {
   local rt="${1:-all}"
@@ -427,8 +475,9 @@ cmd_model_list() {
     ollama) _model_list_ollama required;;
     mlx)    _model_list_mlx required;;
     omlx)   _model_list_omlx required;;
-    all)    _model_list_lms; _model_list_ollama; _model_list_mlx; _model_list_omlx;;
-    *) die "unknown runtime: $rt (valid: lms ollama mlx omlx all)";;
+    mtplx)  _model_list_mtplx required;;
+    all)    _model_list_lms; _model_list_ollama; _model_list_mlx; _model_list_omlx; _model_list_mtplx;;
+    *) die "unknown runtime: $rt (valid: lms ollama mlx omlx mtplx all)";;
   esac
 }
 
@@ -443,6 +492,7 @@ cmd_model_get() {
     lms)    command -v lms >/dev/null 2>&1 || die "lms CLI not found"; lms get "$id";;
     ollama) command -v ollama >/dev/null 2>&1 || die "ollama CLI not found"; ollama pull "$id";;
     mlx)    info "mlx models download on first use — try: llmrun runtime start mlx $id";;
+    mtplx)  info "mtplx models download on first use — try: llmrun runtime start mtplx $id";;
     *) die "unknown runtime: $rt";;
   esac
 }
@@ -461,6 +511,7 @@ cmd_model_load() {
               -d "$(python3 -c "import json,sys; print(json.dumps({'model':sys.argv[1]}))" "$id")" >/dev/null \
               && ok "loaded: $id" || die "load failed for $id";;
     mlx)    cmd_runtime_start mlx "$id";;
+    mtplx)  cmd_runtime_start mtplx "$id";;
     *) die "unknown runtime: $rt";;
   esac
 }
@@ -499,6 +550,7 @@ for m in json.load(sys.stdin):
       ollama stop "$id" && ok "unloaded: $id"
       ;;
     mlx) cmd_runtime_stop mlx;;
+    mtplx) cmd_runtime_stop mtplx;;
     *) die "unknown runtime: $rt";;
   esac
 }
@@ -531,7 +583,7 @@ if [ "${1:-}" = "model" ]; then
     update) cmd_model_update "$@";;
     -h|--help|help)
       cat <<'EOF'
-llmrun model list     [lms|ollama|mlx|omlx|all]          list downloaded models
+llmrun model list     [lms|ollama|mlx|omlx|mtplx|all]    list downloaded models
 llmrun model get      <id> --runtime X                  download a model
 llmrun model load     <id> --runtime X                  load into memory
 llmrun model unload   [<id>] [--idle Nm] --runtime X     unload from memory
@@ -679,17 +731,16 @@ fi
 
 trap 'echo; warn "Interrupted"; exit 130' INT TERM
 
-TOOL=""; RUNTIME=""; MODEL=""; PROMPT_ARGS=(); LLMRUN_DRY_RUN=0
+TOOL=""; MODEL=""; PROMPT_ARGS=(); LLMRUN_DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --agent|-t)    TOOL="$2";    shift 2;;
-    --runtime|-r) RUNTIME="$2"; shift 2;;
     --model|-m)   MODEL="$2";   shift 2;;
     --dry-run)    LLMRUN_DRY_RUN=1; shift;;
     -h|--help)
       awk 'NR>1 && /^[^#]/{exit} NR>1{print}' "$0"
       printf '\n%s\n' "${C_BLD}Available agents:${C_RST}"
-      ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed -E 's/-(lms|ollama|mlx|omlx)$//' | sort -u | sed 's/^/  /'
+      ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed -E 's/-(lms|ollama|mlx|omlx|mtplx)$//' | sort -u | sed 's/^/  /'
       printf '\n%s\n' "${C_BLD}Available models per runtime:${C_RST}"
       printf '\n  %s\n' "${C_YEL}LM Studio (lms):${C_RST}"
       if lms_up 2>/dev/null; then
@@ -701,22 +752,25 @@ while [ $# -gt 0 ]; do
       if ollama_up 2>/dev/null; then
         _rt_ollama_models | sed 's/^/    /'
       else
-        printf '    (Ollama not running — falling back to %s/models-ollama.txt)\n' "$_PROJECT"
-        [ -f "$_PROJECT/models-ollama.txt" ] && sed 's/^/    /' "$_PROJECT/models-ollama.txt" || printf '    (file not found)\n'
+        printf '    (Ollama not running or no models available)\n'
       fi
       printf '\n  %s\n' "${C_YEL}MLX:${C_RST}"
       if mlx_up 2>/dev/null; then
         _rt_mlx_models | sed 's/^/    /'
       else
-        printf '    (mlx server not running — falling back to %s/models-mlx.txt)\n' "$_PROJECT"
-        [ -f "$_PROJECT/models-mlx.txt" ] && sed 's/^/    /' "$_PROJECT/models-mlx.txt" || printf '    (file not found)\n'
+        printf '    (mlx server not running or no models available)\n'
       fi
       printf '\n  %s\n' "${C_YEL}oMLX:${C_RST}"
       if omlx_up 2>/dev/null; then
         _rt_omlx_models | sed 's/^/    /'
       else
-        printf '    (omlx server not running — falling back to %s/models-omlx.txt)\n' "$_PROJECT"
-        [ -f "$_PROJECT/models-omlx.txt" ] && sed 's/^/    /' "$_PROJECT/models-omlx.txt" || printf '    (file not found)\n'
+        printf '    (omlx server not running or no models available)\n'
+      fi
+      printf '\n  %s\n' "${C_YEL}MTPLX:${C_RST}"
+      if mtplx_up 2>/dev/null; then
+        _rt_mtplx_models | sed 's/^/    /'
+      else
+        printf '    (mtplx server not running or no models available)\n'
       fi
       printf '\n'
       exit 0;;
@@ -729,9 +783,56 @@ done
 command -v fzf >/dev/null 2>&1 || die "fzf not installed — brew install fzf"
 [ -d "$_ADAPTERS" ] || die "adapter directory not found: $_ADAPTERS — set LLMRUN_ADAPTERS or regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun"
 
+# ── Unified proxy model discovery via /v1/models ───────────────────────────────
+proxy_models() {
+  # Query /v1/models from all available proxies and runtimes, prefixing with provider
+  local all_models=""
+
+  # Try LMS
+  if lms_up 2>/dev/null; then
+    local lms_models
+    lms_models=$(lms ls 2>/dev/null | awk '$1 ~ /\// {print "lms/" $1}')
+    all_models="${all_models}${lms_models}"
+    [ -n "$all_models" ] && all_models="${all_models}"$'\n'
+  fi
+
+  # Try Ollama
+  if ollama_up 2>/dev/null; then
+    local ollama_models
+    ollama_models=$(_rt_ollama_models | sed 's/^/ollama\//')
+    all_models="${all_models}${ollama_models}"
+    [ -n "$all_models" ] && all_models="${all_models}"$'\n'
+  fi
+
+  # Try MLX
+  if mlx_up 2>/dev/null; then
+    local mlx_models
+    mlx_models=$(_rt_mlx_models | sed 's/^/mlx\//')
+    all_models="${all_models}${mlx_models}"
+    [ -n "$all_models" ] && all_models="${all_models}"$'\n'
+  fi
+
+  # Try oMLX
+  if omlx_up 2>/dev/null; then
+    local omlx_models
+    omlx_models=$(_rt_omlx_models | sed 's/^/omlx\//')
+    all_models="${all_models}${omlx_models}"
+    [ -n "$all_models" ] && all_models="${all_models}"$'\n'
+  fi
+
+  # Try MTPLX
+  if mtplx_up 2>/dev/null; then
+    local mtplx_models
+    mtplx_models=$(_rt_mtplx_models | sed 's/^/mtplx\//')
+    all_models="${all_models}${mtplx_models}"
+  fi
+
+  printf '%s' "$all_models" | grep -v '^$'
+}
+
 # ── Phase 1: Select ───────────────────────────────────────────────────────────
 all_adapters() { ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh; }
-all_tools()    { all_adapters | sed -E 's/-(lms|ollama|mlx|omlx)$//' | sort -u; }
+all_tools()    { all_adapters; }
 
 if [ -z "$TOOL" ]; then
   tools="$(all_tools)"
@@ -740,72 +841,27 @@ if [ -z "$TOOL" ]; then
   [ -z "$TOOL" ] && die "no tool selected"
 fi
 
-if [ -z "$RUNTIME" ]; then
-  # A unified adapter (<tool>.sh, no runtime suffix) speaks to whichever runtime
-  # it is handed, so offer all three. Suffixed variants only offer what exists.
-  if [ -f "$_ADAPTERS/${TOOL}.sh" ]; then
-    runtimes="$(printf 'lms\nmlx\nollama\n')"
-  else
-    runtimes="$(all_adapters | grep -E "^${TOOL}-" | grep -oE '(lms|ollama|mlx|omlx)$' | sort -u)"
-  fi
-  [ -z "$runtimes" ] && die "no adapters found for tool '$TOOL' in $_ADAPTERS"
-  rt_count="$(printf '%s\n' "$runtimes" | wc -l | tr -d ' ')"
-  if [ "$rt_count" = 1 ]; then
-    RUNTIME="$runtimes"
-    info "runtime: $RUNTIME (only option for $TOOL)"
-  else
-    RUNTIME="$(printf '%s\n' "$runtimes" | fzf --prompt='Runtime > ' --header='Select a runtime')"
-    [ -z "$RUNTIME" ] && die "no runtime selected"
-  fi
-fi
-
 if [ -z "$MODEL" ]; then
-  case "$RUNTIME" in
-    lms)
-      model_list="$(lms ls 2>/dev/null | awk '$1 ~ /\// {print $1}')"
-      [ -z "$model_list" ] && die "no models found via 'lms ls' — is LM Studio running?"
-      ;;
-    ollama)
-      if ollama_up 2>/dev/null; then
-        model_list="$(_rt_ollama_models)"
-      fi
-      [ -z "$model_list" ] && model_list="$(read_list "$_PROJECT/models-ollama.txt")"
-      [ -z "$model_list" ] && die "no models found via ollama or $_PROJECT/models-ollama.txt"
-      ;;
-    mlx)
-      if mlx_up 2>/dev/null; then
-        model_list="$(_rt_mlx_models)"
-      fi
-      [ -z "$model_list" ] && model_list="$(read_list "$_PROJECT/models-mlx.txt")"
-      [ -z "$model_list" ] && die "no models found via mlx or $_PROJECT/models-mlx.txt"
-      ;;
-    omlx)
-      if omlx_up 2>/dev/null; then
-        model_list="$(_rt_omlx_models)"
-      fi
-      [ -z "$model_list" ] && model_list="$(read_list "$_PROJECT/models-omlx.txt")"
-      [ -z "$model_list" ] && die "no models found via oMLX or $_PROJECT/models-omlx.txt"
-      ;;
-    *)
-      die "unknown runtime '$RUNTIME' — expected lms, ollama, mlx, or omlx"
-      ;;
-  esac
+  model_list="$(proxy_models)"
+  [ -z "$model_list" ] && die "no models found — no runtimes available or running"
   MODEL="$(printf '%s\n' "$model_list" | fzf --prompt='Model   > ' --header='Select a model')"
   [ -z "$MODEL" ] && die "no model selected"
 fi
 
 # ── Phase 2: Validate ─────────────────────────────────────────────────────────
-# Prefer a runtime-specific adapter, fall back to the unified one — same
-# resolution order bin/bench uses.
-ADAPTER_FILE="$_ADAPTERS/${TOOL}-${RUNTIME}.sh"
-[ -f "$ADAPTER_FILE" ] || ADAPTER_FILE="$_ADAPTERS/${TOOL}.sh"
+# Adapter resolution: look for ${TOOL}.sh (unified adapter, no runtime suffix)
+ADAPTER_FILE="$_ADAPTERS/${TOOL}.sh"
 if [ ! -f "$ADAPTER_FILE" ]; then
-  err "no adapter for ${TOOL}-${RUNTIME} (and no unified ${TOOL}.sh)"
-  printf '\nAvailable combos:\n'
+  err "no adapter found: ${TOOL}.sh"
+  printf '\nAvailable adapters:\n'
   all_adapters | sed 's/^/  /'
-  printf '\nTry a different --agent or --runtime.\n'
+  printf '\nTry a different --agent.\n'
   exit 1
 fi
+
+# Extract runtime and model ID from proxy format (e.g., "lms/mistral")
+RUNTIME="${MODEL%%/*}"
+MODEL_ID="${MODEL#*/}"
 
 # --dry-run stops here — it exists to let callers verify tool/runtime/model
 # resolution and the adapter env without a live runtime, a PATH-installed
@@ -816,14 +872,16 @@ if [ "$LLMRUN_DRY_RUN" = 1 ]; then
     ollama) dr_url="http://localhost:11434/v1" dr_key="ollama";;
     mlx)    dr_url="http://localhost:8080/v1"  dr_key="not-needed";;
     omlx)   dr_url="$_OMLX_URL"                dr_key="$_OMLX_KEY";;
+    mtplx)  dr_url="$_MTPLX_URL"               dr_key="$_MTPLX_KEY";;
   esac
-  # omlx adapters read OMLX_*, not LMS_* — label the printed var names to match
-  # what will actually be exported (see the Phase 3 export block below).
+  # omlx/mtplx adapters read OMLX_*/MTPLX_*, not LMS_* — label the printed var
+  # names to match what will actually be exported (see the Phase 3 export block).
   if [ "$RUNTIME" = omlx ]; then dr_var_url=OMLX_BASE_URL; dr_var_key=OMLX_API_KEY
+  elif [ "$RUNTIME" = mtplx ]; then dr_var_url=MTPLX_BASE_URL; dr_var_key=MTPLX_API_KEY
   else dr_var_url=LMS_BASE_URL; dr_var_key=LMS_API_KEY; fi
   printf 'agent=%s\n'   "$TOOL"
   printf 'runtime=%s\n' "$RUNTIME"
-  printf 'model=%s\n'   "$MODEL"
+  printf 'model=%s\n'   "$MODEL_ID"
   printf 'adapter=%s\n' "$ADAPTER_FILE"
   printf '%s=%s\n' "$dr_var_url" "$dr_url"
   printf '%s=%s\n' "$dr_var_key" "$dr_key"
@@ -835,7 +893,8 @@ case "$RUNTIME" in
   lms)    lms_up    || die "LM Studio not reachable at $_LMS_URL — start with: lms server start";;
   ollama) ollama_up || die "Ollama not reachable at localhost:11434 — start with: ollama serve";;
   mlx)    mlx_up    || die "mlx_lm.server not reachable at localhost:8080 — start with: python -m mlx_lm.server --model <id>";;
-  omlx)   omlx_up   || die "oMLX not reachable at $_OMLX_URL — start with: bin/omlx start";;
+  omlx)   omlx_up   || die "oMLX not reachable at $_OMLX_URL — start with: bin/rt omlx start";;
+  mtplx)  mtplx_up  || die "MTPLX not reachable at $_MTPLX_URL — start with: mtplx quickstart --port ${MTPLX_PORT:-8001} --model <model>";;
 esac
 
 if ! command -v "$TOOL" >/dev/null 2>&1; then
@@ -846,23 +905,24 @@ if ! command -v "$TOOL" >/dev/null 2>&1; then
 fi
 
 # ── Phase 3: Exec ─────────────────────────────────────────────────────────────
-echo "${C_DIM}Rerun: llmrun --agent $TOOL --runtime $RUNTIME --model $MODEL${C_RST}"
-info "launching ${C_BLD}${TOOL}${C_RST} via ${C_BLD}${RUNTIME}${C_RST} with model ${C_BLD}${MODEL}${C_RST}"
-export MODEL_ID="$MODEL"
+echo "${C_DIM}Rerun: llmrun --agent $TOOL --model $MODEL${C_RST}"
+info "launching ${C_BLD}${TOOL}${C_RST} via ${C_BLD}${RUNTIME}${C_RST} with model ${C_BLD}${MODEL_ID}${C_RST}"
+export MODEL_ID
 
 # Point LMS_BASE_URL/LMS_API_KEY at the *selected* runtime and export RUNTIME,
 # matching what bin/bench does. Unified adapters source config.sh, whose
-# LMS_BASE_URL default is LM Studio — without this a `--runtime ollama` run
+# LMS_BASE_URL default is LM Studio — without this an ollama run
 # would silently talk to LM Studio and mislabel which backend answered.
-# omlx is deliberately NOT part of this rewiring: omlx adapters source
-# config.sh and read OMLX_BASE_URL/OMLX_API_KEY directly, not the shared
-# LMS_* names the other three runtimes reuse — so it gets its own export
-# below instead of a case arm here.
+# omlx/mtplx are deliberately NOT part of this rewiring: their adapters source
+# config.sh and read OMLX_BASE_URL/OMLX_API_KEY or MTPLX_BASE_URL/MTPLX_API_KEY
+# directly, not the shared LMS_* names the other three runtimes reuse — so they
+# get their own export below instead of a case arm here.
 case "$RUNTIME" in
   lms)    export LMS_BASE_URL="$_LMS_URL"                 LMS_API_KEY="$_LMS_KEY";;
   ollama) export LMS_BASE_URL="http://localhost:11434/v1" LMS_API_KEY="ollama";;
   mlx)    export LMS_BASE_URL="http://localhost:8080/v1"  LMS_API_KEY="not-needed";;
   omlx)   export OMLX_BASE_URL="$_OMLX_URL"               OMLX_API_KEY="$_OMLX_KEY";;
+  mtplx)  export MTPLX_BASE_URL="$_MTPLX_URL"             MTPLX_API_KEY="$_MTPLX_KEY";;
 esac
 export RUNTIME
 if [ "${#PROMPT_ARGS[@]}" -gt 0 ]; then

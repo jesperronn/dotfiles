@@ -101,9 +101,42 @@ test_review_default_emits_structured_markdown() {
   capture_command output status "$BBPR_BIN" review
   assert_status "0" "$status" "review exits successfully"
   assert_contains "$output" "## Review Queue" "review prints a Markdown heading"
-  assert_contains "$output" "- [ ] PROJ/repo/42" "review prints checkbox-style PR entries"
-  assert_contains "$output" "Author: Test Author" "review includes reviewer context"
+  assert_contains "$output" $'PROJ/repo/42\n**Test PR**\nTest Author ' "review prints the compact three-line PR block"
+  assert_not_contains "$output" "- [ ] PROJ/repo/42" "review no longer prefixes PR specs with checklist markup"
+  assert_not_contains "$output" "Title:" "review no longer prints the title label"
+  assert_not_contains "$output" "URL:" "review no longer prints the URL label"
   assert_not_contains "$output" "https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42 TA Test PR" "review no longer defaults to long flat lines"
+}
+
+test_review_renderer_bolds_title_and_marks_draft() {
+  local output=""
+
+  output="$(
+    source "$BBPR_BIN"
+    BBPR_COLOR_ENABLED=0
+    bbpr_render_review_markdown '[{"id":42,"title":"Draft PR","draft":true,"author":{"user":{"slug":"author","displayName":"Test Author"}},"fromRef":{"repository":{"slug":"repo","project":{"key":"PROJ"}}},"participants":[{"role":"REVIEWER","status":"UNAPPROVED"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}]'
+  )"
+
+  assert_contains "$output" $'PROJ/repo/42\nDRAFT **Draft PR**\nTest Author UNAPPROVED' "review renderer emits spec, draft title, and author/status on exactly three lines"
+  assert_not_contains "$output" "Title:" "review renderer removes the title label"
+  assert_not_contains "$output" "https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42" "review renderer removes the URL line from default output"
+}
+
+test_review_renderer_uses_isdraft_fallback_and_color_styles() {
+  local output="" esc
+  esc=$'\033'
+
+  output="$(
+    source "$BBPR_BIN"
+    BBPR_COLOR_ENABLED=1
+    bbpr_render_review_markdown '[{"id":43,"title":"Color Draft","isDraft":true,"author":{"user":{"slug":"author","displayName":"Test Author"}},"fromRef":{"repository":{"slug":"repo","project":{"key":"PROJ"}}},"participants":[{"role":"REVIEWER","status":"NEEDS_WORK"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/43"}]}}]'
+  )"
+
+  assert_contains "$output" "${esc}[1m${esc}[34mPROJ/repo/43${esc}[0m" "review renderer keeps the colored spec on its own line"
+  assert_contains "$output" "${esc}[35mDRAFT${esc}[0m **${esc}[1m${esc}[36mColor Draft${esc}[0m**" "review renderer keeps the draft marker and colored bold title together"
+  assert_contains "$output" "${esc}[32mTest Author${esc}[0m" "review renderer keeps author coloring"
+  assert_contains "$output" "${esc}[31mNEEDS WORK${esc}[0m" "review renderer colors important status values"
+  assert_contains "$output" "${esc}[35mDRAFT${esc}[0m" "review renderer colors the draft marker from isDraft"
 }
 
 test_review_short_adds_next_step_hint() {
