@@ -25,10 +25,19 @@ Flags:
 
 import base64
 import binascii
+import os
 import re
 import sys
 import urllib.parse
 import zlib
+
+
+# Shared key-management helpers (keypair, store, Keycloak REST). Imported lazily
+# per-call so the core decode path stays dependency-free.
+def _import_lib():
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import saml_decode_lib as lib
+    return lib
 
 
 # EncryptedData element (namespace-agnostic): matches <xenc:EncryptedData ...>
@@ -183,8 +192,11 @@ def _locate_rsa_key_material(encrypted_key_block):
     return None
 
 
-def decrypt_doc(doc, key_path):
-    """Decrypt every EncryptedData block in doc; return (new_doc, how)."""
+def decrypt_doc(doc, priv_pem_bytes):
+    """Decrypt every EncryptedData block in doc; return (new_doc, how).
+
+    priv_pem_bytes is the SP private key in PEM bytes — from an explicit --key
+    file or from a key store (see auto-decrypt in main())."""
     try:
         from cryptography.hazmat.primitives import hashes, serialization
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -192,8 +204,7 @@ def decrypt_doc(doc, key_path):
     except ImportError:
         fail("decryption requires the 'cryptography' python package")
 
-    with open(key_path, "rb") as fh:
-        priv = serialization.load_pem_private_key(fh.read(), password=None)
+    priv = serialization.load_pem_private_key(priv_pem_bytes, password=None)
 
     # RSA public key from modulus/exponent (big-endian)
     def pub_from(mod, exp):
@@ -325,11 +336,39 @@ def main():
         if interesting in params:
             header.append("%s: %s" % (interesting, params[interesting]))
 
+    lib = _import_lib()
+
     if encrypted and not key_path:
-        header.append("Encrypted: document contains EncryptedData (AES-CBC, RSA-wrapped key); "
-                      "pass --key <sp-private-key.pem> to decrypt")
+        # Auto-decrypt: try each store's SP key; keep the note if none match.
+        decrypted_idp = None
+        saved_stderr = sys.stderr
+        devnull = open(os.devnull, "w")
+        sys.stderr = devnull
+        try:
+            for idp in lib.try_stores_for_doc(doc):
+                try:
+                    priv_pem = lib.load_private_key(idp)
+                except OSError:
+                    continue
+                try:
+                    doc, how = decrypt_doc(doc, priv_pem)
+                    decrypted_idp = idp
+                    break
+                except (SystemExit, Exception):
+                    continue  # this store's key did not decrypt it; try next
+        finally:
+            devnull.close()
+            sys.stderr = saved_stderr
+        if decrypted_idp:
+            header.append("Key: %s" % lib.key_path(decrypted_idp))
+            header[1] = "Decoded %s (decrypted:%s)" % (key, decrypted_idp)
+        else:
+            header.append("Encrypted: document contains EncryptedData (AES-CBC, RSA-wrapped key); "
+                          "pass --key <sp-private-key.pem> to decrypt")
     elif encrypted and key_path:
-        doc, how = decrypt_doc(doc, key_path)
+        with open(key_path, "rb") as fh:
+            priv_pem = fh.read()
+        doc, how = decrypt_doc(doc, priv_pem)
         header[1] = "Decoded %s (%s)" % (key, how)
     elif key_path and not encrypted:
         header.append("no encrypted elements found")

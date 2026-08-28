@@ -1,0 +1,297 @@
+#!/usr/bin/env python3
+"""
+saml-decode-keys — manage the SP key pair / certs that encrypted SAML
+responses are decrypted with.
+
+The IdP encrypts assertions for the SP certificate registered in the IdP's
+client config; decrypting needs the matching SP private key. This tool gets
+the right keys in place and (for Keycloak) pushes the SP cert into the IdP.
+
+Key store: ~/.config/saml-decode/<safe(idp-entity-id)>/{sp.key,sp.crt,idp.crt,meta.json}
+
+Subcommands:
+    keys init --idp <urn> --sp-urn <urn> [--metadata-url u] [--days 3650]
+              [--key k.pem --cert c.crt]
+    keys fetch-idp [--idp <urn>] [--metadata-url u]
+    keys register [--idp <urn>] [--base-url u] [--realm r] [--client-id id]
+                  [--user U --password P] [--token T] [--client-secret S]
+    keys list
+    keys show <idp>
+
+All crypto / store / metadata / REST logic is delegated to
+bin/saml_decode_lib.py.
+"""
+
+import os
+import re
+import sys
+import hashlib
+import base64
+
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import saml_decode_lib as lib  # noqa: E402
+
+
+def _usage():
+    sys.stderr.write(__doc__ + "\n")
+    sys.exit(2)
+
+
+def _load_pem(path):
+    with open(path, "rb") as fh:
+        return fh.read()
+
+
+def _cert_subject(cert_pem_bytes):
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        cert = x509.load_pem_x509_certificate(cert_pem_bytes)
+        attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+        if attrs:
+            return attrs[0].value
+    except Exception:
+        pass
+    text = cert_pem_bytes.decode("utf-8", "replace")
+    m = re.search(r"CN\s*=\s*([^,/]+)", text)
+    return m.group(1).strip() if m else "(unknown)"
+
+
+def _cert_fingerprint(cert_pem_bytes):
+    b64 = re.sub(r"[^A-Za-z0-9+/=]", "", cert_pem_bytes.decode("utf-8", "replace"))
+    der = base64.b64decode(b64)
+    return hashlib.sha256(der).hexdigest()
+
+
+def _resolve_meta(idp):
+    meta = lib.load_store(idp)
+    if not meta:
+        sys.stderr.write(f"error: no store for '{idp}' (run `keys init --idp {idp}` first)\n")
+        sys.exit(1)
+    return meta
+
+
+def cmd_init(args):
+    if not args.get("idp"):
+        sys.stderr.write("error: keys init requires --idp <urn>\n")
+        _usage()
+    if not args.get("sp_urn"):
+        sys.stderr.write("error: keys init requires --sp-urn <urn>\n")
+        _usage()
+    idp = args["idp"]
+
+    if args.get("key") and args.get("cert"):
+        priv_pem = _load_pem(args["key"])
+        cert_pem = _load_pem(args["cert"])
+    else:
+        priv_pem, cert_pem = lib.generate_keypair(args["sp_urn"], days=args.get("days", 3650))
+
+    meta = {
+        "idpEntityId": idp,
+        "spEntityId": args["sp_urn"],
+        "metadataUrl": args.get("metadata_url"),
+        "days": args.get("days", 3650),
+    }
+    lib.save_store(idp, meta, priv_pem, cert_pem)
+
+    print(f"initialised store for IdP '{idp}'")
+    print(f"  sp.key   -> {lib.key_path(idp)}")
+    print(f"  sp.crt   -> {lib.cert_path(idp)}  (subject CN {_cert_subject(cert_pem)})")
+    print(f"  meta.json-> {lib.meta_path(idp)}")
+    print("\nnext steps:")
+    print(f"  1) register this SP cert in your IdP:")
+    print(f"       bin/saml-decode-keys register --idp {idp}")
+    print(f"  2) fetch the IdP signing/encryption cert:")
+    print(f"       bin/saml-decode-keys fetch-idp --idp {idp}")
+
+
+def cmd_fetch_idp(args):
+    idp = args.get("idp") or _first_store()
+    meta = _resolve_meta(idp)
+    url = args.get("metadata_url") or meta.get("metadataUrl")
+    if not url:
+        sys.stderr.write("error: no metadata URL (pass --metadata-url or set it in meta.json)\n")
+        sys.exit(1)
+
+    xml = _read_metadata(url)
+    certs = lib.parse_metadata(xml)
+    if not certs:
+        sys.stderr.write("warning: no KeyDescriptor certs found in metadata\n")
+        return
+
+    enc = next((c for c in certs if c["use"] == "encryption"), None)
+    idp_cert = enc["certificate"] if enc else certs[0]["certificate"]
+
+    # re-save with idp.crt populated (keep existing sp.key / sp.crt)
+    priv_pem = lib.load_private_key(idp)
+    cert_pem = lib.load_cert(idp)
+    lib.save_store(idp, meta, priv_pem, cert_pem, idp_cert)
+
+    print(f"fetched {len(certs)} certificate(s) from {url} -> {lib.idp_crt_path(idp)}")
+    for c in certs:
+        print(f"  [{c['use']}] {_cert_fingerprint(c['certificate'])}")
+
+
+def cmd_register(args):
+    idp = args.get("idp") or _first_store()
+    meta = _resolve_meta(idp)
+    base_url = args.get("base_url") or meta.get("keycloak", {}).get("base_url")
+    realm = args.get("realm") or meta.get("keycloak", {}).get("realm")
+    client_id = args.get("client_id") or meta.get("keycloak", {}).get("clientId")
+
+    if not (base_url and realm and client_id):
+        sys.stderr.write(
+            "error: need --base-url/--realm/--client-id (or keycloak.* in meta.json)\n")
+        sys.exit(1)
+
+    cert_pem = lib.load_cert(idp)
+
+    # obtain a token and update the client (a network failure here should print
+    # the sso-admin.sh fallback, not crash with a raw traceback)
+    try:
+        if args.get("token"):
+            token = args["token"]
+        else:
+            token = lib.keycloak_token(
+                base_url, realm, client_id,
+                client_secret=args.get("client_secret"),
+                username=args.get("user"), password=args.get("password"))
+
+        uuid = lib.keycloak_update_sp_certificate(base_url, realm, client_id, token, cert_pem)
+        print(f"registered SP cert for client '{client_id}' (uuid {uuid}) in realm '{realm}'")
+        print(f"  attribute: saml.server.signature.certificate = {lib.cert_path(idp)}")
+    except Exception as exc:
+        _print_register_fallback(base_url, realm, client_id, uuid=None, exc=exc)
+
+
+def _print_register_fallback(base_url, realm, client_id, uuid, exc):
+    sys.stderr.write(f"register failed: {exc}\n")
+    sp_crt = lib.cert_path(client_id if False else _first_store_or(client_id))
+    print("equivalent rh-sso 7.6 command (~/src/stil/bin/sso-admin.sh):")
+    print(f"  sso-admin.sh update-client -r {realm} -s {client_id} "
+          f"--attribute saml.server.signature.certificate=\"$(cat {sp_crt})\"")
+
+
+def cmd_list(args):
+    stores = lib.list_stores()
+    if not stores:
+        print("no key stores yet (run `bin/saml-decode-keys init --idp <urn> --sp-urn <urn>)")
+        return
+    for idp in stores:
+        meta = lib.load_store(idp) or {}
+        print(f"  {idp}")
+        if meta.get("spEntityId"):
+            print(f"      spEntityId={meta['spEntityId']}")
+
+
+def cmd_show(args):
+    idp = args.get("_positional")
+    if not idp:
+        sys.stderr.write("error: keys show requires <idp>\n")
+        _usage()
+    meta = lib.load_store(idp)
+    if not meta:
+        sys.stderr.write(f"error: no store for '{idp}'\n")
+        sys.exit(1)
+    print(f"store for IdP '{idp}' -> {lib.store_dir(idp)}")
+    print(f"  sp.crt   subject : {_cert_subject(lib.load_cert(idp))}")
+    print(f"  sp.key   present : {os.path.exists(lib.key_path(idp))}")
+    print(f"  idp.crt  present : {os.path.exists(lib.idp_crt_path(idp))}")
+    if meta.get("metadataUrl"):
+        print(f"  metadataUrl      : {meta['metadataUrl']}")
+    if meta.get("spEntityId"):
+        print(f"  spEntityId       : {meta['spEntityId']}")
+    kc = meta.get("keycloak") or {}
+    if kc:
+        print(f"  keycloak         : realm={kc.get('realm')} clientId={kc.get('clientId')}")
+
+
+# ── helpers ────────────────────────────────────────────────────────────────
+
+
+def _first_store():
+    stores = lib.list_stores()
+    if not stores:
+        sys.stderr.write("error: no key store yet (run `keys init`)\n")
+        sys.exit(1)
+    return stores[0]
+
+
+def _first_store_or(client_id):
+    stores = lib.list_stores()
+    return stores[0] if stores else client_id
+
+
+def _read_metadata(url):
+    if url.startswith("http://") or url.startswith("https://"):
+        import urllib.request
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            return resp.read().decode("utf-8", "replace")
+    # local file path
+    with open(url, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
+def _parse_args(argv):
+    """Parse `--key value` / `--flag` options into a dict. First positional is
+    the subcommand; subsequent positionals go to _positional."""
+    opts = {}
+    positional = []
+    known_flags = {
+        "idp": "idp", "sp-urn": "sp_urn", "metadata-url": "metadata_url",
+        "days": "days", "key": "key", "cert": "cert", "base-url": "base_url",
+        "realm": "realm", "client-id": "client_id", "user": "user",
+        "password": "password", "token": "token", "client-secret": "client_secret",
+    }
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--"):
+            name = known_flags.get(a[2:])
+            value = ""
+            if "=" in a:
+                _, value = a.split("=", 1)
+            else:
+                name = known_flags.get(a[2:])
+                if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                    value = argv[i + 1]
+                    i += 1
+                elif name in ("days",):
+                    value = argv[i + 1] if i + 1 < len(argv) else ""
+                    i += 1
+            opts[name] = value
+        elif not positional:
+            positional.append(a)  # subcommand
+        else:
+            positional.append(a)
+        i += 1
+
+    sub = positional[0] if positional else None
+    opts["_sub"] = sub
+    opts["_positional"] = positional[1] if len(positional) > 1 else None
+    return sub, opts
+
+
+_DISPATCH = {
+    "init": cmd_init,
+    "fetch-idp": cmd_fetch_idp,
+    "register": cmd_register,
+    "list": cmd_list,
+    "show": cmd_show,
+}
+
+
+def main(argv):
+    if not argv:
+        _usage()
+    sub, opts = _parse_args(argv)
+    handler = _DISPATCH.get(sub)
+    if handler is None:
+        sys.stderr.write(f"error: unknown subcommand '{sub}'\n")
+        _usage()
+    handler(opts)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
