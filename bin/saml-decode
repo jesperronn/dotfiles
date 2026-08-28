@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""
+saml-decode
+
+Decode a SAML request (or response) so you can read it.
+
+Input (stdin or argv):
+  - A full URL:     https://host/...?SAMLRequest=...&RelayState=...
+  - A raw query:    SAMLRequest=...&RelayState=...
+  - A bare base64 blob
+
+Decoding: URL-decode -> base64 -> zlib/deflate/gzip (auto) -> XML.
+Encrypted documents are detected; decrypt them with `--key <sp-private-key.pem>`.
+
+Usage:
+    saml-decode < url_with_saml
+    cat request.txt | saml-decode
+    saml-decode --raw "https://..."
+
+Flags:
+    --raw    print unindented XML (machine-friendly)
+    --key P  PEM private key, to decrypt EncryptedData in the document
+    -h       help
+"""
+
+import base64
+import binascii
+import re
+import sys
+import urllib.parse
+import zlib
+
+
+# EncryptedData element (namespace-agnostic): matches <xenc:EncryptedData ...>
+_encrypted_data = re.compile(r"<[A-Za-z_][\w.:-]*:EncryptedData\b|<EncryptedData\b")
+
+
+def fail(msg, code=1):
+    sys.stderr.write("error: " + msg + "\n")
+    sys.exit(code)
+
+
+def usage():
+    sys.stderr.write(__doc__)
+    sys.exit(2)
+
+
+def parse_flags(argv):
+    """Return (positional, key_path, raw_mode) from argv."""
+    positional = []
+    key_path = None
+    raw_mode = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--raw":
+            raw_mode = True
+        elif a == "--key":
+            i += 1
+            if i >= len(argv):
+                fail("--key requires a path")
+            key_path = argv[i]
+        elif a.startswith("--key="):
+            key_path = a[len("--key="):]
+        elif a == "-h" or a == "--help":
+            usage()
+        else:
+            positional.append(a)
+        i += 1
+    return positional, key_path, raw_mode
+
+
+def read_input(positional):
+    if positional:
+        return positional[0].strip()
+    if not sys.stdin.isatty():
+        data = sys.stdin.read().strip()
+        if data:
+            return data
+    usage()
+
+
+def extract_params(raw):
+    """Split raw input into (url_or_None, params dict)."""
+    raw = raw.strip()
+    if "://" in raw:
+        parsed = urllib.parse.urlparse(raw)
+        query = parsed.query or parsed.fragment  # SAML redirects use the fragment
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}", parse_query(query)
+    if "SAMLRequest=" in raw or "SAMLResponse=" in raw:
+        return None, parse_query(raw)
+    return None, {"SAMLRequest": raw}
+
+
+def parse_query(query):
+    if not query:
+        return {}
+    try:
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+    except ValueError:
+        return {}
+    return {k: v[0] for k, v in params.items()}
+
+
+def b64_decode(s):
+    s = s.strip().replace("-", "+").replace("_", "/")
+    s += "=" * ((-len(s)) % 4)
+    try:
+        return base64.b64decode(s, validate=False)
+    except (binascii.Error, ValueError) as e:
+        fail("not valid base64: " + str(e))
+
+
+def try_inflate(data):
+    for wbits in (47, 15, -15, 31):  # auto / zlib / raw-deflate / gzip
+        try:
+            out = zlib.decompress(data, wbits)
+            if out:
+                return out
+        except zlib.error:
+            pass
+    return None
+
+
+def decode_saml(blob):
+    """base64 blob -> (decoded_text, how)."""
+    raw = b64_decode(blob)
+    candidates = []
+
+    # (a) already XML on the wire
+    if raw.lstrip()[:1] == b"<":
+        candidates.append((raw, "plain"))
+
+    # (b) zlib/deflate/gzip
+    inflated = try_inflate(raw)
+    if inflated is not None:
+        candidates.append((inflated, "decompressed"))
+        u = urllib.parse.unquote(inflated)
+        if u != inflated:
+            candidates.append((u, "decompressed+urldecode"))
+
+    # (c) POST binding: url-encoded XML, base64'd, not compressed
+    u = urllib.parse.unquote(raw)
+    if u != raw and u.encode("utf-8", "ignore").lstrip()[:1] == b"<":
+        candidates.append((u.encode("utf-8", "ignore"), "urldecode"))
+
+    if not candidates:
+        fail("could not decode SAML payload (not XML, not compressed)")
+
+    data, how = candidates[0]
+    if isinstance(data, bytes) and data.lstrip()[:1] != b"<":
+        fail("decoded payload is not XML:\n" + data[:400].decode("utf-8", "replace"))
+    return data, how
+
+
+def find_encrypted_data(doc):
+    """Yield (start_idx, end_idx) of each EncryptedData element block."""
+    matches = []
+    for m in _encrypted_data.finditer(doc):
+        start = m.start()
+        # match the closing tag with the same local name
+        local = re.search(r"EncryptedData", m.group(0))
+        close = re.search(r"</[A-Za-z_][\w.:-]*:" + local.group() + r">",
+                           doc[m.end():])
+        end = m.end() if close is None else m.end() + close.end()
+        matches.append((start, end))
+    return matches
+
+
+def _locate_rsa_key_material(encrypted_key_block):
+    """Return (modulus_bytes, exponent_bytes) or None from an EncryptedKey block."""
+    for m in re.finditer(r"RSAKeyValue", encrypted_key_block):
+        mod = re.search(r"<[A-Za-z_][\w.:-]*:Modulus>([^<]*)</[A-Za-z_][\w.:-]*:Modulus>",
+                        encrypted_key_block)
+        exp = re.search(r"<[A-Za-z_][\w.:-]*:Exponent>([^<]*)</[A-Za-z_][\w.:-]*:Exponent>",
+                        encrypted_key_block)
+        if mod and exp:
+            try:
+                return (base64.b64decode(mod.group(1).strip()),
+                        base64.b64decode(exp.group(1).strip()))
+            except (binascii.Error, ValueError):
+                return None
+    return None
+
+
+def decrypt_doc(doc, key_path):
+    """Decrypt every EncryptedData block in doc; return (new_doc, how)."""
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.primitives.asymmetric import rsa, padding as asym_padding
+    except ImportError:
+        fail("decryption requires the 'cryptography' python package")
+
+    with open(key_path, "rb") as fh:
+        priv = serialization.load_pem_private_key(fh.read(), password=None)
+
+    # RSA public key from modulus/exponent (big-endian)
+    def pub_from(mod, exp):
+        import math
+        n = int.from_bytes(mod, "big")
+        e = int.from_bytes(exp, "big")
+        return rsa.rsa_public_numbers(e, n)
+
+    for start, end in find_encrypted_data(doc):
+        block = doc[start:end]
+
+        # AES ciphertext (base64) inside CipherData/CipherValue
+        cv = re.search(r"<[A-Za-z_][\w.:-]*:CipherValue>([^<]*)</[A-Za-z_][\w.:-]*:CipherValue>",
+                       block)
+        if not cv:
+            fail("EncryptedData has no CipherValue")
+        try:
+            blob = base64.b64decode(cv.group(1).strip())
+        except (binascii.Error, ValueError):
+            fail("EncryptedData CipherValue is not valid base64")
+
+        # EncryptedKey -> wrapped AES key
+        ek = re.search(r"<(?:[A-Za-z_][\w.:-]*:)?EncryptedKey\b.*?</[A-Za-z_][\w.:-]*:EncryptedKey>",
+                       doc, re.DOTALL)
+        if not ek:
+            fail("no EncryptedKey found")
+        material = _locate_rsa_key_material(ek.group(0))
+        if material is None:
+            fail("no RSA key material in EncryptedKey")
+
+        wrapped = re.search(r"<[A-Za-z_][\w.:-]*:EncryptedValue>([^<]*)</[A-Za-z_][\w.:-]*:EncryptedValue>",
+                            ek.group(0))
+        if not wrapped:
+            fail("EncryptedKey has no EncryptedValue")
+        try:
+            wrapped_key = base64.b64decode(wrapped.group(1).strip())
+        except (binascii.Error, ValueError):
+            fail("EncryptedValue is not valid base64")
+
+        pub = priv.public_key().public_numbers() if isinstance(priv, rsa.RSAPrivateKey) else None
+        pubnum = pub_from(*material) if pub is None else pub
+
+        aes_key = None
+        for algo in (asym_padding.OAEP(mgf=asym_padding.MGF1(algorithm=hashes.SHA1()), algorithm=hashes.SHA1(), label=None),
+                     asym_padding.OAEP(mgf=asym_padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None)):
+            try:
+                aes_key = priv.decrypt(wrapped_key, algo)
+                break
+            except Exception:
+                continue
+        if aes_key is None:
+            fail("decryption failed (wrong key or unsupported key wrap)")
+
+        if len(aes_key) not in (16, 24, 32):
+            fail("unsupported AES key length: %d" % len(aes_key))
+        iv, ct = blob[:16], blob[16:]
+        dec = Cipher(algorithms.AES(aes_key), modes.CBC(iv)).decryptor()
+        try:
+            inner = dec.update(ct) + dec.finalize()
+            pad_len = inner[-1]
+            if pad_len < 1 or pad_len > 16 or inner[-pad_len:] != bytes([pad_len]) * pad_len:
+                fail("invalid PKCS7 padding")
+            inner = inner[:-pad_len]
+        except Exception:
+            fail("decryption failed (wrong key?)")
+
+        # replace the EncryptedData block with the decrypted XML
+        doc = doc[:start] + inner.decode("utf-8", "replace") + doc[end:]
+
+    return doc, "decrypted"
+
+
+def pretty(text):
+    """Pretty-print XML by text re-indentation (preserves namespace prefixes)."""
+    depth = 0
+    out_lines = []
+    for line in re.sub(r"><", ">\n<", text).split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # declarations / comments: no depth change
+        if stripped.startswith("<?") or stripped.startswith("<!--"):
+            indent = depth * 2
+        else:
+            starts = re.findall(r"<([A-Za-z_][\w.:-]*)([^<>]*?)(/?)>", line)
+            ends = re.findall(r"</[A-Za-z_][\w.:-]*>", line)
+            delta = 0
+            for name, attrs, slash in starts:
+                if slash == "/":
+                    continue  # self-closing: no new level
+                delta += 1
+            delta -= len(ends)
+            indent = depth * 2
+            depth = max(0, depth + delta)
+        # line with no tag at all -> indent one deeper than current depth
+        if (not stripped.startswith("<?") and not stripped.startswith("<!--")
+                and not re.search(r"<[A-Za-z_]", line)):
+            indent = (depth + 1) * 2
+        out_lines.append(" " * indent + stripped)
+    return "\n".join(out_lines) + "\n"
+
+
+def main():
+    positional, key_path, raw_mode = parse_flags(sys.argv[1:])
+    raw = read_input(positional)
+    if not raw:
+        usage()
+
+    url, params = extract_params(raw)
+    key = "SAMLResponse" if "SAMLResponse" in params else "SAMLRequest"
+    blob = params.get(key)
+    if not blob:
+        fail("no SAMLRequest or SAMLResponse found in input")
+
+    blob = urllib.parse.unquote(blob)
+    data, how = decode_saml(blob)
+    if isinstance(data, str):
+        doc = data
+    else:
+        doc = data.decode("utf-8", "replace")
+
+    encrypted = bool(_encrypted_data.search(doc))
+
+    header = []
+    if url:
+        header.append("URL: " + url)
+    header.append("Decoded %s (%s)" % (key, how))
+    for interesting in ("RelayState", "SigAlg", "Signature"):
+        if interesting in params:
+            header.append("%s: %s" % (interesting, params[interesting]))
+
+    if encrypted and not key_path:
+        header.append("Encrypted: document contains EncryptedData (AES-CBC, RSA-wrapped key); "
+                      "pass --key <sp-private-key.pem> to decrypt")
+    elif encrypted and key_path:
+        doc, how = decrypt_doc(doc, key_path)
+        header[1] = "Decoded %s (%s)" % (key, how)
+    elif key_path and not encrypted:
+        header.append("no encrypted elements found")
+
+    xml = doc if raw_mode else pretty(doc)
+    sys.stdout.write("\n".join(header) + "\n\n" + xml)
+
+
+if __name__ == "__main__":
+    main()
