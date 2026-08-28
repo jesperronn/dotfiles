@@ -14,6 +14,7 @@ BBPR_TOKEN=""
 BBPR_CURRENT_SLUG=""
 BBPR_PR_PROJECT=""
 BBPR_PR_REPO=""
+BBPR_ME=""
 BBPR_ARGS=()
 BBPR_SHOW_HELP=0
 
@@ -39,6 +40,7 @@ bbpr_reset_state() {
   BBPR_CURRENT_SLUG=""
   BBPR_PR_PROJECT=""
   BBPR_PR_REPO=""
+  BBPR_ME=""
   BBPR_ARGS=()
   BBPR_VERBOSE=0
 }
@@ -71,6 +73,7 @@ bbpr_usage() {
   printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s--base-url <url>%s   Bitbucket Server base URL.\n' "$flag_style" "$reset_style"
   printf '  %s--token <token>%s    Override token (default: 1Password).\n' "$flag_style" "$reset_style"
+  printf '  %s--me <slug>%s        Force authenticated user slug (skips auto-detection).\n' "$flag_style" "$reset_style"
   printf '  %s--json%s             Emit machine-parseable JSON.\n' "$flag_style" "$reset_style"
   printf '  %s--short%s            Emit PR identifiers for use with show.\n' "$flag_style" "$reset_style"
   printf '  %s--long%s             Emit clickable URL, author initials, and title (default).\n' "$flag_style" "$reset_style"
@@ -168,6 +171,8 @@ parse_opts() {
       --base-url=*) BBPR_BASE_URL="${1#--base-url=}"; shift ;;
       --token) [[ $# -ge 2 ]] && { BBPR_TOKEN="$2"; shift 2; } || shift ;;
       --token=*) BBPR_TOKEN="${1#--token=}"; shift ;;
+      --me) [[ $# -ge 2 ]] && { BBPR_ME="$2"; shift 2; } || shift ;;
+      --me=*) BBPR_ME="${1#--me=}"; shift ;;
       *) temp_args+=("$1"); shift ;;
     esac
   done
@@ -278,7 +283,7 @@ bbpr_paginate() {
   while [[ "$is_last" != "true" ]]; do
     start=$((start + limit))
     local nc ni
-    nc="$(bbpr_fetch "GET" "${endpoint}&start=${start}&limit=\${limit}")"
+    nc="$(bbpr_fetch "GET" "${endpoint}&start=${start}&limit=${limit}")"
     # Skip non-JSON responses
     if ! printf '%s' "$nc" | jq empty 2>/dev/null; then
       break
@@ -295,6 +300,9 @@ bbpr_parse_pr_id() {
   if [[ "$spec" =~ ^https?://[^/]+/projects/([A-Z][A-Z0-9_]*)/repos/([A-Za-z0-9._-]+)/pull-requests/([0-9]+)(/overview)?/?$ ]]; then
     spec="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
   elif [[ "$spec" =~ ^projects/([A-Z][A-Z0-9_]*)/repos/([A-Za-z0-9._-]+)/pull-requests/([0-9]+)(/overview)?/?$ ]]; then
+    spec="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
+  elif [[ "$spec" =~ ^([A-Z][A-Z0-9_]*)/([A-Za-z0-9._-]+)#([0-9]+)$ ]]; then
+    # PROJ/REPO#NNN hash form (also accepted) -> normalize to slash form
     spec="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
   fi
   if [[ "$spec" =~ ^[A-Z][A-Z0-9_]*\/[A-Za-z0-9._-]+\/[0-9]+$ ]]; then
@@ -313,6 +321,20 @@ bbpr_current_slug() {
   if [[ -n "$BBPR_CURRENT_SLUG" ]]; then
     printf '%s' "$BBPR_CURRENT_SLUG"
     return 0
+  fi
+
+  # Honor an explicit --me <slug> before auto-detection.
+  if [[ -n "$BBPR_ME" ]]; then
+    local me_body me_slug
+    me_body="$(bbpr_fetch "GET" "/rest/api/1.0/users/${BBPR_ME}" 2>/dev/null)" || me_body=""
+    if [[ -n "$me_body" ]]; then
+      me_slug="$(printf '%s' "$me_body" | jq -r '.slug // empty' 2>/dev/null)"
+      if [[ -n "$me_slug" ]]; then
+        BBPR_CURRENT_SLUG="$me_slug"
+        printf '%s' "$BBPR_CURRENT_SLUG"
+        return 0
+      fi
+    fi
   fi
 
   # Strategy 1: Try /myself (some servers expose it)
