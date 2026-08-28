@@ -243,12 +243,15 @@ test_day_columns_present() {
   local output="" status=0
   capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06
   assert_status "0" "$status" "exits 0"
-  assert_contains "$output" "Month total" "Month total column header present"
+  assert_contains "$output" "Total" "Total column header present"
+  assert_not_contains "$output" "Month total" "old Month total heading is absent"
   local header_line
-  header_line=$(echo "$output" | grep "Month total" | head -1 | strip_ansi)
-  assert_contains "$header_line" "| 1 " "day 1 column in header"
-  assert_contains "$header_line" "| 2 " "day 2 column in header"
-  assert_contains "$header_line" "| 3 " "day 3 column in header"
+  header_line=$(echo "$output" | grep '^|' | grep 'Total' | head -1 | strip_ansi)
+  assert_contains "$header_line" "Total" "Total is the first table column"
+  assert_contains "$header_line" "1" "day 1 column in header"
+  assert_contains "$header_line" "2" "day 2 column in header"
+  assert_contains "$header_line" "3" "day 3 column in header"
+  assert_contains "$header_line" "User" "User is the final table column"
 }
 
 test_missing_day_shows_empty() {
@@ -259,10 +262,10 @@ test_missing_day_shows_empty() {
   assert_status "0" "$status" "exits 0"
   local charlie_line
   charlie_line=$(echo "$output" | grep "charlie" | head -1 | strip_ansi)
-  if echo "$charlie_line" | grep -qE '\|[[:space:]]+\|[[:space:]]*$'; then
-    test_pass "charlie row ends with an empty cell for missing day"
+  if echo "$charlie_line" | grep -qE '\|[[:space:]]+\|[[:space:]]+charlie[[:space:]]*\|[[:space:]]*$'; then
+    test_pass "charlie row keeps an empty cell before the final user column"
   else
-    test_fail "charlie row should end with an empty cell for missing day" "$charlie_line"
+    test_fail "charlie row should keep an empty cell before the final user column" "$charlie_line"
   fi
 }
 

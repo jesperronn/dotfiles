@@ -3,7 +3,7 @@
 //   curl -fsSL https://raw.githubusercontent.com/jesperronn/dotfiles/refs/heads/main/bin/copilot-leaderboard | node - --init
 // replace --init with --help/--update/ etc.
 
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -366,8 +366,7 @@ function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   const calcColW = (fmtCellFn) => {
     const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
     return [
-      Math.max(4, ...users.map(u => u.login.length)),
-      Math.max(11, stripAnsi(fmtGrand).length),
+      Math.max(6, stripAnsi(fmtGrand).length),
       ...dayNums.map((h, i) => {
         const d = days[i];
         const widths = [
@@ -377,6 +376,7 @@ function renderMarkdown(leaderboard, orgLabel, generatedDate) {
         ];
         return Math.max(...widths);
       }),
+      Math.max(4, ...users.map(u => u.login.length)),
     ];
   };
 
@@ -389,21 +389,25 @@ function renderMarkdown(leaderboard, orgLabel, generatedDate) {
   ];
 
   const buildTable = (fmtCellFn, title) => {
-    const pad = (s, w) => String(s).padEnd(w + (s.length - stripAnsi(s).length));
-    const mkRow = cells => '| ' + cells.map((cell, i) => pad(cell, colW[i])).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
+    const pad = (s, w, rightAlign) => {
+      const value = String(s);
+      const padding = w - stripAnsi(value).length;
+      return rightAlign ? `${' '.repeat(Math.max(0, padding))}${value}` : value.padEnd(w + (value.length - stripAnsi(value).length));
+    };
+    const mkRow = cells => '| ' + cells.map((cell, i) => pad(cell, colW[i], i < colW.length - 1)).join(` ${c.divider}|${c.reset} `) + ` ${c.divider}|${c.reset}`;
     const mkSep = () => `${c.divider}|${colW.map(w => '-'.repeat(w + 2)).join('|')}|${c.reset}`;
 
     const fmtGrand = fmtCellFn({ credits: grandCredits, interactions: grandInteractions });
     return [
       `### ${title}`,
       '',
-      mkRow(['User', 'Month total', ...dayNums]),
+      mkRow(['Total', ...dayNums, 'User']),
       mkSep(),
-      mkRow(['**All**', fmtGrand, ...days.map(d => fmtCellFn(allDayTotals[d]))]),
+      mkRow([fmtGrand, ...days.map(d => fmtCellFn(allDayTotals[d])), '**All**']),
       ...users.map(u => mkRow([
-        u.login,
         fmtCellFn({ credits: u.totalCredits, interactions: u.totalInteractions }),
         ...days.map(d => fmtCellFn(u.dayData[d])),
+        u.login,
       ])),
     ];
   };
@@ -425,6 +429,18 @@ function renderMarkdown(leaderboard, orgLabel, generatedDate) {
     `_generated ${stamp}_`,
     '',
   ].join('\n');
+}
+
+function writeTerminalOutput(output) {
+  const terminalWidth = process.stdout.columns ?? Number(process.env.COLUMNS);
+  const widestLine = Math.max(...output.split('\n').map(line => line.replace(/\x1b\[[0-9;]*m/g, '').length));
+  if (!process.stdout.isTTY || !Number.isInteger(terminalWidth) || terminalWidth <= 0 || widestLine <= terminalWidth) {
+    process.stdout.write(output);
+    return;
+  }
+
+  const pager = spawnSync('less', ['-S'], { input: output, stdio: ['pipe', 'inherit', 'inherit'] });
+  if (pager.error) process.stdout.write(output);
 }
 
 const argv = process.argv.slice(2);
@@ -648,7 +664,7 @@ async function runForAccount(account) {
   const reportFile = join(cfg.archive_dir, `${month}-report.md`);
   writeFileSync(reportFile, markdown);
   debug(`Wrote report: ${reportFile} (${markdown.length} bytes)`);
-  process.stdout.write(markdown + '\n');
+  writeTerminalOutput(markdown + '\n');
   process.stderr.write(`\nReport saved → ${reportFile}\n`);
 
   const self = `copilot-leaderboard --only ${cfg.name}`;
