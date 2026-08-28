@@ -37,6 +37,7 @@ Options:
   --archive-dir DIR   Override archive directory for one selected account
   --dry-run           Show fetch/report targets without network calls
   --debug             Show diagnostic details on stderr (credentials redacted)
+  --full              Include interaction-count details in terminal output
   --help, -h          Show help
 
 Available accounts:
@@ -324,7 +325,7 @@ function buildLeaderboard(records, month) {
   return { days, users, allDayTotals, grandCredits, grandInteractions, month };
 }
 
-function renderMarkdown(leaderboard, orgLabel, generatedDate) {
+function renderMarkdown(leaderboard, orgLabel, generatedDate, includeInteractions = true) {
   const { days, users, allDayTotals, grandCredits, grandInteractions, month } = leaderboard;
   const [year, mon] = month.split('-');
   const monthName = new Date(Number(year), Number(mon) - 1, 1)
@@ -412,18 +413,25 @@ function renderMarkdown(leaderboard, orgLabel, generatedDate) {
     ];
   };
 
+  const interactionSection = includeInteractions ? [
+    '',
+    ...buildTable(fmtInteractions, `${c.interactionVivid}user_initiated_interaction_count${c.reset}`),
+  ] : [];
+  const interactionLegend = includeInteractions
+    ? [`- ${c.interactionVivid}●${c.reset} user_initiated_interaction_count [secondary]`]
+    : [];
+
   return [
     `# Copilot Leaderboard — ${orgLabel} — ${monthName}`,
     '',
     `_${days.length} days of data | ${seatCount} active seats | Average per seat: ${avgCredits} credits / ${avgInteractions} interactions_`,
     '',
     ...buildTable(fmtCredits, `${c.creditVivid}ai_credits_used${c.reset}`),
-    '',
-    ...buildTable(fmtInteractions, `${c.interactionVivid}user_initiated_interaction_count${c.reset}`),
+    ...interactionSection,
     '',
     '**Legend:**',
     `- ${c.creditVivid}●${c.reset} ai_credits_used (floored) [primary]`,
-    `- ${c.interactionVivid}●${c.reset} user_initiated_interaction_count [secondary]`,
+    ...interactionLegend,
     `- ${c.creditDim}0${c.reset} = zero values (very dim)`,
     '',
     `_generated ${stamp}_`,
@@ -456,6 +464,7 @@ let configPath = process.env.COPILOT_LEADERBOARD_CONFIG || DEFAULT_CONFIG_PATH;
 let wantHelp = false;
 let includeAllAccounts = false;
 let debugEnabled = false;
+let fullOutput = false;
 
 function debug(message) {
   if (debugEnabled) process.stderr.write(`[debug] ${message}\n`);
@@ -480,6 +489,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--report-only')  skipFetch = true;
   else if (a === '--dry-run')      dryRun = true;
   else if (a === '--debug')        debugEnabled = true;
+  else if (a === '--full')         fullOutput = true;
   else if (a === '--month')        month = readOptionValue(a, i++);
   else if (a === '--archive-dir')  archiveDirOverride = readOptionValue(a, i++);
   else if (a === '--backfill')     { skipFetch = false; doBackfill = true; }
@@ -659,12 +669,13 @@ async function runForAccount(account) {
   const leaderboard = buildLeaderboard(records, month);
   debug(`Built leaderboard for ${month}: ${leaderboard.users.length} user(s), ${leaderboard.days.length} day(s), ${leaderboard.grandCredits} credits, ${leaderboard.grandInteractions} interactions`);
   const markdown = renderMarkdown(leaderboard, cfg.label);
+  const terminalOutput = renderMarkdown(leaderboard, cfg.label, undefined, fullOutput);
 
   mkdirSync(cfg.archive_dir, { recursive: true });
   const reportFile = join(cfg.archive_dir, `${month}-report.md`);
   writeFileSync(reportFile, markdown);
   debug(`Wrote report: ${reportFile} (${markdown.length} bytes)`);
-  writeTerminalOutput(markdown + '\n');
+  writeTerminalOutput(terminalOutput + '\n');
   process.stderr.write(`\nReport saved → ${reportFile}\n`);
 
   const self = `copilot-leaderboard --only ${cfg.name}`;

@@ -103,6 +103,7 @@ test_help_exits_zero() {
   assert_contains "$output" "copilot-leaderboard --only nine,stil --month" "--help shows multi-account month example"
   assert_contains "$output" "Config format:" "--help shows config hint"
   assert_contains "$output" "--debug" "--help mentions --debug"
+  assert_contains "$output" "--full" "--help mentions --full"
   if echo "$output" | grep -q -- "copilot-leaderboard --only nine --update"; then
     test_fail "--help should not include redundant single-account update example" "$output"
   else
@@ -118,6 +119,25 @@ test_help_exits_zero() {
   else
     test_pass "--help hides legacy aliases"
   fi
+}
+
+test_interactions_hidden_from_terminal_by_default() {
+  local dir="$TEST_TMP_DIR/default-sections"
+  write_fixture "$dir"
+  local output="" status=0
+  capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06
+  assert_status "0" "$status" "default report exits 0"
+  assert_not_contains "$output" "user_initiated_interaction_count" "default terminal output hides interaction section"
+  assert_contains "$(cat "$dir/2026-06-report.md")" "user_initiated_interaction_count" "saved Markdown keeps interaction section"
+}
+
+test_full_shows_interactions_in_terminal() {
+  local dir="$TEST_TMP_DIR/full-sections"
+  write_fixture "$dir"
+  local output="" status=0
+  capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06 --full
+  assert_status "0" "$status" "full report exits 0"
+  assert_contains "$output" "user_initiated_interaction_count" "--full terminal output shows interaction section"
 }
 
 test_debug_reports_diagnostics_without_credentials() {
@@ -231,7 +251,7 @@ test_grand_total_correct() {
   local dir="$TEST_TMP_DIR/total"
   write_fixture "$dir"
   local output="" status=0
-  capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06
+  capture_with_default_config output status "$BIN" --only stil --report-only --archive-dir "$dir" --month 2026-06 --full
   assert_status "0" "$status" "exits 0"
   assert_contains "$output" "365" "grand total credits 365 present in output"
   assert_contains "$output" "39" "grand total interactions 39 present in output"
