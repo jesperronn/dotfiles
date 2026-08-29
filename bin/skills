@@ -15,37 +15,35 @@ SKILLS_COLOR_MODE="auto"
 SKILLS_COLOR_ENABLED=0
 SKILLS_ENABLE_ID=""
 
-if [[ -n "${NO_COLOR:-}" ]]; then
-  SKILLS_C_RESET=""
-  SKILLS_C_BOLD=""
-  SKILLS_C_GREEN=""
-  SKILLS_C_RED=""
-  SKILLS_C_SECTION=""
-  SKILLS_C_DIM=""
-else
-  SKILLS_C_RESET=$'\033[0m'
-  SKILLS_C_BOLD=$'\033[1m'
-  SKILLS_C_GREEN=$'\033[32m'
-  SKILLS_C_RED=$'\033[31m'
-  SKILLS_C_SECTION=$'\033[33m'
-  SKILLS_C_DIM=$'\033[2m'
-fi
+SKILLS_C_RESET=$'\033[0m'
+SKILLS_C_BOLD=$'\033[1m'
+SKILLS_C_DIM=$'\033[2m'
+SKILLS_C_RED=$'\033[31m'
+SKILLS_C_GREEN=$'\033[32m'
+SKILLS_C_MAGENTA=$'\033[35m'
+SKILLS_C_BRIGHT_MAGENTA=$'\033[95m'
+SKILLS_C_YELLOW=$'\033[33m'
 
 skills_usage() {
-  local section_style="" flag_style="" reset_style=""
+  local section_style="" tool_style="" command_style="" flag_style="" placeholder_style="" reset_style=""
   if (( SKILLS_COLOR_ENABLED )); then
-    section_style="${SKILLS_C_SECTION}"
+    section_style="${SKILLS_C_BOLD}${SKILLS_C_YELLOW}"
+    tool_style="${SKILLS_C_BOLD}${SKILLS_C_MAGENTA}"
+    command_style="${SKILLS_C_GREEN}"
     flag_style="${SKILLS_C_GREEN}"
+    placeholder_style="${SKILLS_C_BRIGHT_MAGENTA}"
     reset_style="${SKILLS_C_RESET}"
   fi
 
   printf 'Manage agent skills: list, enable, disable.\n\n'
-  printf '%sUsage:%s %sbin/skills%s <subcommand> [options]\n\n' "$section_style" "$reset_style" "$section_style" "$reset_style"
+  printf '%sUsage:%s %sbin/skills%s %s<subcommand>%s %s[options]%s\n\n' \
+    "$section_style" "$reset_style" "$tool_style" "$reset_style" \
+    "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
-  printf '  %slist%s              Show enabled skills (optionally disabled)\n' "$flag_style" "$reset_style"
-  printf '  %sstatus%s            Show enabled and disabled skills with counts\n' "$flag_style" "$reset_style"
-  printf '  %senable%s <id>     Enable a disabled skill\n' "$flag_style" "$reset_style"
-  printf '  %sdisable%s <id>    Disable an enabled skill\n' "$flag_style" "$reset_style"
+  printf '  %slist%s              Show enabled skills (optionally disabled)\n' "$command_style" "$reset_style"
+  printf '  %sstatus%s            Show enabled and disabled skills with counts\n' "$command_style" "$reset_style"
+  printf '  %senable%s %s<id>%s     Enable a disabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %sdisable%s %s<id>%s    Disable an enabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s-h, --help%s        Show this help.\n' "$flag_style" "$reset_style"
   printf '  %s--color%s           Force colored output.\n' "$flag_style" "$reset_style"
@@ -293,6 +291,9 @@ skills_parse_opts() {
         if [[ $subcommand_set -eq 0 ]]; then
           # First positional must be a subcommand
           case "$1" in
+            help)
+              SKILLS_SHOW_HELP=1
+              ;;
             list|status|enable|disable)
               SKILLS_SUBCOMMAND="$1"
               subcommand_set=1
@@ -332,17 +333,19 @@ skills_parse_opts() {
 
   if [[ $subcommand_set -eq 0 ]]; then
     if [[ "$SKILLS_SHOW_HELP" -eq 1 ]]; then
-      skills_usage
       return 0
     fi
-    skills_usage
-    return 1
+    return 64
   fi
 }
 
 skills_run() {
   if (( SKILLS_SHOW_HELP )); then
     case "$SKILLS_SUBCOMMAND" in
+      "")
+        skills_usage
+        return 0
+        ;;
       enable)
         printf 'Enable a disabled skill.\n\n'
         printf 'Usage: %s enable <skill-id>\n' "$(basename "$0")"
@@ -512,8 +515,19 @@ skills_disable() {
 }
 
 run_main() {
-  skills_parse_opts "$@" || return $?
+  local parse_status=0
+
+  skills_parse_opts "$@" || parse_status=$?
   skills_parse_prereqs
+
+  if (( parse_status )); then
+    if [[ $parse_status -eq 64 ]]; then
+      skills_usage
+      return 1
+    fi
+    return "$parse_status"
+  fi
+
   skills_run
 }
 

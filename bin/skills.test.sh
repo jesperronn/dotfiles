@@ -69,6 +69,26 @@ test_global_help_exits_zero() {
   assert_contains "$output" "disable" "global help mentions disable"
 }
 
+test_help_subcommand_exits_zero() {
+  local output=""
+  local status=0
+  capture_command output status "$SKILLS_BIN" help 2>&1 || status=$?
+  assert_status "0" "$status" "help subcommand exits 0"
+  assert_contains "$output" "Usage" "help subcommand shows global usage"
+}
+
+test_global_help_forced_color_uses_standard_palette() {
+  local output=""
+  local status=0
+  capture_command output status env NO_COLOR=1 "$SKILLS_BIN" --color --help 2>&1 || status=$?
+  assert_status "0" "$status" "--color help exits 0 even with NO_COLOR"
+  assert_contains "$output" $'\033[1m\033[33mUsage:' "help colors section headings bold yellow"
+  assert_contains "$output" $'\033[1m\033[35mbin/skills' "help colors tool name bold magenta"
+  assert_contains "$output" $'\033[32mlist' "help colors subcommands green"
+  assert_contains "$output" $'\033[32m-h, --help' "help colors flags green"
+  assert_contains "$output" $'\033[95m<id>' "help colors placeholders bright magenta"
+}
+
 test_subcommand_help_exits_zero() {
   local output="" status=0
   capture_command output status "$SKILLS_BIN" list --help 2>&1 || status=$?
