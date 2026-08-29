@@ -1,6 +1,6 @@
 # Skills Index
 
-28 skills — grouped by domain.
+23 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -12,12 +12,7 @@
 
 | Skill | Does |
 |-------|------|
-| **backprop** | Bug/test failure → §B entry + optional §V invariant to prevent recurrence. Auto-called by build. |
-| **build** | Executes §T tasks top-to-bottom, flips status (·→~→x), commits per task. Auto-backprop on failure. |
-| **caveman** | Compression codec for spec writes: drops filler, uses symbols (→ ∴ ∀). ~75% token cut. Used by spec/build/check. |
-| **check** | Read-only drift detector. Diffs SPEC.md vs code, reports HOLD/VIOLATE/DRIFT/MISSING with file:line. |
 | **executing-plans** | Executes an approved implementation plan with review checkpoints. |
-| **spec** | Sole mutator of SPEC.md. Modes: NEW/DISTILL/BACKPROP/AMEND. Sections: §G §C §I §V §T §B. |
 | **subagent-driven-development** | Executes implementation plans through independent subagent tasks and review. |
 | **systematic-debugging** | Investigates bugs and failures systematically to establish root cause. |
 | **test-driven-development** | Drives implementation from focused tests written before production code. |
@@ -71,4 +66,4 @@
 
 ---
 
-*Last updated: 2026-08-29 · 28 skills*
+*Last updated: 2026-08-29 · 23 skills*

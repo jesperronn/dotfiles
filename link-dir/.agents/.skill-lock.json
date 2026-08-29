@@ -1,52 +1,6 @@
 {
   "version": 3,
-  "skills": {
-    "backprop": {
-      "source": "JuliusBrussee/cavekit",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/JuliusBrussee/cavekit.git",
-      "skillPath": "skills/backprop/SKILL.md",
-      "skillFolderHash": "f2ef225be4362fff352c37c713b6b9b01d254519",
-      "installedAt": "2026-05-31T21:47:47.180Z",
-      "updatedAt": "2026-05-31T21:47:47.180Z"
-    },
-    "build": {
-      "source": "JuliusBrussee/cavekit",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/JuliusBrussee/cavekit.git",
-      "skillPath": "skills/build/SKILL.md",
-      "skillFolderHash": "19665918fab1f7c80a0156f28239c0e7d132c6b2",
-      "installedAt": "2026-05-31T21:47:47.182Z",
-      "updatedAt": "2026-05-31T21:47:47.182Z"
-    },
-    "caveman": {
-      "source": "JuliusBrussee/cavekit",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/JuliusBrussee/cavekit.git",
-      "skillPath": "skills/caveman/SKILL.md",
-      "skillFolderHash": "88dde57a80f0911a818cbe348e17eb8f0a80063a",
-      "installedAt": "2026-05-31T21:47:47.183Z",
-      "updatedAt": "2026-05-31T21:47:47.183Z"
-    },
-    "check": {
-      "source": "JuliusBrussee/cavekit",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/JuliusBrussee/cavekit.git",
-      "skillPath": "skills/check/SKILL.md",
-      "skillFolderHash": "e22cbfd8d9fbe9762e5f5aa3fe6759b738c190e7",
-      "installedAt": "2026-05-31T21:47:47.183Z",
-      "updatedAt": "2026-05-31T21:47:47.183Z"
-    },
-    "spec": {
-      "source": "JuliusBrussee/cavekit",
-      "sourceType": "github",
-      "sourceUrl": "https://github.com/JuliusBrussee/cavekit.git",
-      "skillPath": "skills/spec/SKILL.md",
-      "skillFolderHash": "7005b5e57849f57d24b741d49c0731e41cee2b5b",
-      "installedAt": "2026-05-31T21:47:47.184Z",
-      "updatedAt": "2026-05-31T21:47:47.184Z"
-    }
-  },
+  "skills": {},
   "dismissed": {
     "findSkillsPrompt": true
   },
