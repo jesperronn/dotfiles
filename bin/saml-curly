@@ -14,6 +14,26 @@
 # (wbits=-15) and falls back to a wrapped stream if an IdP wraps it.
 set -uo pipefail
 
+if [ "${1:-}" == "--help" ] || [ "${1:-}" == "-h" ]; then
+    cat <<'HELP'
+Usage: saml-curly [URL]
+
+Curl a SAML2 authenticate URL (or read a Location header/query on stdin) and
+straighten the SAMLRequest out of the 302 Location header — URL-decode, base64
+decode, then zlib-inflate (raw-DEFLATE, falling back to zlib-wrapped) — print XML.
+
+Input:
+  1. argv:   saml-curly "https://idp/...?SAMLRequest=..."
+              (one quoted argument; URLs with & MUST be single-quoted, else the
+              shell treats & as a background operator and truncates the URL)
+  2. stdin:  printf 'Location: https://idp/x?SAMLRequest=...\n' | saml-curly
+
+Exit: 0 with XML; 1 ("saml-curly: could not inflate SAML payload") if the
+payload cannot be decoded or decompressed.
+HELP
+    exit 0
+fi
+
 if [ "${1:-}" == "" ]; then
     data="$(cat)"                              # stdin: a Location header/query
 else
