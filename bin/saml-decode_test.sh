@@ -130,12 +130,11 @@ test_post_binding() {
   assert_contains "$out" "urn:test-sp" "post shows Issuer"
 }
 
-test_raw_flag() {
-  capture_command out status "$BIN" --raw "$REDIRECT"
-  assert_status 0 "$status" "raw flag exits 0"
-  assert_contains "$out" "urn:test-sp" "raw shows Issuer"
-  # raw output has no indented lines (single-line XML)
-  assert_not_contains "$out" $'\n  ' "raw output is not indented"
+test_xml_flag() {
+  capture_command out status "$BIN" --xml "$REDIRECT"
+  assert_status 0 "$status" "xml flag exits 0"
+  assert_contains "$out" "<saml2p:AuthnRequest" "xml shows raw XML root tag"
+  assert_contains "$out" "urn:test-sp" "xml shows Issuer"
 }
 
 test_garbage() {

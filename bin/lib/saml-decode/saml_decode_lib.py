@@ -264,3 +264,50 @@ def find_response_target(doc):
 def try_stores_for_doc(doc):
     """Yield each stored idp entity-id (caller tries sp.key on each)."""
     return list_stores()
+
+
+def to_property_list(xml_text: str) -> str:
+    """Render XML as a flat, human-readable property list — one property per line.
+
+    Namespace prefixes are stripped (local names only); namespace-declaration
+    attributes (xmlns...) and XML comments are omitted. Element attributes are
+    shown inline as (k=v, k2=v2) with local (namespace-stripped) keys. Text-only
+    elements render as `localname: text`. Children are indented two spaces per
+    depth level. Returns a string with NO trailing newline (caller joins).
+
+    Never raises on malformed XML: falls back to a flat regex extraction of
+    `<localname ...>text</localname>` pairs so encrypted/odd docs still render.
+    """
+
+    def local(tag):
+        if "}" in tag:
+            return tag.rsplit("}", 1)[1]
+        idx = tag.rfind(":")
+        return tag[idx + 1:] if idx != -1 else tag
+
+    def render(elem, depth, lines):
+        indent = "  " * depth
+        name = local(elem.tag)
+        attrs = [(k, v) for k, v in elem.items() if "xmlns" not in k]
+        header = (name + (" (" + ", ".join(
+            f"{local(k)}={v}" for k, v in attrs) + ")") if attrs else name)
+        text = (elem.text or "").strip()
+        lines.append(f"{indent}{header}" + (f": {text}" if text else ""))
+        for child in elem:
+            render(child, depth + 1, lines)
+
+    try:
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        lines = []
+        for m in re.finditer(
+                r"<([A-Za-z_][\w.:-]*)([^>]*?)>([^<]*)</", xml_text):
+            t = m.group(3).strip()
+            if t:
+                lines.append(f"{local(m.group(1))}: {t}")
+        return "\n".join(lines)
+
+    lines = []
+    render(root, 0, lines)
+    return "\n".join(lines)

@@ -78,22 +78,22 @@ def usage():
          + "  " + c("cyan", text='"https://idp.example/saml?...SAMLResponse=..."'))
     line()
     sec("Flags")
-    line(text="  " + c("bold", text="--raw") + "   " + c("dim", text="print unindented XML (machine-friendly)"))
+    line(text="  " + c("bold", text="--xml") + "   " + c("dim", text="show decoded XML (default is a property list)"))
     line(text="  " + c("bold", text="--key <path>") + "  " + c("dim", text="PEM private key to decrypt EncryptedData"))
     line(text="  " + c("bold", text="-h, --help") + "  " + c("dim", text="show this help"))
     sys.exit(2)
 
 
 def parse_flags(argv):
-    """Return (positional, key_path, raw_mode) from argv."""
+    """Return (positional, key_path, xml_mode) from argv."""
     positional = []
     key_path = None
-    raw_mode = False
+    xml_mode = False
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--raw":
-            raw_mode = True
+        if a == "--xml":
+            xml_mode = True
         elif a == "--key":
             i += 1
             if i >= len(argv):
@@ -106,7 +106,7 @@ def parse_flags(argv):
         else:
             positional.append(a)
         i += 1
-    return positional, key_path, raw_mode
+    return positional, key_path, xml_mode
 
 
 def read_input(positional):
@@ -338,7 +338,7 @@ def pretty(text):
 
 
 def main():
-    positional, key_path, raw_mode = parse_flags(sys.argv[1:])
+    positional, key_path, xml_mode = parse_flags(sys.argv[1:])
     raw = read_input(positional)
     if not raw:
         usage()
@@ -403,8 +403,8 @@ def main():
     elif key_path and not encrypted:
         header.append("no encrypted elements found")
 
-    xml = doc if raw_mode else pretty(doc)
-    sys.stdout.write("\n".join(header) + "\n\n" + xml)
+    body = pretty(doc) if xml_mode else lib.to_property_list(doc)
+    sys.stdout.write("\n".join(header) + "\n\n" + body)
 
 
 if __name__ == "__main__":
