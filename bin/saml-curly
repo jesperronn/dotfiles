@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# saml-curly — curl a SAML2 authenticate URL and straighten (decode) the
+# SAMLRequest out of the 302 Location header.
+#
+#   flow: GET -> extract Location -> pull SAMLRequest -> URL-decode (sed)
+#         -> base64 -> inflate -> XML.
+#
+# Input: a URL as argv, or a Location header / query piped on stdin.
+#
+# The SAMLRequest value is standard base64 (RFC 4648 §4) that was URL-encoded,
+# so only +, / and = need un-escaping: %2B, %2F, %3D. Everything else in the
+# base64 alphabet is already alphanumeric and passes through untouched.
+# SAML's DEFLATE stream is *raw* (no zlib header); python3's zlib handles that
+# (wbits=-15) and falls back to a wrapped stream if an IdP wraps it.
+set -uo pipefail
+
+if [ "${1:-}" == "" ]; then
+    data="$(cat)"                              # stdin: a Location header/query
+else
+    data="$(curl -fsSL -D - -o /dev/null "$1")"   # argv: a full URL (options
+fi                                             # come before the https:// URL)
+
+printf '%s\n' "$data" | \
+sed -n 's/^[Ll]ocation:[[:space:]]*//p' | \
+sed -n 's#.*[Ss]AMLRequest=\([^&]*\).*#\1#p' | \
+sed -e 's/%2[Bb]/+/g' -e 's/%2[Ff]/\//g' -e 's/%3[Dd]/=/g' | \
+tr -d '\r\n' | \
+base64 -D 2>/dev/null | \
+python3 -c '
+import sys, zlib
+d = sys.stdin.buffer.read()
+for w in (-15, 15, 47):            # raw-deflate / zlib / auto-detect
+    try:
+        sys.stdout.buffer.write(zlib.decompress(d, w))
+        break
+    except zlib.error:
+        pass
+else:
+    sys.stderr.write("saml-curly: could not inflate SAML payload\n")
+    sys.exit(1)'
