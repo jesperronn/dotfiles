@@ -137,6 +137,34 @@ test_xml_flag() {
   assert_contains "$out" "urn:test-sp" "xml shows Issuer"
 }
 
+test_color_output() {
+  # Representative AuthnRequest exercising dim/bold styling rules. Generate a
+  # redirect URL inline (URL-encoded) and pass it directly as argv.
+  local url
+  url="$(
+    python3 - <<'PY'
+import base64, zlib, urllib.parse
+xml = ('<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" '
+       'xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="_req1" Version="2.0" '
+       'ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" '
+       'InResponseTo="_c1">'
+       '<saml2:Issuer>urn:test-sp</saml2:Issuer>'
+       '<saml2p:Destination>https://idp.example/sso</saml2p:Destination>'
+       '<saml2p:Signature>LS0tQkVHSU5TRFNFRA==</saml2p:Signature>'
+       '</saml2p:AuthnRequest>')
+b64 = base64.b64encode(zlib.compress(xml.encode())).decode()
+print("https://idp.example/saml?SAMLRequest=" + urllib.parse.quote(b64) + "&RelayState=abc-123")
+PY
+  )"
+  capture_command out status env SAML_DECODE_COLOR=1 "$BIN" "$url"
+  assert_status 0 "$status" "color output exits 0"
+  assert_contains "$out" $'\x1b[' "emits ANSI escape codes"
+  assert_contains "$out" $'\x1b[1m\x1b[36mAuthnRequest\x1b[0m' "AuthnRequest header bold cyan"
+  assert_contains "$out" $'\x1b[1murn:test-sp\x1b[0m' "Issuer value bold"
+  assert_contains "$out" $'\x1b[2mLS0tQkVHSU5TRFNFRA==\x1b[0m' "Signature value dimmed"
+  assert_contains "$out" $'\x1b[2m_req1\x1b[0m' "ID value dimmed"
+}
+
 test_garbage() {
   printf 'garbage!!!not-base64' >"$FIXTURES/garbage.txt"
   capture_command out status "$BIN" <"$FIXTURES/garbage.txt"

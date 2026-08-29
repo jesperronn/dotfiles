@@ -266,48 +266,119 @@ def try_stores_for_doc(doc):
     return list_stores()
 
 
-def to_property_list(xml_text: str) -> str:
+def to_property_list(xml_text: str, color: bool = False) -> str:
     """Render XML as a flat, human-readable property list — one property per line.
 
     Namespace prefixes are stripped (local names only); namespace-declaration
     attributes (xmlns...) and XML comments are omitted. Element attributes are
     shown inline as (k=v, k2=v2) with local (namespace-stripped) keys. Text-only
     elements render as `localname: text`. Children are indented two spaces per
-    depth level. Returns a string with NO trailing newline (caller joins).
+    depth level (AuthnRequest's children one extra level). Returns a string with
+    NO trailing newline (caller joins).
+
+    When `color=True`, emit ANSI SGR codes: element/attribute names (keys) in
+    bold cyan, values in white; important text values (Issuer, Destination) are
+    bold and token values (ID, Version, ProtocolBinding, Signature, RelayState)
+    are dimmed. Keys are aligned so values line up.
 
     Never raises on malformed XML: falls back to a flat regex extraction of
     `<localname ...>text</localname>` pairs so encrypted/odd docs still render.
     """
 
-    def local(tag):
-        if "}" in tag:
-            return tag.rsplit("}", 1)[1]
-        idx = tag.rfind(":")
-        return tag[idx + 1:] if idx != -1 else tag
+    items = []
 
-    def render(elem, depth, lines):
-        indent = "  " * depth
-        name = local(elem.tag)
+    def collect(elem, depth):
+        name = _local(elem.tag)
         attrs = [(k, v) for k, v in elem.items() if "xmlns" not in k]
-        header = (name + (" (" + ", ".join(
-            f"{local(k)}={v}" for k, v in attrs) + ")") if attrs else name)
-        text = (elem.text or "").strip()
-        lines.append(f"{indent}{header}" + (f": {text}" if text else ""))
+        items.append((depth, name, attrs, (elem.text or "").strip()))
         for child in elem:
-            render(child, depth + 1, lines)
+            # indent AuthnRequest's children one extra level
+            collect(child, depth + 1 + (1 if name == "AuthnRequest" else 0))
 
     try:
         import xml.etree.ElementTree as ET
         root = ET.fromstring(xml_text)
     except ET.ParseError:
-        lines = []
+        flat = []
         for m in re.finditer(
                 r"<([A-Za-z_][\w.:-]*)([^>]*?)>([^<]*)</", xml_text):
             t = m.group(3).strip()
             if t:
-                lines.append(f"{local(m.group(1))}: {t}")
-        return "\n".join(lines)
+                flat.append((0, _local(m.group(1)), [], t))
+        return "\n".join(_plain_line(d, n, a, v) for d, n, a, v in flat)
 
-    lines = []
-    render(root, 0, lines)
-    return "\n".join(lines)
+    collect(root, 0)
+    if not color:
+        return "\n".join(_plain_line(d, n, a, v) for d, n, a, v in items)
+
+    # align key width among value lines
+    key_width = max(
+        (len(_plain_header(n, a)) for d, n, a, v in items if v), default=0)
+    return "\n".join(
+        _styled_line(d, n, a, v, key_width) for d, n, a, v in items)
+
+
+def _local(tag):
+    """Local name: substring after `}` (URI) or after the last `:`."""
+    if "}" in tag:
+        return tag.rsplit("}", 1)[1]
+    idx = tag.rfind(":")
+    return tag[idx + 1:] if idx != -1 else tag
+
+
+def _plain_header(name, attrs):
+    """Unstyled header: `name` or `name (k=v, k2=v2)` with local keys."""
+    return ((name + " (" + ", ".join(
+        "%s=%s" % (_local(k), v) for k, v in attrs) + ")") if attrs else name)
+
+
+def _plain_line(depth, name, attrs, value):
+    """Render one line, unstyled."""
+    return ("  " * depth + _plain_header(name, attrs)) + (
+        ": " + value if value else "")
+
+
+# ANSI styling constants — used only when color=True.
+_P = "\x1b[0m"
+_B = "\x1b[1m"
+_DIM = "\x1b[2m"
+_CYAN = "\x1b[36m"
+_WHITE = "\x1b[37m"
+
+# Text-value names: important content (bold) vs token values (dimmed).
+_BOLD_VALUES = {"issuer", "destination"}
+_DIM_VALUES = {"id", "version", "protocolbinding", "signature",
+               "relaystate", "mustunderstand", "inresponseto",
+               "idpssourl", "assertionidref", "issueinstant"}
+
+
+def _key(s):
+    """Wrap a key (element or attribute name) in bold cyan."""
+    return _B + _CYAN + s + _P
+
+
+def _val(s, name):
+    """Wrap a text value: bold if important, dimmed if token, else plain."""
+    ln = name.lower()
+    if ln in _BOLD_VALUES:
+        return _B + s + _P
+    if ln in _DIM_VALUES:
+        return _DIM + s + _P
+    return s
+
+
+def _styled_header(name, attrs):
+    """Styled header: bold-cyan name + inline (bold-cyan key = styled value)."""
+    head = _key(name)
+    if attrs:
+        kv = ", ".join("%s=%s" % (_key(_local(k)), _val(v, _local(k)))
+                       for k, v in attrs)
+        return head + " (" + kv + ")"
+    return head
+
+
+def _styled_line(depth, name, attrs, value, key_width):
+    """Render one line with ANSI styling; keys aligned to `key_width`."""
+    pad = max(0, key_width - len(_plain_header(name, attrs)))
+    return ("  " * depth + _styled_header(name, attrs) + " " * pad + (
+        ": " + _val(value, name) if value else ""))
