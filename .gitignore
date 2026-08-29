@@ -2,6 +2,9 @@
 /caches/
 /backups/
 
+# Python bytecode cache (all __pycache__ folders)
+__pycache__/
+
 # Local-only files.
 /link-file/.gitconfig_maintenance
 
