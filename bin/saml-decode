@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-saml-decode
-
-Decode a SAML request (or response) so you can read it.
+saml-decode: decode a SAML request or response so you can read it.
 
 Input (stdin or argv):
   - A full URL:     https://host/...?SAMLRequest=...&RelayState=...
@@ -12,15 +10,7 @@ Input (stdin or argv):
 Decoding: URL-decode -> base64 -> zlib/deflate/gzip (auto) -> XML.
 Encrypted documents are detected; decrypt them with `--key <sp-private-key.pem>`.
 
-Usage:
-    saml-decode < url_with_saml
-    cat request.txt | saml-decode
-    saml-decode --raw "https://..."
-
-Flags:
-    --raw    print unindented XML (machine-friendly)
-    --key P  PEM private key, to decrypt EncryptedData in the document
-    -h       help
+Run `saml-decode --help` for a colorized usage summary.
 """
 
 import base64
@@ -32,10 +22,32 @@ import urllib.parse
 import zlib
 
 
+# Named SGR styles. c(*styles, text) wraps `text` in ANSI escape codes; it is a
+# no-op when sys.stderr is not a TTY, so piped output stays clean.
+_STYLES = {
+    "bold": 1, "dim": 2, "underline": 4,
+    "red": 31, "green": 32, "yellow": 33, "blue": 34,
+    "magenta": 35, "cyan": 36, "white": 37,
+    "gray": 90,
+}
+
+
+def c(*styles, text=""):
+    """Wrap `text` in ANSI SGR codes for the given style names.
+
+    Returns `text` unchanged when sys.stderr is not a TTY."""
+    if not sys.stderr.isatty():
+        return text
+    codes = [str(_STYLES[s]) for s in styles if s in _STYLES]
+    if not codes or text == "":
+        return text
+    return "\x1b[%sm" % ";".join(codes) + text + "\x1b[0m"
+
+
 # Shared key-management helpers (keypair, store, Keycloak REST). Imported lazily
 # per-call so the core decode path stays dependency-free.
 def _import_lib():
-    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib", "saml-decode"))
     import saml_decode_lib as lib
     return lib
 
@@ -50,7 +62,25 @@ def fail(msg, code=1):
 
 
 def usage():
-    sys.stderr.write(__doc__)
+    prog = os.path.basename(sys.argv[0] or "saml-decode")
+
+    def line(*styles, text=""):
+        print(c(*styles, text=text), file=sys.stderr)
+
+    sec = lambda title: line("bold", text=title)
+
+    line("bold", text="%s: decode a SAML request/response so you can read it." % prog)
+    line()
+    sec("Usage")
+    line(text="  " + c("dim", text=prog) + " < url_with_saml")
+    line(text="  cat " + c("cyan", text="request.txt") + " | " + c("dim", text=prog))
+    line(text="  " + c("dim", text=prog) + " --key " + c("green", text="<sp-private-key.pem>")
+         + "  " + c("cyan", text='"https://idp.example/saml?...SAMLResponse=..."'))
+    line()
+    sec("Flags")
+    line(text="  " + c("bold", text="--raw") + "   " + c("dim", text="print unindented XML (machine-friendly)"))
+    line(text="  " + c("bold", text="--key <path>") + "  " + c("dim", text="PEM private key to decrypt EncryptedData"))
+    line(text="  " + c("bold", text="-h, --help") + "  " + c("dim", text="show this help"))
     sys.exit(2)
 
 
