@@ -1,6 +1,6 @@
 # Skills Index
 
-29 skills — grouped by domain.
+28 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -49,7 +49,6 @@
 
 | Skill | Does |
 |-------|------|
-| **gmail-format** | Parses Gmail threads into clean chronological Markdown with frontmatter and deduplicated content. |
 | **save-plan-docs** | Turn a suggestion into a plan doc with metadata and a tool-tagged filename. |
 | **share-research-as-chat-message** | Rewrites research into forwardable chat message (default Danish): sharp opener, compressed answer, sources. |
 
@@ -60,6 +59,7 @@
 | Skill | Does |
 |-------|------|
 | **brainstorming** | Clarifies intent and presents an approved design before implementation. |
+| **continue-implementation** | Continues and orchestrates an existing implementation plan to completion. |
 | **dispatching-parallel-agents** | Coordinates independent tasks across isolated parallel agents. |
 | **finishing-a-development-branch** | Guides integration decisions after implementation and verification are complete. |
 | **receiving-code-review** | Evaluates code review feedback rigorously before applying changes. |
@@ -71,12 +71,4 @@
 
 ---
 
-## Domain-Specific
-
-| Skill | Does |
-|-------|------|
-| **pagy-v9-to-v43-migration-expert** | Rails Pagy v9→v43: initializer, framework integration, helper calls, option renames, extras. |
-
----
-
-*Last updated: 2026-08-17 · 29 skills*
+*Last updated: 2026-08-29 · 28 skills*
