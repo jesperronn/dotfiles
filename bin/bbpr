@@ -634,10 +634,24 @@ bbpr_cmd_open() {
   printf '%b%-4s  %-48s  %-30s  %-14s  %-12s%b\n' \
     "$BBPR_C_BOLD" "#" "Title" "Project/Repo" "Author" "Created" "$BBPR_C_RESET"
 
-  printf '%s' "$prs" | jq -r '
-    .[] |
-    "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \(.createdDate[:10])"
-  '
+  if (( BBPR_COLOR_ENABLED )); then
+    printf '%s' "$prs" | jq -r \
+      --arg c_open "$BBPR_C_GREEN" \
+      --arg c_closed "$BBPR_C_RED" \
+      --arg c_dim "$BBPR_C_DIM" \
+      --arg c_reset "$BBPR_C_RESET" '
+      .[] |
+      (if .state == "OPEN" then $c_open
+       elif .state == "CLOSED" then $c_closed
+       else $c_dim end) as $state_color |
+      "  " + $state_color + "#\(.id)" + $c_reset + "\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \(.createdDate[:10])"
+    '
+  else
+    printf '%s' "$prs" | jq -r '
+      .[] |
+      "  #\(.id)\u00a0\u00a0 \(.title[:48] // .title)\u00a0 \(.fromRef.repository.slug // "?")/\(.fromRef.repository.name[:14] // "?")\u00a0 \(.author.user.slug // "?")\u00a0 \(.createdDate[:10])"
+    '
+  fi
   printf '\n  %d PR(s)\n' "$count"
 }
 
