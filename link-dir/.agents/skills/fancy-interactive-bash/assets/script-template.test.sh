@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
+# shellcheck disable=SC1090,SC1091
 
 set -euo pipefail
 
-DOTFILES=$(cd "$(dirname "$0")/../../../.." && pwd)
-source "$DOTFILES/bin/template-script" source
+TEMPLATE_SCRIPT="$(cd "$(dirname "$0")" && pwd)/script-template.sh"
+source "$TEMPLATE_SCRIPT"
 
 T_PASS=$'\033[32m[PASS]\033[0m'
 T_FAIL=$'\033[31m[FAIL]\033[0m'
@@ -63,6 +63,15 @@ assert_eq "1" "$TEMPLATE_INTERACTIVE" "interactive flag"
 template_reset_state
 template_parse_opts --no-color
 assert_eq "0" "$TEMPLATE_COLOR_ENABLED" "no-color flag"
+
+template_reset_state
+usage="$(template_usage)"
+assert_eq "${C_BOLD}${C_SECTION}Usage:${C_0} ${C_BOLD}${C_ACCENT}template-script${C_0} ${C_PLACEHOLDER}[OPTIONS]${C_0}" \
+  "$(printf '%s\n' "$usage" | head -n 1)" \
+  "usage uses the Vibe palette for headings, tool name, and placeholders"
+assert_eq "${C_GREEN}--help${C_0}" \
+  "$(printf '%s\n' "$usage" | sed -n '8p' | awk '{print $1}')" \
+  "usage uses green for flags"
 
 template_reset_state
 set +e

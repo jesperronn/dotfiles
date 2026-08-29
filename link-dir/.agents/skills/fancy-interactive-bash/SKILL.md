@@ -146,18 +146,18 @@ Treat terminal output as part of the interface. Principles apply to Bash, Go, Py
 
 **TTY detection:** Auto-disable color when output is piped/redirected. Detect via `[[ -t 1 ]]` (Bash), `os.Stat` (Go), `sys.stdout.isatty()` (Python). Optionally support `--color`/`--no-color` flags. **All output must remain readable without color.**
 
-**Palette:** Use small, semantic set with consistent meaning across your tool:
+**Vibe palette (mandatory):** Every colored CLI created or refactored with this skill uses this semantic palette. Do not substitute an ad-hoc palette. Emit these sequences only when color is enabled; preserve readable plain output for `NO_COLOR`, `--no-color`, and non-TTY output.
 
-| Element | Color | Used For |
+| Element | ANSI color | Used For |
 |---------|-------|----------|
 | Dim | gray | descriptions, prose, non-critical text, debug output |
 | Bold | bright | structural markers, emphasis |
-| Heading | warm yellow/orange | section labels (`Usage:`, `Flags:`, `Examples:`) |
+| Heading | yellow (`33`), bold | section labels (`Usage:`, `Flags:`, `Examples:`) |
 | Command | green | executable tokens, subcommands |
-| Flag | yellow or cyan | option names (pick one, use consistently) |
-| Placeholder | magenta/pink | metavariables (`<issue-key>`, `[FILE]`) |
+| Flag | green | option names |
+| Placeholder | bright magenta (`95`) | metavariables (`<issue-key>`, `[FILE]`) |
 | File heading | cyan/aqua | per-file labels in test/lint output |
-| Tool name | purple-ish | primary brand, usage first line (optional) |
+| Tool name | magenta (`35`), bold | primary brand, usage first line |
 | Success | green | completion, `[PASS]` |
 | Error | red | failure, `[FAIL]`, error lines |
 
@@ -175,9 +175,9 @@ Treat terminal output as part of the interface. Principles apply to Bash, Go, Py
 - **Token-level, not full-line.** Color individual tokens (command, flag, placeholder) not entire usage line.
 - **Consistent across the tool.** Same palette for help, test output, error messages, runner headings.
 - **Consistent across languages.** Bash script and Go CLI in same project should feel identical to users.
-- **Deviations are intentional.** If you use blue for commands instead of green, document why and keep semantic split (headings ≠ commands ≠ placeholders ≠ prose).
+- **Use the Vibe palette exactly.** Do not change token colors for individual tools; the semantic split is part of the shared CLI interface.
 
-Reference: `bat --help` uses warm headings, purple tool name, green commands, magenta placeholders, default text.
+The supplied `assets/script-template.sh` encodes this palette for new Bash tools.
 
 ## Performance And Timings
 

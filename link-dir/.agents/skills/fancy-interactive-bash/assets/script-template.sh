@@ -12,17 +12,19 @@ C_DIM=$'\033[2m'
 C_BOLD=$'\033[1m'
 C_RED=$'\033[31m'
 C_GREEN=$'\033[32m'
-C_MAGENTA=$'\033[35m'
+C_SECTION=$'\033[33m'
+C_ACCENT=$'\033[35m'
+C_PLACEHOLDER=$'\033[95m'
 C_0=$'\033[0m'
 
 template_usage() {
   local header_style="" command_style="" subcommand_style="" parameter_style="" flag_style="" reset_style=""
 
   if (( TEMPLATE_COLOR_ENABLED )); then
-    header_style="${C_BOLD}${C_MAGENTA}"
-    command_style="${C_BOLD}${C_GREEN}"
+    header_style="${C_BOLD}${C_SECTION}"
+    command_style="${C_BOLD}${C_ACCENT}"
     subcommand_style="$C_GREEN"
-    parameter_style="$C_MAGENTA"
+    parameter_style="$C_PLACEHOLDER"
     flag_style="$C_GREEN"
     reset_style="$C_0"
   fi
@@ -56,7 +58,7 @@ template_color_print() {
 }
 
 template_info() {
-  template_color_print "${C_BOLD}${C_ORANGE}" "$*"
+  template_color_print "$C_DIM" "$*"
 }
 
 template_success() {
@@ -64,7 +66,7 @@ template_success() {
 }
 
 template_warn() {
-  template_color_print "${C_BOLD}${C_MAGENTA}" "$*" >&2
+  template_color_print "${C_BOLD}${C_SECTION}" "$*" >&2
 }
 
 template_error() {
