@@ -32,11 +32,15 @@ _STYLES = {
 }
 
 
-def c(*styles, text=""):
+def c(*styles, text="", stream=None):
     """Wrap `text` in ANSI SGR codes for the given style names.
 
-    Returns `text` unchanged when sys.stderr is not a TTY."""
-    if not sys.stderr.isatty():
+    Returns `text` unchanged when the target stream is not a TTY (default:
+    sys.stderr, so piped usage output stays clean). Pass `stream=sys.stdout`
+    to colorize stdout output.
+    """
+    target = sys.stderr if stream is None else stream
+    if not target.isatty():
         return text
     codes = [str(_STYLES[s]) for s in styles if s in _STYLES]
     if not codes or text == "":
@@ -337,6 +341,35 @@ def pretty(text):
     return "\n".join(out_lines) + "\n"
 
 
+def _colorize_header(header, color):
+    """Colorize the metadata header: align keys, bold them, dim values.
+
+    Lines without a `key: value` shape (status lines like "Decoded SAMLRequest
+    (decompressed)") are left untouched. Returns a new list; when `color` is
+    False, returns `header` unchanged.
+    """
+    if not color:
+        return header
+
+    def split_kv(line):
+        m = re.match(r"^(?P<key>[^:]+): (?P<value>.*)$", line)
+        return (m.group("key"), m.group("value")) if m else None
+
+    pairs = [(h, split_kv(h)) for h in header]
+    parsed = [kv for _, kv in pairs if kv is not None]
+    key_width = max((len(k) for k, v in parsed), default=0)
+    out = []
+    for h, kv in pairs:
+        if kv is None:
+            out.append(h)
+            continue
+        k, v = kv
+        pad = key_width - len(k)
+        out.append(c("bold", text=k, stream=sys.stdout) + ":" + (" " * (pad + 1))
+                   + c("dim", text=v, stream=sys.stdout))
+    return out
+
+
 def main():
     positional, key_path, xml_mode = parse_flags(sys.argv[1:])
     raw = read_input(positional)
@@ -403,8 +436,9 @@ def main():
     elif key_path and not encrypted:
         header.append("no encrypted elements found")
 
-    body = pretty(doc) if xml_mode else lib.to_property_list(doc)
-    sys.stdout.write("\n".join(header) + "\n\n" + body)
+    color = sys.stdout.isatty() or bool(os.environ.get("SAML_DECODE_COLOR"))
+    body = pretty(doc) if xml_mode else lib.to_property_list(doc, color=color)
+    sys.stdout.write("\n".join(_colorize_header(header, color)) + "\n\n" + body)
 
 
 if __name__ == "__main__":
