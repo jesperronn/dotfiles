@@ -4,6 +4,7 @@ saml-decode: decode a SAML request or response so you can read it.
 
 Input (stdin or argv):
   - A full URL:     https://host/...?SAMLRequest=...&RelayState=...
+                    (fetched over HTTP; redirects followed to the final URL)
   - A raw query:    SAMLRequest=...&RelayState=...
   - A bare base64 blob
 
@@ -80,6 +81,8 @@ def usage():
     line(text="  cat " + c("cyan", text="request.txt") + " | " + c("dim", text=prog))
     line(text="  " + c("dim", text=prog) + " --key " + c("green", text="<sp-private-key.pem>")
          + "  " + c("cyan", text='"https://idp.example/saml?...SAMLResponse=..."'))
+    line(text="  " + c("dim", text=prog) + " " + c("cyan", text='"https://idp.example/saml2/authenticate?..."')
+         + c("dim", text="   (fetched; redirects followed)"))
     line()
     sec("Flags")
     line(text="  " + c("bold", text="--xml") + "   " + c("dim", text="show decoded XML (default is a property list)"))
@@ -370,6 +373,23 @@ def _colorize_header(header, color):
     return out
 
 
+def _fetch_url_to_params(url):
+    """HTTP GET url, following redirects; return (final_url, params dict).
+
+    urllib's default redirect handling follows 301/302/303/307; the returned
+    final URL is where the redirect chain ended. SAML HTTP-Redirect binding
+    puts the payload in the final URL's query string, so we parse that query.
+    """
+    import urllib.parse
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "saml-decode"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        final_url = resp.geturl()
+    parsed = urllib.parse.urlparse(final_url)
+    query = parsed.query or parsed.fragment  # SAML redirects use the fragment
+    return final_url, parse_query(query)
+
+
 def main():
     positional, key_path, xml_mode = parse_flags(sys.argv[1:])
     raw = read_input(positional)
@@ -377,9 +397,19 @@ def main():
         usage()
 
     url, params = extract_params(raw)
+
+    # A URL with no inline SAML payload is an IdP entry point: HTTP-fetch it,
+    # follow redirects, and decode the SAML request from the final URL.
+    fetched = False
+    if url and "SAMLRequest" not in params and "SAMLResponse" not in params:
+        url, params = _fetch_url_to_params(url)
+        fetched = True
+
     key = "SAMLResponse" if "SAMLResponse" in params else "SAMLRequest"
     blob = params.get(key)
     if not blob:
+        if fetched:
+            fail("fetched %s returned no SAMLRequest/SAMLResponse" % url)
         fail("no SAMLRequest or SAMLResponse found in input")
 
     blob = urllib.parse.unquote(blob)

@@ -165,6 +165,79 @@ PY
   assert_contains "$out" $'\x1b[2m_req1\x1b[0m' "ID value dimmed"
 }
 
+test_attributes_one_per_line() {
+  # AuthnRequest attributes render one per line, indented beneath the header,
+  # not inline as "(ID=..., Version=..., ...)".
+  local url
+  url="$(
+    python3 - <<'PY'
+import base64, zlib, urllib.parse
+xml = ('<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" '
+       'xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="_req1" Version="2.0" '
+       'ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" '
+       'InResponseTo="_c1">'
+       '<saml2:Issuer>urn:test-sp</saml2:Issuer>'
+       '</saml2p:AuthnRequest>')
+b64 = base64.b64encode(zlib.compress(xml.encode())).decode()
+print("https://idp.example/saml?SAMLRequest=" + urllib.parse.quote(b64))
+PY
+  )"
+  capture_command out status "$BIN" "$url"
+  assert_status 0 "$status" "attribute expansion exits 0"
+  assert_contains "$out" "ID _req1" "ID renders one per line (no colon)"
+  assert_contains "$out" "Version 2.0" "Version renders one per line (no colon)"
+  assert_contains "$out" "ProtocolBinding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" "ProtocolBinding renders one per line (no colon)"
+  assert_not_contains "$out" "(ID=_req1" "attributes no longer rendered inline"
+}
+
+test_fetch_follows_redirect() {
+  # A URL passed positionally (or via stdin) with no inline SAML payload is
+  # fetched over HTTP, redirects followed, and decoded from the final URL.
+  local dir server port url out status
+  dir="$(mktemp -d)"
+  python3 - "$dir" <<'PY' &
+import base64, http.server, threading, time, zlib, urllib.parse, sys
+d = sys.argv[1]
+xml = ('<saml2p:AuthnRequest xmlns:saml2p="urn:oasis:names:tc:SAML:2.0:protocol" '
+       'xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="_req1" Version="2.0" '
+       'ProtocolBinding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect" '
+       'InResponseTo="_c1">'
+       '<saml2:Issuer>urn:test-sp</saml2:Issuer>'
+       '</saml2p:AuthnRequest>')
+b64 = base64.b64encode(zlib.compress(xml.encode())).decode()
+final = "/final?SAMLRequest=" + urllib.parse.quote(b64) + "&RelayState=abc-123"
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/final"):
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+        else:
+            self.send_response(302); self.send_header("Location", final); self.end_headers()
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+port = srv.server_address[1]
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+open(d + "/port", "w").write(str(port))
+time.sleep(3600)
+PY
+  server=$!
+  for _ in $(seq 1 50); do
+    if [ -s "$dir/port" ]; then break; fi
+    sleep 0.1
+  done
+  port="$(cat "$dir/port")"
+  url="http://127.0.0.1:$port/redirect"
+  capture_command out status "$BIN" "$url"
+  kill "$server" 2>/dev/null || true
+  wait "$server" 2>/dev/null || true
+  rm -rf "$dir"
+
+  assert_status 0 "$status" "URL positional exits 0"
+  assert_contains "$out" "Decoded SAMLRequest" "decodes fetched payload"
+  assert_contains "$out" "urn:test-sp" "shows Issuer"
+  assert_contains "$out" "_req1" "shows ID"
+  assert_contains "$out" "/final" "followed redirect to final URL"
+}
+
 test_garbage() {
   printf 'garbage!!!not-base64' >"$FIXTURES/garbage.txt"
   capture_command out status "$BIN" <"$FIXTURES/garbage.txt"

@@ -269,12 +269,14 @@ def try_stores_for_doc(doc):
 def to_property_list(xml_text: str, color: bool = False) -> str:
     """Render XML as a flat, human-readable property list — one property per line.
 
-    Namespace prefixes are stripped (local names only); namespace-declaration
+    namespace prefixes are stripped (local names only); namespace-declaration
     attributes (xmlns...) and XML comments are omitted. Element attributes are
-    shown inline as (k=v, k2=v2) with local (namespace-stripped) keys. Text-only
-    elements render as `localname: text`. Children are indented two spaces per
-    depth level (AuthnRequest's children one extra level). Returns a string with
-    NO trailing newline (caller joins).
+    shown one per line, indented one level beneath the element header. Text-only
+    elements render as `localname text` (no colon); elements with children
+    render as a bare `localname` header. Children are indented two spaces per
+    depth level
+    (AuthnRequest's children one extra level). Returns a string with NO trailing
+    newline (caller joins).
 
     When `color=True`, emit ANSI SGR codes: element/attribute names (keys) in
     bold cyan, values in white; important text values (Issuer, Destination) are
@@ -289,8 +291,12 @@ def to_property_list(xml_text: str, color: bool = False) -> str:
 
     def collect(elem, depth):
         name = _local(elem.tag)
-        attrs = [(k, v) for k, v in elem.items() if "xmlns" not in k]
-        items.append((depth, name, attrs, (elem.text or "").strip()))
+        items.append((depth, name, (elem.text or "").strip()))
+        for k, v in elem.items():
+            if "xmlns" in k:
+                continue
+            # attributes render one per line, one level beneath the element
+            items.append((depth + 1, _local(k), v))
         for child in elem:
             # indent AuthnRequest's children one extra level
             collect(child, depth + 1 + (1 if name == "AuthnRequest" else 0))
@@ -304,18 +310,16 @@ def to_property_list(xml_text: str, color: bool = False) -> str:
                 r"<([A-Za-z_][\w.:-]*)([^>]*?)>([^<]*)</", xml_text):
             t = m.group(3).strip()
             if t:
-                flat.append((0, _local(m.group(1)), [], t))
-        return "\n".join(_plain_line(d, n, a, v) for d, n, a, v in flat)
+                flat.append((0, _local(m.group(1)), t))
+        return "\n".join(_plain_line(d, n, v) for d, n, v in flat)
 
     collect(root, 0)
     if not color:
-        return "\n".join(_plain_line(d, n, a, v) for d, n, a, v in items)
+        return "\n".join(_plain_line(d, n, v) for d, n, v in items)
 
     # align key width among value lines
-    key_width = max(
-        (len(_plain_header(n, a)) for d, n, a, v in items if v), default=0)
-    return "\n".join(
-        _styled_line(d, n, a, v, key_width) for d, n, a, v in items)
+    key_width = max((len(n) for d, n, v in items if v), default=0)
+    return "\n".join(_styled_line(d, n, v, key_width) for d, n, v in items)
 
 
 def _local(tag):
@@ -326,16 +330,9 @@ def _local(tag):
     return tag[idx + 1:] if idx != -1 else tag
 
 
-def _plain_header(name, attrs):
-    """Unstyled header: `name` or `name (k=v, k2=v2)` with local keys."""
-    return ((name + " (" + ", ".join(
-        "%s=%s" % (_local(k), v) for k, v in attrs) + ")") if attrs else name)
-
-
-def _plain_line(depth, name, attrs, value):
-    """Render one line, unstyled."""
-    return ("  " * depth + _plain_header(name, attrs)) + (
-        ": " + value if value else "")
+def _plain_line(depth, name, value):
+    """Render one line, unstyled (no colon separator)."""
+    return ("  " * depth + name + (" " + value if value else ""))
 
 
 # ANSI styling constants — used only when color=True.
@@ -367,18 +364,8 @@ def _val(s, name):
     return s
 
 
-def _styled_header(name, attrs):
-    """Styled header: bold-cyan name + inline (bold-cyan key = styled value)."""
-    head = _key(name)
-    if attrs:
-        kv = ", ".join("%s=%s" % (_key(_local(k)), _val(v, _local(k)))
-                       for k, v in attrs)
-        return head + " (" + kv + ")"
-    return head
-
-
-def _styled_line(depth, name, attrs, value, key_width):
+def _styled_line(depth, name, value, key_width):
     """Render one line with ANSI styling; keys aligned to `key_width`."""
-    pad = max(0, key_width - len(_plain_header(name, attrs)))
-    return ("  " * depth + _styled_header(name, attrs) + " " * pad + (
-        ": " + _val(value, name) if value else ""))
+    pad = max(0, key_width - len(name))
+    return ("  " * depth + _key(name) + (" " * (pad + 1)) + (
+        _val(value, name) if value else ""))
