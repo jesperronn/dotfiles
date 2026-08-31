@@ -1,0 +1,102 @@
+providers:
+  webSearchOrder:
+    - codex
+    - perplexity
+    - gemini
+    - anthropic
+    - xai
+    - zai
+    - exa
+    - tinyfish
+    - jina
+    - kagi
+    - tavily
+    - firecrawl
+    - brave
+    - kimi
+    - parallel
+    - synthetic
+    - searxng
+    - startpage
+    - duckduckgo
+    - ecosia
+    - google
+    - mojeek
+    - public
+symbolPreset: unicode
+theme:
+  dark: titanium
+  light: light
+setupVersion: 2
+modelRoles:
+  tiny: litellm/omlx/Ornith-1.5-9B-MLX-4bit
+  slow: litellm/ollama/qwen3.6:35b-mlx
+  default: litellm/ollama/gpt-oss:20b
+defaultThinkingLevel: auto
+task:
+  maxConcurrency: 4
+  batch: true
+  enableLsp: true
+  maxRecursionDepth: 1
+  isolation:
+    commits: ai
+composer:
+  shape: field
+tui:
+  tight: false
+steeringMode: all
+followUpMode: one-at-a-time
+tools:
+  approvalMode: yolo
+magicKeywords:
+  enabled: true
+  orchestrate: true
+  workflow: true
+features:
+  unexpectedStopDetection: smart
+git:
+  enabled: true
+compaction:
+  handoffSaveToDisk: true
+  remoteStreamingV2Enabled: true
+  idleEnabled: true
+  idleThresholdTokens: 100000
+extendedContext: false
+branchSummary:
+  enabled: false
+snapcompact:
+  shape: auto
+autolearn:
+  enabled: true
+memory:
+  backend: local
+edit:
+  mode: replace
+read:
+  toolResultPreview: false
+lsp:
+  formatOnWrite: true
+bash:
+  autoBackground:
+    enabled: true
+bashInterceptor:
+  enabled: false
+shellMinimizer:
+  sourceOutlineLevel: default
+astGrep:
+  enabled: true
+launch:
+  enabled: true
+computer:
+  enabled: true
+checkpoint:
+  enabled: true
+security:
+  enabled: false
+todo:
+  remindersMax: 5
+github:
+  cache:
+    enabled: true
+dev:
+  autoqa: true
