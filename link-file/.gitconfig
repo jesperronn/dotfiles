@@ -80,6 +80,7 @@
 [rebase]
   autosquash = true
   autostash = true
+	updateRefs = true
 [rerere]
   enable       = true
 [remote "origin"]
