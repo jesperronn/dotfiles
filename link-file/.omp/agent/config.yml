@@ -31,10 +31,10 @@ setupVersion: 2
 modelRoles:
   # Picked from local-model-evaluator-bench's own LEADERBOARD.md pass rates,
   # restricted to models actually served by the LiteLLM proxy right now.
-  default: litellm/ollama/qwen3.8:27b-mlx   # 91.5% pass (161/176), ~117s avg
-  slow: litellm/ollama/qwen3.6:35b-mlx      # 86.0% pass (320/372), bigger for thorough analysis
+  default: litellm/omlx/Ornith-1.5-35B-A3B-MLX-4bit
+  slow: litellm/mtplx/mtplx-flash-next-optimized-speed
   smol: litellm/omlx/Ornith-1.5-9B-MLX-4bit # successor to Ornith-1.0-9B-4bit, which scored 100% (28/28)
-  vision: litellm/omlx/gemma-4-E4B-it-MLX-8bit # only multimodal option served; smallest/fastest of the two
+  vision: litellm/omlx/Ornith-1.5-35B-A3B-MLX-4bit
 defaultThinkingLevel: auto
 task:
   maxConcurrency: 4
