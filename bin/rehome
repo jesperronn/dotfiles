@@ -205,6 +205,7 @@ rehome_run() {
     return 1
   fi
 
+  resolved_target="$(rehome_resolve_target "$target")"
   repo_root="$(cd "$REHOME_REPO_ROOT" && pwd -P)"
   home_root="$(cd "$HOME" && pwd -P)"
   cwd_root="$(pwd -P)"
