@@ -77,3 +77,4 @@ link-dir/.lmstudio/working-directories/
 link-dir/.pi/agent/*.bak.*
 link-dir/.pi/agent/sessions/
 link-dir/.pi/agent/trust.json
+/sandbox/
