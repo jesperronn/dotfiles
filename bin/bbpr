@@ -8,6 +8,7 @@ BBPR_JSON=0
 BBPR_SHORT=0
 BBPR_LONG=1
 BBPR_LONG_REQUESTED=0
+BBPR_FULL=0
 BBPR_INTERACTIVE=0
 BBPR_BASE_URL="https://stash.stil.dk"
 BBPR_TOKEN=""
@@ -27,6 +28,8 @@ BBPR_C_SECTION=$'\033[33m'
 BBPR_C_BLUE=$'\033[34m'
 BBPR_C_ACCENT=$'\033[35m'
 BBPR_C_CYAN=$'\033[36m'
+BBPR_C_ORANGE=$'\033[38;5;208m'
+BBPR_C_GRAY=$'\033[38;5;245m'
 
 bbpr_reset_state() {
   BBPR_COLOR_ENABLED=0
@@ -34,6 +37,7 @@ bbpr_reset_state() {
   BBPR_SHORT=0
   BBPR_LONG=1
   BBPR_LONG_REQUESTED=0
+  BBPR_FULL=0
   BBPR_INTERACTIVE=0
   BBPR_BASE_URL="https://stash.stil.dk"
   BBPR_TOKEN=""
@@ -77,6 +81,7 @@ bbpr_usage() {
   printf '  %s--json%s             Emit machine-parseable JSON.\n' "$flag_style" "$reset_style"
   printf '  %s--short%s            Emit PR identifiers for use with show.\n' "$flag_style" "$reset_style"
   printf '  %s--long%s             Emit clickable URL, author initials, and title (default).\n' "$flag_style" "$reset_style"
+  printf '  %s--full%s             Include resolved and orphaned comments in show output.\n' "$flag_style" "$reset_style"
   printf '  %s-h, --help%s         Show this help.\n' "$flag_style" "$reset_style"
   printf "  %s--verbose%s          Log all API calls and responses.\n" "$flag_style" "$reset_style"
 
@@ -156,6 +161,73 @@ bbpr_review_status() {
   bbpr_style_text "$color" "$status"
 }
 
+bbpr_show_comment_marker() {
+  local state="$1" orphaned="$2" state_style=""
+
+  case "$state" in
+    RESOLVED) state_style="$BBPR_C_GREEN" ;;
+    OPEN) state_style="$BBPR_C_ORANGE" ;;
+    *) state_style="$BBPR_C_SECTION" ;;
+  esac
+
+  printf '['
+  bbpr_style_text "$state_style" "$state"
+  if [[ "$orphaned" == "true" ]]; then
+    printf ', '
+    bbpr_style_text "${BBPR_C_DIM}${BBPR_C_ACCENT}" "ORPHANED"
+  fi
+  printf ']'
+}
+
+bbpr_render_show_comments() {
+  local comments_body="$1" full="$2" records=""
+  local kind state orphaned author text path line indent=""
+
+  records="$(printf '%s' "$comments_body" | jq -r --arg full "$full" '
+    def text_content:
+      if (.text | type) == "object" then (.text.content // "-") else (.text // "-") end;
+    [
+      .values[]? |
+      select(($full == "1") or (.state != "RESOLVED" and .anchor.orphaned != true))
+    ] |
+    sort_by([(.anchor.path // ""), (.anchor.line // 0), (.id // 0)]) |
+    .[] |
+    (["COMMENT", (.state // "OPEN"), (if .anchor.orphaned == true then "true" else "false" end),
+      (.author.user.displayName // .author.slug // .author.name // "?"), text_content,
+      (.anchor.path // ""), ((.anchor.line // "") | tostring)] | @tsv),
+    ((.comments // [])[]? |
+      (["REPLY", (.state // "OPEN"), (if .anchor.orphaned == true then "true" else "false" end),
+        (.author.user.displayName // .author.slug // .author.name // "?"), text_content,
+        (.anchor.path // ""), ((.anchor.line // "") | tostring)] | @tsv))
+  ')"
+
+  if [[ -z "$records" ]]; then
+    printf '_No comments matching this view._\n'
+    return 0
+  fi
+
+  while IFS=$'\t' read -r kind state orphaned author text path line; do
+    indent=""
+    [[ "$kind" == "REPLY" ]] && indent="  "
+    printf '%s' "$indent"
+    bbpr_show_comment_marker "$state" "$orphaned"
+    printf ' '
+    bbpr_style_text "${BBPR_C_DIM}${BBPR_C_CYAN}" "$author"
+    printf ': '
+    if [[ "$state" == "RESOLVED" || "$orphaned" == "true" ]]; then
+      bbpr_style_text "${BBPR_C_DIM}${BBPR_C_GRAY}" "$text"
+    else
+      printf '%s' "$text"
+    fi
+    if [[ -n "$path" ]]; then
+      printf ' ('
+      bbpr_style_text "$BBPR_C_DIM" "$path:$line"
+      printf ')'
+    fi
+    printf '\n'
+  done <<< "$records"
+}
+
 parse_opts() {
   # Handle flags and extract subcommand
   local temp_args=()
@@ -165,6 +237,7 @@ parse_opts() {
       --json) BBPR_JSON=1; shift ;;
       --short) BBPR_SHORT=1; shift ;;
       --long) BBPR_LONG=1; BBPR_LONG_REQUESTED=1; BBPR_SHORT=0; shift ;;
+      --full) BBPR_FULL=1; shift ;;
       -i|--interactive) BBPR_INTERACTIVE=1; shift ;;
       --help|-h) BBPR_SHOW_HELP=1; shift ;;
       --base-url) [[ $# -ge 2 ]] && { BBPR_BASE_URL="$2"; shift 2; } || shift ;;
@@ -268,6 +341,35 @@ bbpr_fetch() {
   printf '%s' "$body"
 }
 
+bbpr_normalize_blocker_comments() {
+  jq '
+    def normalized_text:
+      if (.text | type) == "object" then (.text.content // "") else (.text // "") end;
+    {
+      values: [
+        .values[]? |
+        {
+          id,
+          type: "BLOCKER",
+          state: (.state // "OPEN"),
+          author: {user: {slug: .author.slug, displayName: .author.displayName}},
+          text: {content: normalized_text},
+          anchor,
+          comments: [
+            .comments[]? |
+            {
+              type: "REPLY",
+              state: (.state // "OPEN"),
+              author: {user: {slug: .author.slug, displayName: .author.displayName}},
+              text: {content: normalized_text},
+              anchor
+            }
+          ]
+        }
+      ]
+    }
+  ' 2>/dev/null || printf '{"values":[]}'
+}
 
 bbpr_paginate() {
   local endpoint="$1" start=0 limit="${2:-50}" collected="" is_last="false" items_json=""
@@ -668,13 +770,17 @@ bbpr_cmd_show() {
 
   local activities_body
   activities_body="$(bbpr_fetch "GET" "$pr_path/activities")" || activities_body="{}"
-  open_comments="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state != "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
-  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state == "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  open_comments="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state != "RESOLVED" and .threadResolved != true) | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and (.state == "RESOLVED" or .threadResolved == true)) | {id, type: "COMMENT", state: (if .threadResolved == true then "RESOLVED" else .state end), author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
   blocker_body="$(bbpr_fetch "GET" "$pr_path/blocker-comments")" \
     || blocker_body="{}"
+  blocker_body="$(printf '%s' "$blocker_body" | bbpr_normalize_blocker_comments)"
 
   if (( BBPR_JSON )); then
     printf '%s' "$pr_json" | jq --argjson oc "$open_comments" --argjson rc "$resolved_body" --argjson bc "$blocker_body" '
+      def unique_comments:
+        reduce .[] as $comment
+          ([]; if any(.[]; .id == $comment.id) then . else . + [$comment] end);
       {
         id: .id, title: .title, state: .state,
         author: (.author.user.slug // null),
@@ -683,7 +789,7 @@ bbpr_cmd_show() {
         destinationBranch: .toRef.displayId,
         participants: [.participants[] | {role: .role, status: .status, user: .user.slug}],
         comments: (
-          ([.comments.values[]?] + [$oc.values[]?] + [$bc.values[]?]) |
+          ([$bc.values[]?] + [.comments.values[]?] + [$oc.values[]?] + [$rc.values[]?] | unique_comments |
           [.[] | {
             id: .id, type: .type, state: .state,
             author: (.author.user?.slug // null),
@@ -691,6 +797,7 @@ bbpr_cmd_show() {
             anchor: .anchor, locations: (if .anchor.path then [{file: .anchor.path, line: .anchor.line, lineType: .anchor.lineType, fileType: .anchor.fileType}] else [] end), version: .version,
             replies: (.comments // [])
           }]
+          )
         )
       }
     '
@@ -708,7 +815,12 @@ bbpr_cmd_show() {
       || latest_commit_json="{}"
   fi
   comments_body="$(jq -n --argjson oc "$open_comments" --argjson rc "$resolved_body" --argjson bc "$blocker_body" \
-    '{values: ($oc.values + $rc.values + $bc.values)}')" || comments_body='{"values":[]}'
+    '
+      def unique_comments:
+        reduce .[] as $comment
+          ([]; if any(.[]; .id == $comment.id) then . else . + [$comment] end);
+      {values: (($bc.values + $oc.values + $rc.values) | unique_comments)}
+    ')" || comments_body='{"values":[]}'
 
   title="$(printf '%s' "$pr_json" | jq -r '.title')"
   state="$(printf '%s' "$pr_json" | jq -r '.state')"
@@ -728,40 +840,19 @@ bbpr_cmd_show() {
   fi
 
   local relevant_files
-  relevant_files="$(printf '%s' "$comments_body" | jq -r '
-    [ .values[]? | (.anchor.path // empty) ] | unique | join(", ")
+  relevant_files="$(printf '%s' "$comments_body" | jq -r --arg full "$BBPR_FULL" '
+    [
+      .values[]? |
+      select(($full == "1") or (.state != "RESOLVED" and .anchor.orphaned != true)) |
+      (.anchor.path // empty)
+    ] | unique | join(", ")
   ')"
   if [[ -n "$relevant_files" ]]; then
     printf 'Relevant Files: %s\n' "$relevant_files"
   fi
 
-  local open_lines resolved_lines has_resolved
-  open_lines="$(printf '%s' "$comments_body" | jq -r '
-    [ .values[]? | select(.state != "RESOLVED") ] as $open |
-    if ($open | length) == 0 then "_No open comments._" else
-      [ $open[] |
-        (.author.user.displayName // .author.slug // .author.name // "?") + ": " +
-        ((.text.content // .text // "-")) +
-        (if .anchor.path then " (" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + ")" else "" end),
-        ( (.comments // [])[]? | "  " + ((.author.user.displayName // .author.slug // .author.name // "?") + ": " + (.text.content // .text // "-")) )
-      ] | join("\n") end
-  ')"
-  resolved_lines="$(printf '%s' "$comments_body" | jq -r '
-    [ .values[]? | select(.state == "RESOLVED") ] as $resolved |
-    if ($resolved | length) == 0 then "_No resolved comments._" else
-      [ $resolved[] |
-        (.author.user.displayName // .author.slug // .author.name // "?") + ": " +
-        ((.text.content // .text // "-")) +
-        (if .anchor.path then " (" + .anchor.path + ":" + ((.anchor.line // "?") | tostring) + ")" else "" end),
-        ( (.comments // [])[]? | "  " + ((.author.user.displayName // .author.slug // .author.name // "?") + ": " + (.text.content // .text // "-")) )
-      ] | join("\n") end
-  ')"
-  has_resolved="$(printf '%s' "$comments_body" | jq '[.values[]? | select(.state == "RESOLVED")] | length')"
-
-  printf '\nComments and replies\n%s\n' "$open_lines"
-  if (( has_resolved > 0 )); then
-    printf '\nResolved Comments\n%s\n' "$resolved_lines"
-  fi
+  printf '\nComments and replies\n'
+  bbpr_render_show_comments "$comments_body" "$BBPR_FULL"
 
   return 0
 }
@@ -798,9 +889,10 @@ bbpr_cmd_comments() {
   local pr_path="/rest/api/latest/projects/$BBPR_PR_PROJECT/repos/$BBPR_PR_REPO/pull-requests/$pr_id"
   local activities_body
   activities_body="$(bbpr_fetch "GET" "$pr_path/activities")" || activities_body="{}"
-  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and .state == "RESOLVED") | {id, type: "COMMENT", state, author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
+  resolved_body="$(printf '%s' "$activities_body" | jq '{values: [.values[]?.comment? | select(. != null and (.state == "RESOLVED" or .threadResolved == true)) | {id, type: "COMMENT", state: (if .threadResolved == true then "RESOLVED" else .state end), author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, resolvedDate: .updatedDate, comments: [.comments[]? | {type: "REPLY", author: {user: {slug: .author.slug, displayName: .author.displayName}}, text: {content: .text}, anchor, state}]}]}' 2>/dev/null || printf '{"values":[]}')"
   blocker_body="$(bbpr_fetch "GET" "$pr_path/blocker-comments")" \
     || blocker_body="{}"
+  blocker_body="$(printf '%s' "$blocker_body" | bbpr_normalize_blocker_comments)"
 
   local rcount bcount
   rcount="$(printf '%s' "$resolved_body" | jq -r '[.values[]?] | length')"

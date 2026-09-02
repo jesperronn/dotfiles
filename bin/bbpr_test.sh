@@ -29,9 +29,9 @@ url="${!#}"
 if [[ "$url" == *"application-properties"* && "$*" == *"-D -"* ]]; then
   printf 'HTTP/1.1 200 OK\r\nX-AUSERNAME: test-user\r\n\r\n200'
 elif [[ "$url" == *"activities"* ]]; then
-  printf '{"isLastPage":true,"values":[{"comment":{"id":7,"state":"OPEN","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Please fix this branch.","anchor":{"path":"src/app.rb","line":12,"lineType":"ADDED","fileType":"TO"},"comments":[{"author":{"slug":"author","displayName":"Test Author"},"text":"Fixed in latest commit.","state":"OPEN"}]}},{"comment":{"id":8,"state":"RESOLVED","updatedDate":"2026-01-02","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Old concern.","anchor":{"path":"test/app_test.rb","line":4,"lineType":"CONTEXT","fileType":"TO"},"comments":[]}}]}\n200\n'
+  printf '{"isLastPage":true,"values":[{"comment":{"id":7,"state":"OPEN","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Please fix this branch.","anchor":{"path":"src/app.rb","line":12,"lineType":"ADDED","fileType":"TO"},"comments":[{"author":{"slug":"author","displayName":"Test Author"},"text":"Fixed in latest commit.","state":"OPEN"}]}},{"comment":{"id":8,"state":"RESOLVED","updatedDate":"2026-01-02","author":{"slug":"reviewer","displayName":"Review Person"},"text":"Old concern.","anchor":{"path":"test/app_test.rb","line":4,"lineType":"CONTEXT","fileType":"TO"},"comments":[]}},{"comment":{"id":9,"state":"OPEN","threadResolved":true,"author":{"slug":"reviewer","displayName":"Review Person"},"text":"Old orphaned concern.","anchor":{"path":"src/old.rb","line":7,"lineType":"ADDED","fileType":"TO","orphaned":true},"comments":[]}},{"comment":{"id":10,"state":"OPEN","author":{"slug":"reviewer","displayName":"Blocker Person"},"text":"Live-style blocker comment.","anchor":{"path":"src/blocker.rb","line":3,"lineType":"ADDED","fileType":"TO"},"comments":[]}}]}\n200\n'
 elif [[ "$url" == *"blocker-comments"* ]]; then
-  printf '{"isLastPage":true,"values":[]}\n200\n'
+  printf '{"isLastPage":true,"values":[{"id":10,"state":"OPEN","author":{"slug":"reviewer","displayName":"Blocker Person"},"text":"Live-style blocker comment.","anchor":{"path":"src/blocker.rb","line":3,"lineType":"ADDED","fileType":"TO"},"comments":[]}]}\n200\n'
 elif [[ "$url" == *"pull-requests/42"* ]]; then
   printf '{"id":42,"title":"Test PR","state":"OPEN","author":{"user":{"slug":"test-user","displayName":"Test Author"}},"createdDate":"2026-01-01","updatedDate":"2026-01-01","fromRef":{"displayId":"feature","latestCommit":"abcdef1234567890","repository":{"slug":"repo","name":"Repo","project":{"key":"PROJ"}}},"toRef":{"displayId":"main"},"participants":[{"role":"REVIEWER","user":{"slug":"reviewer","displayName":"Review Person"},"status":"UNAPPROVED"}],"links":{"self":[{"href":"https://stash.example.test/projects/PROJ/repos/repo/pull-requests/42"}]}}\n200\n'
 elif [[ "$url" == *"dashboard/pull-requests"* ]]; then
@@ -52,6 +52,7 @@ test_help_lists_output_modes() {
   assert_status "0" "$status" "bbpr --help exits successfully"
   assert_contains "$output" "--short" "help lists --short"
   assert_contains "$output" "--long" "help lists --long"
+  assert_contains "$output" "--full" "help lists --full"
   assert_contains "$output" "PROJ/REPO/NNN" "help lists slash PR identifiers"
   assert_contains "$output" "-i, --interactive" "help lists interactive show mode"
 }
@@ -178,10 +179,52 @@ test_show_default_emits_structured_reviewer_handoff() {
   assert_contains "$output" "## PR #42: Test PR" "show prints a structured Markdown heading"
   assert_contains "$output" "Branch: feature -> main" "show includes source and destination branches"
   assert_contains "$output" "Latest Commit: abcdef1234567890" "show includes the latest source commit"
-  assert_contains "$output" "Relevant Files: src/app.rb, test/app_test.rb" "show summarizes relevant files from review comments"
-  assert_contains "$output" "Review Person: Please fix this branch." "show includes open comments"
-  assert_contains "$output" "Test Author: Fixed in latest commit." "show includes comment replies"
-  assert_contains "$output" "Resolved Comments" "show includes resolved review context"
+  assert_contains "$output" "[OPEN] Review Person: Please fix this branch." "show labels open comments"
+  assert_contains "$output" "[OPEN] Blocker Person: Live-style blocker comment." "show renders live-style blocker text without failing"
+  assert_contains "$output" "  [OPEN] Test Author: Fixed in latest commit." "show labels comment replies"
+  assert_not_contains "$output" "Old concern." "show hides resolved comments by default"
+  assert_not_contains "$output" "Old orphaned concern." "show hides orphaned comments by default"
+  assert_not_contains "$output" "test/app_test.rb" "show excludes resolved comment files from the default summary"
+  assert_not_contains "$output" "src/old.rb" "show excludes orphaned comment files from the default summary"
+}
+
+test_show_full_includes_resolved_and_orphaned_comments() {
+  local output="" status=0
+
+  capture_command output status "$BBPR_BIN" show --full PROJ/repo/42
+  assert_status "0" "$status" "show --full exits successfully"
+  assert_contains "$output" "[RESOLVED] Review Person: Old concern." "show --full includes resolved comments"
+  assert_contains "$output" "[RESOLVED, ORPHANED] Review Person: Old orphaned concern." "show --full treats threadResolved comments as resolved"
+}
+
+test_show_deduplicates_comments_returned_by_activities_and_blocker_comments() {
+  local output="" status=0 occurrences=""
+
+  capture_command output status "$BBPR_BIN" show PROJ/repo/42
+  occurrences="$(printf '%s\n' "$output" | rg -F -c 'Live-style blocker comment.' || true)"
+
+  assert_status "0" "$status" "show exits successfully with a duplicate API comment"
+  assert_eq "1" "$occurrences" "show renders a comment returned by both endpoints only once"
+}
+
+test_show_comment_renderer_colors_and_sorts_comments() {
+  local output="" plain="" esc
+  esc=$'\033'
+
+  output="$(
+    source "$BBPR_BIN"
+    BBPR_COLOR_ENABLED=1
+    bbpr_render_show_comments '{"values":[{"id":2,"state":"OPEN","author":{"user":{"displayName":"Open Author"}},"text":{"content":"Open message."},"anchor":{"path":"z-last.rb","line":9}},{"id":1,"state":"RESOLVED","author":{"user":{"displayName":"Resolved Author"}},"text":{"content":"Resolved message."},"anchor":{"path":"a-first.rb","line":2,"orphaned":true}}]}' 1
+  )"
+  plain="$(printf '%s' "$output" | sed $'s/\033\[[0-9;]*m//g')"
+
+  assert_contains "$output" "${esc}[32mRESOLVED${esc}[0m" "show colors RESOLVED green"
+  assert_contains "$output" "${esc}[38;5;208mOPEN${esc}[0m" "show colors OPEN orange"
+  assert_contains "$output" "${esc}[2m${esc}[35mORPHANED${esc}[0m" "show colors ORPHANED dim purple"
+  assert_contains "$output" "${esc}[2m${esc}[36mResolved Author${esc}[0m" "show renders authors as dim cyan"
+  assert_contains "$output" "${esc}[2ma-first.rb:2${esc}[0m" "show dims file locations"
+  assert_contains "$output" "${esc}[2m${esc}[38;5;245mResolved message.${esc}[0m" "show dims resolved orphaned messages"
+  assert_contains "$plain" $'[RESOLVED, ORPHANED] Resolved Author: Resolved message. (a-first.rb:2)\n[OPEN] Open Author: Open message. (z-last.rb:9)' "show sorts comments by file location"
 }
 
 test_show_json_behavior_is_preserved() {
