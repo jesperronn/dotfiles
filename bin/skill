@@ -4,7 +4,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
-SKILLS_ENABLED_ROOT="${SKILLS_ENABLED_ROOT:-$ROOT_DIR/link-dir/.agents/skills}"
+SKILLS_ENABLED_ROOT="${SKILLS_ENABLED_ROOT:-$ROOT_DIR/link-dir/.agents/skills-enabled}"
+SKILLS_SYMLINK_ROOT="${SKILLS_SYMLINK_ROOT:-$ROOT_DIR/link-dir/.agents/skills}"
 SKILLS_DISABLED_ROOT="${SKILLS_DISABLED_ROOT:-$ROOT_DIR/link-dir/.agents/skills-disabled}"
 
 SKILLS_SUBCOMMAND=""
@@ -14,6 +15,8 @@ SKILLS_SHOW_HELP=0
 SKILLS_COLOR_MODE="auto"
 SKILLS_COLOR_ENABLED=0
 SKILLS_ENABLE_ID=""
+SKILLS_PRUNE=0
+SKILLS_DRY_RUN=0
 
 SKILLS_C_RESET=$'\033[0m'
 SKILLS_C_BOLD=$'\033[1m'
@@ -35,8 +38,8 @@ skills_usage() {
     reset_style="${SKILLS_C_RESET}"
   fi
 
-  printf 'Manage agent skills: list, enable, disable.\n\n'
-  printf '%sUsage:%s %sbin/skills%s %s<subcommand>%s %s[options]%s\n\n' \
+  printf 'Manage agent skills: list, enable, disable, sync.\n\n'
+  printf '%sUsage:%s %sbin/skill%s %s<subcommand>%s %s[options]%s\n\n' \
     "$section_style" "$reset_style" "$tool_style" "$reset_style" \
     "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
@@ -44,11 +47,14 @@ skills_usage() {
   printf '  %sstatus%s            Show enabled and disabled skills with counts\n' "$command_style" "$reset_style"
   printf '  %senable%s %s<id>%s     Enable a disabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '  %sdisable%s %s<id>%s    Disable an enabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
+  printf '  %ssync%s              Symlink all skills from source to enabled\n' "$command_style" "$reset_style"
   printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s-h, --help%s        Show this help.\n' "$flag_style" "$reset_style"
   printf '  %s--color%s           Force colored output.\n' "$flag_style" "$reset_style"
   printf '  %s--no-color%s        Disable colored output.\n' "$flag_style" "$reset_style"
-  printf '  %s--verbose%s       Show full descriptions.\n' "$flag_style" "$reset_style"
+  printf '  %s--verbose%s         Show full descriptions and verbose output.\n' "$flag_style" "$reset_style"
+  printf '  %s--prune%s           Remove orphaned symlinks (for sync command).\n' "$flag_style" "$reset_style"
+  printf '  %s--dry-run%s         Show what would be done without making changes.\n' "$flag_style" "$reset_style"
 }
 
 skills_error() { printf '%s\n' "$*" >&2; }
@@ -128,7 +134,7 @@ skills_list_ids() {
     if [[ -d "$root/$id" && -f "$root/$id/SKILL.md" ]]; then
       printf '%s\n' "$id"
     fi
-  done < <(find "$root" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | while IFS= read -r dir; do basename "$dir"; done)
+  done < <(find "$root" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null | sort | while IFS= read -r dir; do basename "$dir"; done)
 }
 
 skills_read_metadata() {
@@ -283,6 +289,14 @@ skills_parse_opts() {
         SKILLS_SHOW_DISABLED=1
         shift
         ;;
+      --prune)
+        SKILLS_PRUNE=1
+        shift
+        ;;
+      --dry-run)
+        SKILLS_DRY_RUN=1
+        shift
+        ;;
       -*)
         skills_error "Unknown option: $1"
         return 1
@@ -294,7 +308,7 @@ skills_parse_opts() {
             help)
               SKILLS_SHOW_HELP=1
               ;;
-            list|status|enable|disable)
+            list|status|enable|disable|sync)
               SKILLS_SUBCOMMAND="$1"
               subcommand_set=1
               ;;
@@ -309,7 +323,7 @@ skills_parse_opts() {
           # - skill ID for enable/disable
           # - second subcommand (error)
           case "$1" in
-            list|status|enable|disable)
+            list|status|enable|disable|sync)
               skills_error "Only one subcommand is supported."
               return 1
               ;;
@@ -364,6 +378,18 @@ skills_run() {
         printf '  --no-color    Disable colored output.\n'
         return 0
         ;;
+      sync)
+        printf 'Sync skills from source to enabled.\n\n'
+        printf 'Usage: %s sync [options]\n' "$(basename "$0")"
+        printf 'Options:\n'
+        printf '  -h, --help    Show this help.\n'
+        printf '  --dry-run     Show what would be done without making changes.\n'
+        printf '  --prune       Remove orphaned symlinks.\n'
+        printf '  --verbose     Show detailed output.\n'
+        printf '  --color       Force colored output.\n'
+        printf '  --no-color    Disable colored output.\n'
+        return 0
+        ;;
       *)
         ;;  # list and status don't need subcommand-specific help
     esac
@@ -373,6 +399,7 @@ skills_run() {
     status) skills_status ;;
     enable) skills_enable "$SKILLS_ENABLE_ID" ;;
     disable) skills_disable "$SKILLS_ENABLE_ID" ;;
+    sync)   skills_sync ;;
   esac
 }
 skills_list() {
@@ -384,16 +411,28 @@ skills_list() {
     root="$SKILLS_DISABLED_ROOT"
     is_disabled_list=1
   else
-    root="$SKILLS_ENABLED_ROOT"
+    root="$SKILLS_SYMLINK_ROOT"
+  fi
+
+  if [[ ! -d "$root" ]]; then
+    return 0
   fi
 
   for id in $(skills_list_ids "$root"); do
+    # For symlinked skills, resolve to actual location to read metadata
+    local skill_dir="$root/$id"
+    if (( ! is_disabled_list )); then
+      if [[ -L "$skill_dir" ]]; then
+        skill_dir="$(readlink -f "$skill_dir")"
+      fi
+    fi
+
     if (( is_disabled_list )); then
-      skills_list_row "$id" 0 "$(skills_read_skill_summary "$root/$id" 2>/dev/null || true)"
-      skills_verbose "  $(skills_read_skill_description "$root/$id" 2>/dev/null || true)"
+      skills_list_row "$id" 0 "$(skills_read_skill_summary "$skill_dir" 2>/dev/null || true)"
+      skills_verbose "  $(skills_read_skill_description "$skill_dir" 2>/dev/null || true)"
     else
-      skills_list_row "$id" 1 "$(skills_read_skill_summary "$root/$id" 2>/dev/null || true)"
-      skills_verbose "  $(skills_read_skill_description "$root/$id" 2>/dev/null || true)"
+      skills_list_row "$id" 1 "$(skills_read_skill_summary "$skill_dir" 2>/dev/null || true)"
+      skills_verbose "  $(skills_read_skill_description "$skill_dir" 2>/dev/null || true)"
     fi
   done
 }
@@ -406,13 +445,17 @@ skills_status() {
   local enabled_ids=()
   local disabled_ids=()
 
-  mapfile -t enabled_ids < <(skills_discover enabled)
-  mapfile -t disabled_ids < <(skills_discover disabled 2>/dev/null)
+  mapfile -t enabled_ids < <(skills_list_ids "$SKILLS_SYMLINK_ROOT" 2>/dev/null || true)
+  mapfile -t disabled_ids < <(skills_list_ids "$SKILLS_DISABLED_ROOT" 2>/dev/null || true)
 
   for id in "${enabled_ids[@]}"; do
     [[ -n "$id" ]] || continue
-    skills_list_row "$id" 1 "$(skills_read_skill_summary "$SKILLS_ENABLED_ROOT/$id" 2>/dev/null || true)"
-    skills_verbose "  $(skills_read_skill_description "$SKILLS_ENABLED_ROOT/$id" 2>/dev/null || true)"
+    local skill_dir="$SKILLS_SYMLINK_ROOT/$id"
+    if [[ -L "$skill_dir" ]]; then
+      skill_dir="$(readlink -f "$skill_dir")"
+    fi
+    skills_list_row "$id" 1 "$(skills_read_skill_summary "$skill_dir" 2>/dev/null || true)"
+    skills_verbose "  $(skills_read_skill_description "$skill_dir" 2>/dev/null || true)"
     enabled_count=$((enabled_count + 1))
   done
 
@@ -456,7 +499,7 @@ skills_enable() {
   local id="$1"
 
   if [[ -z "$id" ]]; then
-    skills_error "Usage: skills enable <skill-id>"
+    skills_error "Usage: skill enable <skill-id>"
     return 1
   fi
 
@@ -480,14 +523,14 @@ skills_enable() {
 
   mkdir -p "$SKILLS_ENABLED_ROOT"
   mv "$src_dir" "$dst_dir"
-  skills_success "Enabled skill '$id'."
+  skills_success "Enabled skill '$id'. Run 'skill sync' to update symlinks."
 }
 
 skills_disable() {
   local id="$1"
 
   if [[ -z "$id" ]]; then
-    skills_error "Usage: skills disable <skill-id>"
+    skills_error "Usage: skill disable <skill-id>"
     return 1
   fi
 
@@ -511,7 +554,110 @@ skills_disable() {
 
   mkdir -p "$SKILLS_DISABLED_ROOT"
   mv "$src_dir" "$dst_dir"
-  skills_success "Disabled skill '$id'."
+  skills_success "Disabled skill '$id'. Run 'skill sync' to update symlinks."
+}
+
+skills_sync() {
+  local id=""
+  local orphaned=()
+  local orphaned_count=0
+  local created_count=0
+  local skipped_count=0
+
+  if (( SKILLS_DRY_RUN )); then
+    skills_info "DRY-RUN: No changes will be made"
+  fi
+
+  if (( ! SKILLS_DRY_RUN )); then
+    mkdir -p "$SKILLS_SYMLINK_ROOT"
+  else
+    skills_verbose "Would create: $SKILLS_SYMLINK_ROOT"
+  fi
+
+  # Create symlinks for all enabled skills
+  for id in $(skills_list_ids "$SKILLS_ENABLED_ROOT"); do
+    local src="$SKILLS_ENABLED_ROOT/$id"
+    local dst="$SKILLS_SYMLINK_ROOT/$id"
+
+    if [[ ! -d "$src" ]]; then
+      continue
+    fi
+
+    # Remove existing symlink if it exists and points elsewhere
+    if [[ -L "$dst" ]]; then
+      if (( SKILLS_DRY_RUN )); then
+        skills_verbose "Would update symlink: $id"
+      else
+        rm "$dst"
+        skills_verbose "Linked: $id"
+        created_count=$((created_count + 1))
+      fi
+    elif [[ -e "$dst" ]]; then
+      skills_warn "Skipping '$id': target exists and is not a symlink"
+      skipped_count=$((skipped_count + 1))
+      continue
+    else
+      if (( SKILLS_DRY_RUN )); then
+        skills_verbose "Would link: $id -> $src"
+      else
+        ln -s "$src" "$dst"
+        skills_verbose "Linked: $id"
+        created_count=$((created_count + 1))
+      fi
+    fi
+  done
+
+  # Check for orphaned symlinks
+  if [[ -d "$SKILLS_SYMLINK_ROOT" ]]; then
+    while IFS= read -r link; do
+      [[ -z "$link" ]] && continue
+      local target
+      if [[ -L "$SKILLS_SYMLINK_ROOT/$link" ]]; then
+        target="$(readlink -f "$SKILLS_SYMLINK_ROOT/$link")"
+        if [[ ! -d "$target" ]]; then
+          orphaned+=("$link")
+          orphaned_count=$((orphaned_count + 1))
+        fi
+      fi
+    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 -type l 2>/dev/null | xargs -I {} basename {} | sort)
+  fi
+
+  if (( orphaned_count > 0 )); then
+    skills_warn "Found $orphaned_count orphaned symlinks in skills:"
+    printf '%s\n' "${orphaned[@]}" | sed 's/^/  /'
+    if (( ! SKILLS_PRUNE )); then
+      skills_warn "Run 'skill sync --prune' to remove them."
+      if (( ! SKILLS_DRY_RUN )); then
+        return 1
+      fi
+    fi
+  fi
+
+  # Prune orphaned symlinks if requested
+  if (( SKILLS_PRUNE )); then
+    if (( orphaned_count > 0 )); then
+      for id in "${orphaned[@]}"; do
+        if (( SKILLS_DRY_RUN )); then
+          skills_verbose "Would remove orphan: $id"
+        else
+          rm "$SKILLS_SYMLINK_ROOT/$id"
+          skills_verbose "Removed orphan: $id"
+        fi
+      done
+      skills_success "$([ $SKILLS_DRY_RUN -eq 1 ] && echo "[DRY-RUN] Would prune" || echo "Pruned") $orphaned_count orphaned symlinks."
+    fi
+  fi
+
+  if (( SKILLS_VERBOSE )); then
+    printf '  Created: %d symlinks\n' "$created_count"
+    printf '  Skipped: %d items\n' "$skipped_count"
+  fi
+
+  if (( SKILLS_DRY_RUN )); then
+    skills_success "[DRY-RUN] Sync complete (no changes made)"
+  else
+    skills_success "Synced skills."
+  fi
 }
 
 run_main() {
