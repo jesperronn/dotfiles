@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+
+set -euo pipefail
+
+SKILL_VERBOSE=0
+SKILL_DRY_RUN=0
+SKILL_COLOR_ENABLED=1
+
+PONYTAIL_SOURCE="$HOME/src/stil_other/ponytail"
+SKILLS_DIR="$HOME/.agents/skills"
+
+# Colors
+C_DIM=$'\033[2m'
+C_BOLD=$'\033[1m'
+C_RED=$'\033[31m'
+C_GREEN=$'\033[32m'
+C_SECTION=$'\033[33m'
+C_ACCENT=$'\033[35m'
+C_0=$'\033[0m'
+
+usage() {
+  local header="" cmd="" flag="" param="" reset=""
+
+  if (( SKILL_COLOR_ENABLED )); then
+    header="${C_BOLD}${C_SECTION}"
+    cmd="${C_BOLD}${C_ACCENT}"
+    flag="${C_GREEN}"
+    reset="$C_0"
+  fi
+
+  cat <<EOF
+${header}Usage:${reset} ${cmd}skill-ponytail-sync${reset} ${param}[OPTIONS]${reset}
+
+${header}Description:${reset}
+  Sync ponytail skills from ~/src/stil_other/ponytail/skills/ to ~/.agents/skills/
+  Creates symlinks for each skill folder. Removes stale ponytail-* symlinks before re-symlinking.
+
+${header}Options:${reset}
+  ${flag}--help${reset}          Show this help message.
+  ${flag}--verbose${reset}       Show debug output and detailed progress.
+  ${flag}--dry-run${reset}       Show what would be synced without making changes.
+  ${flag}--no-color${reset}      Disable colored output.
+
+${header}Examples:${reset}
+  skill-ponytail-sync                  # Normal sync
+  skill-ponytail-sync --dry-run        # Preview changes
+  skill-ponytail-sync --verbose        # Detailed output
+EOF
+}
+
+color_print() {
+  local color=$1
+  shift
+
+  if (( SKILL_COLOR_ENABLED )); then
+    printf '%s%s%s\n' "$color" "$*" "$C_0"
+  else
+    printf '%s\n' "$*"
+  fi
+}
+
+info() {
+  color_print "$C_DIM" "$*"
+}
+
+success() {
+  color_print "$C_GREEN" "✓ $*"
+}
+
+warn() {
+  color_print "${C_BOLD}${C_SECTION}" "⚠ $*" >&2
+}
+
+error() {
+  color_print "$C_RED" "✗ $*" >&2
+}
+
+verbose() {
+  if (( SKILL_VERBOSE )); then
+    color_print "$C_DIM" "[debug] $*"
+  fi
+}
+
+parse_opts() {
+  while (( $# > 0 )); do
+    case "$1" in
+      --help)
+        usage
+        exit 0
+        ;;
+      --verbose)
+        SKILL_VERBOSE=1
+        shift
+        ;;
+      --dry-run)
+        SKILL_DRY_RUN=1
+        shift
+        ;;
+      --no-color)
+        SKILL_COLOR_ENABLED=0
+        shift
+        ;;
+      *)
+        error "Unknown option: $1"
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+sync_skills() {
+  verbose "PONYTAIL_SOURCE: $PONYTAIL_SOURCE"
+  verbose "SKILLS_DIR: $SKILLS_DIR"
+
+  # Validate prerequisites
+  if [ ! -d "$PONYTAIL_SOURCE/skills" ]; then
+    error "Ponytail skills not found at $PONYTAIL_SOURCE/skills"
+    return 1
+  fi
+
+  if [ ! -d "$SKILLS_DIR" ]; then
+    error "Skills directory does not exist: $SKILLS_DIR"
+    return 1
+  fi
+
+  # Count existing symlinks
+  local existing_count
+  existing_count=$(find "$SKILLS_DIR" -maxdepth 1 -type l | wc -l)
+  verbose "Found $existing_count existing symlinks"
+
+  if (( SKILL_DRY_RUN )); then
+    info "DRY RUN MODE - no changes will be made"
+    echo ""
+  fi
+
+  # Remove old ponytail symlinks only
+  if (( SKILL_DRY_RUN )); then
+    verbose "Would remove old ponytail symlinks from $SKILLS_DIR"
+    while IFS= read -r link; do
+      verbose "  Would remove: $(basename "$link")"
+    done < <(find "$SKILLS_DIR" -maxdepth 1 -name 'ponytail*' -type l 2>/dev/null)
+  else
+    verbose "Removing old ponytail symlinks from $SKILLS_DIR"
+    find "$SKILLS_DIR" -maxdepth 1 -name 'ponytail*' -type l -delete 2>/dev/null || true
+  fi
+
+  # Create fresh symlinks
+  local skill_count=0
+  if [ -d "$PONYTAIL_SOURCE/skills" ]; then
+    for skill_path in "$PONYTAIL_SOURCE"/skills/*/; do
+      if [ -d "$skill_path" ]; then
+        skill_name=$(basename "$skill_path")
+
+        if (( SKILL_DRY_RUN )); then
+          verbose "Would symlink: $skill_name -> $skill_path"
+        else
+          ln -s "$skill_path" "$SKILLS_DIR/$skill_name" 2>/dev/null || true
+          verbose "Symlinked: $skill_name"
+        fi
+
+        skill_count=$((skill_count + 1))
+      fi
+    done
+  fi
+
+  echo ""
+  if (( SKILL_DRY_RUN )); then
+    info "Would create $skill_count symlinks"
+  else
+    success "Synced $skill_count ponytail skills to $SKILLS_DIR"
+  fi
+
+  return 0
+}
+
+main() {
+  parse_opts "$@"
+
+  if (( SKILL_DRY_RUN )); then
+    warn "Running in DRY RUN mode"
+  fi
+
+  verbose "Starting ponytail skill sync"
+  sync_skills
+}
+
+main "$@"
