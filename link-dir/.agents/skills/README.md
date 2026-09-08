@@ -1,6 +1,6 @@
 # Skills Index
 
-23 skills — grouped by domain.
+30 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -44,6 +44,7 @@
 
 | Skill | Does |
 |-------|------|
+| **clean-stack-traces** | Condenses noisy exception-frame data into a readable, copy-pasteable stack trace. |
 | **save-plan-docs** | Turn a suggestion into a plan doc with metadata and a tool-tagged filename. |
 | **share-research-as-chat-message** | Rewrites research into forwardable chat message (default Danish): sharp opener, compressed answer, sources. |
 
@@ -66,4 +67,17 @@
 
 ---
 
-*Last updated: 2026-08-29 · 23 skills*
+## Uncategorized
+
+| Skill | Does |
+|-------|------|
+| **ponytail** | — |
+| **ponytail-audit** | — |
+| **ponytail-debt** | — |
+| **ponytail-gain** | — |
+| **ponytail-help** | — |
+| **ponytail-review** | — |
+
+---
+
+*Last updated: 2026-09-08 · 30 skills*
