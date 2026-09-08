@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Regenerate skills README when any skill's SKILL.md is staged.
+# Git pre-commit hook dispatcher.
+# Individual hooks can be enabled/disabled by commenting out lines below.
+
 set -uo pipefail
 
-if git diff --cached --name-only | grep -q 'link-dir/\.agents/skills/.*/SKILL\.md'; then
-    root="$(git rev-parse --show-toplevel)"
-    python3 "$root/bin/gen_skills_readme"
-    exit_code=$?
-    git add link-dir/.agents/skills/README.md
-    exit $exit_code
-fi
+root="$(git rev-parse --show-toplevel)"
+
+# Regenerate skills README when skill SKILL.md files are staged
+"$root/.githooks/pre-commit-skill-gen" || exit 1
