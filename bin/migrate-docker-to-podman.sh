@@ -104,7 +104,9 @@ install_tooling() {
 }
 
 init_podman() {
-    "$DOTFILES_DIR/bin/podman_machine_init" "${1:-}"
+    # Use the comprehensive troubleshoot tool for machine initialization.
+    # See docs/podman-troubleshoot-safety-requirements.md for details.
+    "$DOTFILES_DIR/bin/podman_troubleshoot" --init "${1:-}"
 }
 configure_shell() {
     echo "📝 Injecting configuration into $CONF_FILE..."
