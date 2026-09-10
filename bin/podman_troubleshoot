@@ -700,10 +700,12 @@ connection: $connection_name"
   fi
 
   if ! podman_machine_running "$machine_name"; then
+    log_troubleshoot "default Podman machine is not running; attempting to start"
     if ! run_fix_step \
       "Podman machine started" \
       "start $machine_name" \
       start_podman_machine "$machine_name"; then
+      log_troubleshoot "machine start failed"
       check_machine_log_health
       return 1
     fi
@@ -773,10 +775,13 @@ check_podman_socket_connection() {
   FAILURES=$((FAILURES + 1))
   if printf '%s\n' "$output" | grep -Eq 'connection refused|Cannot connect to Podman|failed to connect'; then
     log_troubleshoot "Podman socket connection refused"
-    print_rootless_socket_recovery_steps
-    printf '    next: inspect current connection targets with: podman system connection list\n'
-    printf '    next: if start fails, inspect the vfkit log under /private/var/folders/.../podman/<machine>.log\n'
-    printf '    next: if Docker-compatible clients still fail, inspect /var/run/docker.sock ownership separately\n'
+    if [[ "$FIX_MODE" == "1" ]]; then
+      printf '    next: run will converge machine and socket state below\n'
+    else
+      printf '    next: run: bin/podman_troubleshoot --fix to start machine and align socket\n'
+    fi
+    printf '    next: if you need rootless Traefik or other Docker-compatible clients, point them at:\n'
+    printf '      export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"\n'
   else
     log_troubleshoot "podman ps failed"
     printf '    next: run: podman info\n'
@@ -1090,6 +1095,34 @@ check_local_client_versions() {
     podman version --format 'Client {{.Client.Version}}'
 }
 
+check_podman_system_container() {
+  log_section "Podman System Container"
+
+  local podman_version="" output="" status=0
+
+  if ! have_command podman; then
+    log_action "podman not available; skipping system container check"
+    return 0
+  fi
+
+  capture_command output status podman version --format '{{.Version}}'
+  if [[ $status -ne 0 ]] || [[ -z "$output" ]]; then
+    log_action "could not determine Podman client version"
+    return 0
+  fi
+
+  podman_version="$output"
+  printf 'podman client version: %s\n' "$podman_version"
+
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    log_verbose "Podman system container is bundled with client; upgrade client to update system container"
+  fi
+
+  log_ok "Podman system container is part of the client binary"
+  printf '    next: to update system container, upgrade Podman via: brew upgrade podman\n'
+  printf '    next: then run: podman_troubleshoot --fix to converge state\n'
+}
+
 check_global_docker_socket() {
   log_section "Global Docker Socket"
 
@@ -1177,8 +1210,11 @@ check_podman_machine_running_state() {
   elif printf '%s\n' "$output" | grep -Eq 'running: false|state: stopped'; then
     FAILURES=$((FAILURES + 1))
     log_troubleshoot "default Podman machine is not running"
-    print_rootless_socket_recovery_steps
-    printf '    next: if start fails, inspect the vfkit log for the exact error\n'
+    if [[ "$FIX_MODE" == "1" ]]; then
+      printf '    next: run will start the machine below\n'
+    else
+      printf '    next: to start the machine, run: bin/podman_troubleshoot --fix\n'
+    fi
   elif printf '%s\n' "$output" | grep -Eq 'state: <unknown>|Error:|default machine: <none>'; then
     log_action "Podman machine state could not be confirmed"
     printf '    next: run: podman machine info\n'
@@ -1186,8 +1222,11 @@ check_podman_machine_running_state() {
   else
     FAILURES=$((FAILURES + 1))
     log_troubleshoot "default Podman machine is not running"
-    print_rootless_socket_recovery_steps
-    printf '    next: if start fails, inspect the vfkit log for the exact error\n'
+    if [[ "$FIX_MODE" == "1" ]]; then
+      printf '    next: run will start the machine below\n'
+    else
+      printf '    next: to start the machine, run: bin/podman_troubleshoot --fix\n'
+    fi
   fi
 
   show_detail "$output"
@@ -1419,6 +1458,158 @@ check_vm_dns_and_registry() {
     podman machine ssh 'curl -I --max-time 15 https://registry-1.docker.io/v2/'
 }
 
+check_container_https_egress() {
+  log_section "Rootless Container HTTPS Egress"
+
+  # Diagnostic-only check: distinguish broken container network from broken Podman runtime.
+  # Probes HTTPS connectivity from host, VM, and a disposable rootless container.
+  # Container probes run only if engine health checks pass.
+  # See docs/PLAN-podman-container-egress-handoff.md for context.
+
+  if ! podman_machine_running "$(podman_current_machine_name || true)"; then
+    if [[ "$FIX_MODE" == "1" ]]; then
+      log_action "machine will be started above; container egress check will run on next invocation"
+    else
+      log_action "machine is not running; will check after it starts (run: bin/podman_troubleshoot --fix)"
+    fi
+    return 0
+  fi
+
+  local host_result="" vm_result="" container_result=""
+  local host_status=0 vm_status=0 container_status=0
+
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    log_verbose "probing HTTPS egress from host, VM, and container (testing connectivity, not auth)"
+  fi
+
+  # Host probe: test HTTPS connection (ignore auth/cert errors)
+  capture_command_with_timeout host_result host_status 20 \
+    curl -k --connect-timeout 8 --max-time 20 -o /dev/null -w 'host connected' https://example.com 2>/dev/null || echo "host timeout/error"
+
+  # VM probe: test HTTPS connection from VM
+  capture_command_with_timeout vm_result vm_status 20 \
+    podman machine ssh 'curl -k --connect-timeout 8 --max-time 20 -o /dev/null -w "vm connected" https://example.com 2>/dev/null || echo "vm timeout/error"'
+
+  # Container probe: test HTTPS connection from container
+  local container_image="docker.io/library/busybox:latest"
+  local container_output=""
+  if capture_command_with_timeout container_output container_status 30 \
+    podman run --rm "$container_image" sh -c 'timeout 20 wget -q -O /dev/null --no-check-certificate https://example.com 2>&1 | head -1' 2>/dev/null; then
+    if printf '%s\n' "$container_output" | grep -qi 'saved\|HTTP\|connected'; then
+      container_result="container connected"
+    elif printf '%s\n' "$container_output" | grep -qi 'timeout\|timed out'; then
+      container_result="container timeout"
+    else
+      container_result="container error"
+    fi
+  else
+    container_result="container error"
+  fi
+
+  # Summarize results
+  printf 'HTTPS connectivity probes:\n'
+  printf '  %s\n' "$host_result"
+  printf '  %s\n' "$vm_result"
+  printf '  %s\n' "$container_result"
+
+  # Diagnose: if host and VM work but container times out, container egress is broken
+  if printf '%s\n' "$host_result" | grep -qi 'connected' && \
+     printf '%s\n' "$vm_result" | grep -qi 'connected' && \
+     printf '%s\n' "$container_result" | grep -qi 'timeout'; then
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "rootless container HTTPS egress is broken (host/VM connected, container timeout)"
+    printf '    next: container network is blocked while VM egress works\n'
+    printf '    next: this is a network isolation issue, not auth or DNS\n'
+    printf '    next: check firewall, NAT, or container network config\n'
+    return 0
+  fi
+
+  if printf '%s\n' "$host_result" | grep -qi 'connected' && \
+     printf '%s\n' "$vm_result" | grep -qi 'connected' && \
+     printf '%s\n' "$container_result" | grep -qi 'connected'; then
+    log_ok "HTTPS egress is working from host, VM, and container"
+    return 0
+  fi
+
+  log_action "HTTPS egress check incomplete (container may need cached image, see above)"
+}
+
+check_machine_stability() {
+  log_section "Machine Stability After Start"
+
+  # Diagnostic-only check: distinguish runtime lifecycle failure from connection issues.
+  # Runs podman ps twice with a 10-second gap, then checks machine list state.
+  # See docs/PLAN-podman-container-egress-handoff.md for context.
+
+  local machine_name
+  machine_name="$(podman_current_machine_name || true)"
+  if [[ -z "$machine_name" ]]; then
+    log_action "no current machine; skipping stability check"
+    return 0
+  fi
+
+  if ! podman_machine_running "$machine_name"; then
+    if [[ "$FIX_MODE" == "1" ]]; then
+      log_action "machine will be started above; stability check will run on next invocation"
+    else
+      log_action "machine is not running; will check after it starts (run: bin/podman_troubleshoot --fix)"
+    fi
+    return 0
+  fi
+
+  if [[ "$VERBOSE_MODE" == "1" ]]; then
+    log_verbose "checking machine stability: probing podman ps at T+0s and T+10s"
+  fi
+
+  local ps_probe_1="" ps_probe_2="" machine_list_probe=""
+  local status_1=0 status_2=0 status_list=0
+
+  # First ps probe
+  capture_command_with_timeout ps_probe_1 status_1 "$PODMAN_PS_TIMEOUT_SECONDS" \
+    podman ps -a
+
+  # Wait 10 seconds to allow vfkit/gvproxy instability to appear
+  sleep 10
+
+  # Second ps probe
+  capture_command_with_timeout ps_probe_2 status_2 "$PODMAN_PS_TIMEOUT_SECONDS" \
+    podman ps -a
+
+  # Machine list probe
+  capture_command machine_list_probe status_list \
+    podman machine list --format json
+
+  # Diagnose: if first works but second fails, runtime became unstable
+  if [[ $status_1 -eq 0 && $status_2 -ne 0 ]]; then
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "AppleHV/Podman runtime lifecycle failure (API works then fails)"
+    printf '    next: vfkit or gvproxy may have exited after initial boot\n'
+    printf '    next: inspect the vfkit and gvproxy logs:\n'
+
+    local tmpdir_base
+    tmpdir_base="$(trim_trailing_slash "${TMPDIR:-/private/var/folders}")"
+    printf '      tail -100 %s/podman/%s.log\n' "$tmpdir_base" "$machine_name"
+    printf '      tail -100 %s/podman/gvproxy.log\n' "$tmpdir_base"
+
+    printf '    next: after reviewing logs, run: podman_troubleshoot --fix --force\n'
+    printf '    next: only if the machine still cannot stay running, see docs/PLAN-podman-container-egress-handoff.md for rebuild steps\n'
+    return 0
+  fi
+
+  if [[ $status_1 -eq 0 && $status_2 -eq 0 ]]; then
+    log_ok "machine API is stable (podman ps succeeded at T+0s and T+10s)"
+    return 0
+  fi
+
+  if [[ $status_1 -ne 0 && $status_2 -ne 0 ]]; then
+    log_action "machine API is not responding at either probe time"
+    printf '    next: run: podman machine start\n'
+    return 0
+  fi
+
+  log_action "machine stability check inconclusive"
+}
+
 check_vm_registry_ips() {
   log_section "VM Registry IP Probes"
 
@@ -1538,51 +1729,53 @@ print_recovery_hints() {
 
   log_action "$FAILURES check(s) need attention"
 
-  # Show specific next step for journald I/O errors
+  # Show specific next step for critical failures
   if [[ $LOG_EMERGENCY_FAILURES -ge 1 ]]; then
-    printf '    next: the VM booted into initramfs emergency mode; after preserving anything important, rebuild it:\n'
+    printf '\n🚨 CRITICAL: VM booted into initramfs emergency mode\n'
+    printf '    After backing up important data from inside the VM (VM-local images, volumes), rebuild:\n'
     printf '      podman machine stop\n'
     printf '      podman machine rm -f podman-machine-default\n'
     printf '      podman machine init\n'
     printf '      podman machine start\n'
     printf '      podman_troubleshoot --fix\n'
-    printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
-  elif [[ $LOG_HEALTH_FAILURES -eq 1 ]]; then
-    printf '    next: if you see repeated journald I/O errors, back up anything important from inside the VM first; rebuilding discards VM-local customizations, images, volumes, and container state:\n'
+    return 0
+  elif [[ $LOG_HEALTH_FAILURES -ge 1 ]]; then
+    printf '\n⚠️  VM log shows I/O errors from systemd-journald\n'
+    printf '    After backing up important data from inside the VM, rebuild:\n'
     printf '      podman machine stop\n'
     printf '      podman machine rm -f podman-machine-default\n'
     printf '      podman machine init\n'
     printf '      podman machine start\n'
-    printf '      podman system connection default podman-machine-default\n'
-    printf '    next: then rerun %s to verify the fix\n' "$SCRIPT_NAME"
+    printf '      podman_troubleshoot --fix\n'
+    return 0
   fi
 
-  cat <<'EOF'
-common next steps:
-      1. Re-establish the rootless socket path in this order:
-          podman_troubleshoot --fix
-          podman machine stop
-          podman machine set --rootful=false
-          podman machine start
-          podman_troubleshoot --fix
-       2. Verify the engine itself before debugging `/var/run/docker.sock`:
-          podman ps
-          podman info
-       3. If localhost services like Traefik work but `podman ps` fails, inspect the host 443 listener with `lsof -nP -iTCP:443 -sTCP:LISTEN`.
-       4. For Docker-compatible clients such as Traefik, export the stable rootless socket:
-          export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
-       5. To verify Traefik label routing on a port above 443, run:
-          bin/docker_socket_rootless_test --port 8080
-       6. If you need port 443 while staying rootless, run once after the VM starts:
-          podman-allow-port-443
-       7. Retry the failing command shown above.
-       8. If `podman machine start` fails but `podman info` still works, inspect the vfkit log under `$TMPDIR/podman/<machine>.log`.
-       9. If the log shows repeated `Input/output error` entries from `systemd-journald`, back up anything important from inside the VM first; rebuilding discards VM-local customizations, images, volumes, and container state.
-      10. If multiple machines are present, confirm the default machine and default connection point at the same name.
-      11. If Docker Hub fails but quay.io works, inspect VPN, proxy, firewall, or DNS rules.
-      12. If Podman client and VM feel out of sync, update Podman and restart the machine.
-      13. If `podman machine start` fails with `machine-start.lock`, inspect the lock file state before retrying.
-EOF
+  # Dynamic hints based on common failure patterns
+  printf '\nNext steps based on the failures above:\n\n'
+
+  printf '1. Run the automatic fixer:\n'
+  printf '   bin/podman_troubleshoot --fix\n\n'
+
+  printf '2. If issues persist, verify manually:\n'
+  printf '   podman ps\n'
+  printf '   podman info\n'
+  printf '   podman system connection list\n\n'
+
+  printf '3. Diagnostic checks to run:\n'
+  printf '   bin/docker_socket_rootless_test --port 8080\n\n'
+
+  printf '4. For Docker-compatible clients (Traefik, etc):\n'
+  printf '   export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"\n\n'
+
+  printf '5. If the machine needs port 443 while staying rootless:\n'
+  printf '   podman-allow-port-443\n\n'
+
+  printf '6. If vfkit logs show issues, inspect:\n'
+  printf '   tail -100 %s/podman/podman-machine-default.log\n\n' "${TMPDIR:-/private/var/folders}"
+
+  printf '7. If multiple machines exist, verify they align:\n'
+  printf '   podman machine list\n'
+  printf '   podman system connection list\n'
 }
 
 check_vm_clock_sync() {
@@ -1653,6 +1846,7 @@ run_main() {
 
   check_podman_socket_connection
   check_local_client_versions
+  check_podman_system_container
   check_host_loopback_443
   check_global_docker_socket
   check_docker_socket_rootless
@@ -1660,6 +1854,7 @@ run_main() {
   check_podman_machine_inspect
   check_podman_machine_alignment
   check_podman_machine_running_state
+  check_machine_stability
   check_vm_clock_sync
   check_rootless_privileged_port_policy
   check_machine_start_lock
@@ -1668,6 +1863,7 @@ run_main() {
   check_system_connections
   check_host_registry_connectivity
   check_vm_dns_and_registry
+  check_container_https_egress
   check_vm_registry_ips
   check_vm_runtime_state
   check_registry_auth_state
