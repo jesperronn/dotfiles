@@ -760,28 +760,27 @@ check_podman_socket_connection() {
 
   if [[ $status -eq 124 ]]; then
     FAILURES=$((FAILURES + 1))
-    log_troubleshoot "podman ps timed out after ${PODMAN_PS_TIMEOUT_SECONDS}s"
-    printf '    next: the VM socket is sluggish — this is common right after host hibernation\n'
-    printf '    next: wait 10-20s and retry, or run: podman machine stop && podman machine start\n'
-    printf '    next: raise the timeout with: PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS=90 %s\n' "$SCRIPT_NAME"
+    log_troubleshoot "\`podman ps\` timed out (${PODMAN_PS_TIMEOUT_SECONDS}s)"
+    printf '    next: common after host hibernation; wait 10-20s and retry\n'
+    printf '    next: or: `podman machine stop && podman machine start`\n'
+    printf '    next: or increase timeout: `PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS=90 %s`\n' "$SCRIPT_NAME"
     return 0
   fi
 
   if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|connection refused|failed to connect'; then
-    log_ok "podman ps succeeded; socket connection is healthy"
+    log_ok "\`podman ps\` OK; socket healthy"
     return 0
   fi
 
   FAILURES=$((FAILURES + 1))
   if printf '%s\n' "$output" | grep -Eq 'connection refused|Cannot connect to Podman|failed to connect'; then
-    log_troubleshoot "Podman socket connection refused"
+    log_troubleshoot "\`podman ps\` connection refused"
     if [[ "$FIX_MODE" == "1" ]]; then
-      printf '    next: run will converge machine and socket state below\n'
+      printf '    next: fixing machine and socket state below\n'
     else
-      printf '    next: run: bin/podman_troubleshoot --fix to start machine and align socket\n'
+      printf '    next: `bin/podman_troubleshoot --fix` to start machine and align socket\n'
     fi
-    printf '    next: if you need rootless Traefik or other Docker-compatible clients, point them at:\n'
-    printf '      export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"\n'
+    printf '    next: for rootless clients: `export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"`\n'
   else
     log_troubleshoot "podman ps failed"
     printf '    next: run: podman info\n'
@@ -991,10 +990,10 @@ check_host_loopback_443() {
 
   if printf '%s\n' "$output" | grep -q 'gvproxy'; then
     log_ok "host port 443 is being served by Podman gvproxy"
-    printf '    next: that explains why localhost services can work even while podman ps fails; the host listener is separate from Podman CLI health\n'
+    printf '    note: \`lsof -nP -iTCP:443 -sTCP:LISTEN\` shows gvproxy; host listener is separate from Podman CLI health\n'
   else
     log_action "host port 443 is occupied by a non-gvproxy listener"
-    printf '    next: inspect the listener before assuming Traefik is coming from Podman\n'
+    printf '    next: run \`lsof -nP -iTCP:443 -sTCP:LISTEN\` to inspect the listener before assuming Traefik is coming from Podman\n'
   fi
 
   show_detail "$output"
@@ -1004,19 +1003,49 @@ check_docker_socket_rootless() {
   log_section "Docker Socket Rootless Test"
 
   if ! have_command curl; then
-    log_action "curl is not installed; skipping the Traefik label-routing smoke check"
-    printf '    next: install curl and run %s to verify Docker-label routing on a high port\n' "bin/docker_socket_rootless_test"
+    log_action "curl not installed; skipping Traefik smoke test"
+    printf '    next: install curl to test Docker-label routing\n'
     return 0
   fi
 
-  if [[ -x "$SCRIPT_DIR/docker_socket_rootless_test" ]]; then
-    log_ok "docker_socket_rootless_test is available"
-    printf '    next: run: bin/docker_socket_rootless_test --port 8080\n'
-    printf '    next: if you need a different port or socket, pass --port and --socket explicitly\n'
-  else
-    log_action "docker_socket_rootless_test is not present in this checkout"
-    printf '    next: add bin/docker_socket_rootless_test from the dotfiles repo or run the equivalent compose smoke test manually\n'
+  if [[ ! -x "$SCRIPT_DIR/docker_socket_rootless_test" ]]; then
+    log_action "docker_socket_rootless_test not found"
+    printf '    next: add bin/docker_socket_rootless_test from repo or test manually\n'
+    return 0
   fi
+
+  # Try to run test on available port (443, then 444, 445, ...)
+  local port="" test_port=443 max_attempts=10 attempt=0 output="" status=0
+
+  while (( attempt < max_attempts )); do
+    if [[ "$VERBOSE_MODE" == "1" ]]; then
+      log_verbose "attempting Docker socket test on port $test_port"
+    fi
+
+    capture_command_with_timeout output status 60 \
+      "$SCRIPT_DIR/docker_socket_rootless_test" --port "$test_port" 2>&1
+
+    if [[ $status -eq 0 ]] || printf '%s\n' "$output" | grep -qi 'working'; then
+      log_ok "Docker socket rootless routing working on port $test_port"
+      printf '    result: %s\n' "$(printf '%s\n' "$output" | grep -i 'working' | head -1)"
+      return 0
+    fi
+
+    if printf '%s\n' "$output" | grep -qi 'address already in use'; then
+      test_port=$((test_port + 1))
+      attempt=$((attempt + 1))
+      continue
+    fi
+
+    # Other error
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "Docker socket test failed on port $test_port"
+    printf '    next: check compose output: %s\n' "$(printf '%s\n' "$output" | head -3)"
+    return 0
+  done
+
+  log_troubleshoot "No available port found for Docker socket test (tried 443-452)"
+  printf '    next: check if ports 443-452 are in use: `lsof -nP -iTCP:443-452 -sTCP:LISTEN`\n'
 }
 
 podman_machine_log_health_report() {
@@ -1078,20 +1107,20 @@ check_local_client_versions() {
 
   if have_command docker; then
     run_check \
-      "docker client is available" \
+      "\`docker version\` OK" \
       "troubleshoot" \
-      "docker is installed but docker version failed" \
-      "run: docker version" \
+      "\`docker version\` failed" \
+      "try: docker version" \
       docker version --format 'Client {{.Client.Version}}'
   else
-    log_ok "docker command not installed; skipping Docker comparison"
+    log_ok "docker not installed"
   fi
 
   run_check \
-    "podman client is available" \
+    "\`podman version\` OK" \
     "action" \
-    "podman is installed but podman version failed" \
-    "run: podman version" \
+    "\`podman version\` failed" \
+    "try: podman version" \
     podman version --format 'Client {{.Client.Version}}'
 }
 
@@ -1101,26 +1130,21 @@ check_podman_system_container() {
   local podman_version="" output="" status=0
 
   if ! have_command podman; then
-    log_action "podman not available; skipping system container check"
+    log_action "podman not available"
     return 0
   fi
 
   capture_command output status podman version --format '{{.Version}}'
   if [[ $status -ne 0 ]] || [[ -z "$output" ]]; then
-    log_action "could not determine Podman client version"
+    log_action "`podman version` failed"
     return 0
   fi
 
   podman_version="$output"
-  printf 'podman client version: %s\n' "$podman_version"
+  printf 'version: %s\n' "$podman_version"
 
-  if [[ "$VERBOSE_MODE" == "1" ]]; then
-    log_verbose "Podman system container is bundled with client; upgrade client to update system container"
-  fi
-
-  log_ok "Podman system container is part of the client binary"
-  printf '    next: to update system container, upgrade Podman via: brew upgrade podman\n'
-  printf '    next: then run: podman_troubleshoot --fix to converge state\n'
+  log_ok "System container bundled with client"
+  printf '    next: `brew upgrade podman` then `bin/podman_troubleshoot --fix`\n'
 }
 
 check_global_docker_socket() {
@@ -1145,31 +1169,29 @@ check_global_docker_socket() {
 }
 
 check_podman_machine_list() {
-  log_section "Podman Machine List"
+  log_section "Podman Machine"
+
   run_check \
-    "podman machine list is readable" \
+    "\`podman machine list\` is readable" \
     "action" \
-    "podman machine list failed" \
-    "run: podman machine start && retry podman machine list" \
+    "\`podman machine list\` failed" \
+    "try: \`podman machine start\`" \
     podman_control machine list
 }
 
 check_podman_machine_inspect() {
-  log_section "Podman Machine Inspect"
   run_check \
-    "podman machine inspect is readable" \
+    "\`podman machine inspect\` is readable" \
     "troubleshoot" \
-    "podman machine inspect failed" \
-    "run: podman machine list, then inspect the active machine name manually" \
+    "\`podman machine inspect\` failed" \
+    "try: \`podman machine list\`" \
     podman_control machine inspect
 }
 
 check_podman_machine_alignment() {
-  log_section "Podman Machine Alignment"
-
   if ! have_jq; then
-    log_action "jq is not installed; default machine alignment checks were skipped"
-    printf '    next: install jq and re-run %s\n' "$SCRIPT_NAME"
+    log_action "jq not installed; skipping alignment check"
+    printf '    next: install jq to verify machine/connection alignment\n'
     return 0
   fi
 
@@ -1178,18 +1200,17 @@ check_podman_machine_alignment() {
   capture_command output status podman_machine_inventory_report
 
   if [[ $status -eq 0 ]] && ! printf '%s\n' "$output" | grep -Eq 'Error:|Cannot connect to Podman|operation not permitted|vfkit exited unexpectedly'; then
-    log_ok "podman machine default and system connection are aligned"
+    log_ok "\`podman machine\` and \`podman system connection\` aligned"
   else
     FAILURES=$((FAILURES + 1))
-    log_troubleshoot "podman machine default and system connection are out of sync"
-    printf '    next: rerun podman_troubleshoot --fix after the connection default is updated\n'
+    log_troubleshoot "machine/connection mismatch"
+    printf '    next: \`bin/podman_troubleshoot --fix\`\n'
   fi
 
   show_detail "$output"
 }
 
 check_podman_machine_running_state() {
-  log_section "Podman Machine Running State"
 
   if ! have_jq; then
     log_action "jq is not installed; running-state checks were skipped"
@@ -1209,11 +1230,11 @@ check_podman_machine_running_state() {
     log_ok "default Podman machine is running"
   elif printf '%s\n' "$output" | grep -Eq 'running: false|state: stopped'; then
     FAILURES=$((FAILURES + 1))
-    log_troubleshoot "default Podman machine is not running"
+    log_troubleshoot "machine stopped"
     if [[ "$FIX_MODE" == "1" ]]; then
-      printf '    next: run will start the machine below\n'
+      printf '    next: starting machine (see below)\n'
     else
-      printf '    next: to start the machine, run: bin/podman_troubleshoot --fix\n'
+      printf '    next: `bin/podman_troubleshoot --fix` to start\n'
     fi
   elif printf '%s\n' "$output" | grep -Eq 'state: <unknown>|Error:|default machine: <none>'; then
     log_action "Podman machine state could not be confirmed"
@@ -1479,59 +1500,53 @@ check_container_https_egress() {
   local host_status=0 vm_status=0 container_status=0
 
   if [[ "$VERBOSE_MODE" == "1" ]]; then
-    log_verbose "probing HTTPS egress from host, VM, and container (testing connectivity, not auth)"
+    log_verbose "testing HTTPS connectivity from host, VM, and container (probes only; not full Traefik test)"
   fi
 
-  # Host probe: test HTTPS connection (ignore auth/cert errors)
+  # Host probe: silent HTTPS connection test
   capture_command_with_timeout host_result host_status 20 \
-    curl -k --connect-timeout 8 --max-time 20 -o /dev/null -w 'host connected' https://example.com 2>/dev/null || echo "host timeout/error"
+    curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w 'host ok' https://example.com 2>/dev/null || echo "host fail"
 
-  # VM probe: test HTTPS connection from VM
+  # VM probe: silent HTTPS connection from VM
   capture_command_with_timeout vm_result vm_status 20 \
-    podman machine ssh 'curl -k --connect-timeout 8 --max-time 20 -o /dev/null -w "vm connected" https://example.com 2>/dev/null || echo "vm timeout/error"'
+    podman machine ssh 'curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w "vm ok" https://example.com 2>/dev/null || echo "vm fail"'
 
-  # Container probe: test HTTPS connection from container
+  # Container probe: test from rootless container (using a cached image)
   local container_image="docker.io/library/busybox:latest"
   local container_output=""
   if capture_command_with_timeout container_output container_status 30 \
-    podman run --rm "$container_image" sh -c 'timeout 20 wget -q -O /dev/null --no-check-certificate https://example.com 2>&1 | head -1' 2>/dev/null; then
-    if printf '%s\n' "$container_output" | grep -qi 'saved\|HTTP\|connected'; then
-      container_result="container connected"
-    elif printf '%s\n' "$container_output" | grep -qi 'timeout\|timed out'; then
-      container_result="container timeout"
-    else
-      container_result="container error"
-    fi
+    podman run --rm "$container_image" sh -c 'timeout 20 wget -q -O /dev/null --no-check-certificate https://example.com && echo "container ok" || echo "container fail"' 2>/dev/null; then
+    container_result="$container_output"
   else
-    container_result="container error"
+    container_result="container timeout"
   fi
 
   # Summarize results
-  printf 'HTTPS connectivity probes:\n'
+  printf 'HTTPS connectivity:\n'
   printf '  %s\n' "$host_result"
   printf '  %s\n' "$vm_result"
   printf '  %s\n' "$container_result"
 
-  # Diagnose: if host and VM work but container times out, container egress is broken
-  if printf '%s\n' "$host_result" | grep -qi 'connected' && \
-     printf '%s\n' "$vm_result" | grep -qi 'connected' && \
+  # Diagnose: if host and VM work but container fails, container egress is broken
+  if printf '%s\n' "$host_result" | grep -qi 'ok' && \
+     printf '%s\n' "$vm_result" | grep -qi 'ok' && \
      printf '%s\n' "$container_result" | grep -qi 'timeout'; then
     FAILURES=$((FAILURES + 1))
-    log_troubleshoot "rootless container HTTPS egress is broken (host/VM connected, container timeout)"
-    printf '    next: container network is blocked while VM egress works\n'
-    printf '    next: this is a network isolation issue, not auth or DNS\n'
-    printf '    next: check firewall, NAT, or container network config\n'
+    log_troubleshoot "rootless container HTTPS egress broken (host/VM ok, container timeout)"
+    printf '    next: container network blocked; verify with \`podman run --rm alpine curl https://example.com\`\n'
+    printf '    next: check firewall, NAT, or container network policy\n'
     return 0
   fi
 
-  if printf '%s\n' "$host_result" | grep -qi 'connected' && \
-     printf '%s\n' "$vm_result" | grep -qi 'connected' && \
-     printf '%s\n' "$container_result" | grep -qi 'connected'; then
-    log_ok "HTTPS egress is working from host, VM, and container"
+  if printf '%s\n' "$host_result" | grep -qi 'ok' && \
+     printf '%s\n' "$vm_result" | grep -qi 'ok' && \
+     printf '%s\n' "$container_result" | grep -qi 'ok'; then
+    log_ok "HTTPS connectivity OK from host, VM, and container"
+    printf '    note: this is a basic connectivity probe; use `bin/docker_socket_rootless_test` for full Traefik routing test\n'
     return 0
   fi
 
-  log_action "HTTPS egress check incomplete (container may need cached image, see above)"
+  log_action "HTTPS probe inconclusive (may need manual Traefik test)"
 }
 
 check_machine_stability() {
@@ -1681,49 +1696,41 @@ check_registry_auth_state() {
 check_pull_target_image() {
   log_section "Target Image Pull"
 
-  if ! have_image_name; then
-    log_ok "no image provided; skipping target image pull"
-    return 0
-  fi
+  local test_image="${IMAGE_NAME:-docker.io/library/alpine:latest}"
+  local quay_test_image="quay.io/libpod/alpine:latest"
+  local status=0
 
   if have_command docker; then
-    run_check \
-      "docker pulled $IMAGE_NAME" \
-      "troubleshoot" \
-      "docker failed to pull $IMAGE_NAME" \
-      "run: docker --log-level=debug pull $IMAGE_NAME" \
-      docker --log-level=debug pull "$IMAGE_NAME"
+    if docker pull --quiet "$test_image" >/dev/null 2>&1; then
+      log_ok "\`docker pull $test_image\`"
+    else
+      FAILURES=$((FAILURES + 1))
+      log_troubleshoot "\`docker pull $test_image\` failed"
+      printf '    next: \`docker --log-level=debug pull %s\`\n' "$test_image"
+    fi
   fi
 
-  run_check \
-    "podman pulled $IMAGE_NAME" \
-    "troubleshoot" \
-    "podman failed to pull $IMAGE_NAME" \
-    "run: podman --log-level=debug pull $IMAGE_NAME" \
-    podman --log-level=debug pull "$IMAGE_NAME"
-}
-
-check_control_pull() {
-  log_section "Control Pull From Quay"
-
-  if ! have_image_name; then
-    log_ok "no image provided; skipping control pull"
-    return 0
+  if podman pull --quiet "$test_image" >/dev/null 2>&1; then
+    log_ok "\`podman pull $test_image\`"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "\`podman pull $test_image\` failed"
+    printf '    next: \`podman --log-level=debug pull %s\`\n' "$test_image"
   fi
 
-  run_check \
-    "VM control pull from quay.io succeeded" \
-    "troubleshoot" \
-    "VM control pull from quay.io failed" \
-    "run: podman machine ssh 'podman --log-level=debug pull quay.io/libpod/alpine:latest'" \
-    podman machine ssh 'podman --log-level=debug pull quay.io/libpod/alpine:latest'
+  if podman machine ssh "podman pull --quiet $quay_test_image" >/dev/null 2>&1; then
+    log_ok "\`podman pull $quay_test_image\` (VM)"
+  else
+    FAILURES=$((FAILURES + 1))
+    log_troubleshoot "\`podman pull $quay_test_image\` failed (VM)"
+    printf '    next: \`podman machine ssh '"'"'podman pull %s'"'"'\`\n' "$quay_test_image"
+  fi
 }
 
 print_recovery_hints() {
   log_section "Recovery Hints"
   if [[ $FAILURES -eq 0 ]]; then
     log_ok "all checks passed"
-    printf '    next: if pulls still fail intermittently, rerun with an image name for an end-to-end pull test\n'
     return 0
   fi
 
@@ -1750,32 +1757,22 @@ print_recovery_hints() {
     return 0
   fi
 
-  # Dynamic hints based on common failure patterns
-  printf '\nNext steps based on the failures above:\n\n'
+  # Dynamic hints based on failures
+  printf '\nNext steps:\n\n'
 
-  printf '1. Run the automatic fixer:\n'
-  printf '   bin/podman_troubleshoot --fix\n\n'
+  printf '1. `bin/podman_troubleshoot --fix`\n\n'
 
-  printf '2. If issues persist, verify manually:\n'
-  printf '   podman ps\n'
-  printf '   podman info\n'
-  printf '   podman system connection list\n\n'
+  printf '2. Verify: `podman ps` && `podman info` && `podman system connection list`\n\n'
 
-  printf '3. Diagnostic checks to run:\n'
-  printf '   bin/docker_socket_rootless_test --port 8080\n\n'
+  printf '3. Test Docker-label routing: `bin/docker_socket_rootless_test --port 8080`\n\n'
 
-  printf '4. For Docker-compatible clients (Traefik, etc):\n'
-  printf '   export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"\n\n'
+  printf '4. Export for Docker clients: `export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"`\n\n'
 
-  printf '5. If the machine needs port 443 while staying rootless:\n'
-  printf '   podman-allow-port-443\n\n'
+  printf '5. Allow port 443: `podman-allow-port-443`\n\n'
 
-  printf '6. If vfkit logs show issues, inspect:\n'
-  printf '   tail -100 %s/podman/podman-machine-default.log\n\n' "${TMPDIR:-/private/var/folders}"
+  printf '6. Inspect vfkit log: `tail -100 $TMPDIR/podman/podman-machine-default.log`\n\n'
 
-  printf '7. If multiple machines exist, verify they align:\n'
-  printf '   podman machine list\n'
-  printf '   podman system connection list\n'
+  printf '7. Check machine alignment: `podman machine list && podman system connection list`\n'
 }
 
 check_vm_clock_sync() {
@@ -1868,7 +1865,6 @@ run_main() {
   check_vm_runtime_state
   check_registry_auth_state
   check_pull_target_image
-  check_control_pull
   print_recovery_hints
 }
 

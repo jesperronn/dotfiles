@@ -427,4 +427,6 @@ bin/docker_socket_rootless_test --port 8080
 5. **Preserved Invariants:** All 4 requirements maintained by design
 6. **Integration Aware:** Never breaks shell, socket, or compose setups
 7. **Verbose Mode:** `--verbose` shows progress for debugging timeouts
+8. **Commands Explicit:** All commands visible in backticks (`` `podman ps` ``); users learn tools through exposure
+9. **Terse Output:** Descriptions concise; next steps exact and copy-pasteable
 
