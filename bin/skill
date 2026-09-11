@@ -38,23 +38,21 @@ skills_usage() {
     reset_style="${SKILLS_C_RESET}"
   fi
 
-  printf 'Manage agent skills: list, enable, disable, sync.\n\n'
+  printf 'Manage agent skills: list, status, enable, disable, cleanup.\n\n'
   printf '%sUsage:%s %sbin/skill%s %s<subcommand>%s %s[options]%s\n\n' \
     "$section_style" "$reset_style" "$tool_style" "$reset_style" \
     "$placeholder_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '%sSubcommands:%s\n' "$section_style" "$reset_style"
   printf '  %slist%s              Show enabled skills (optionally disabled)\n' "$command_style" "$reset_style"
-  printf '  %sstatus%s            Show enabled and disabled skills with counts\n' "$command_style" "$reset_style"
+  printf '  %sstatus%s            Show enabled and disabled skills with inconsistencies\n' "$command_style" "$reset_style"
   printf '  %senable%s %s<id>%s     Enable a disabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
   printf '  %sdisable%s %s<id>%s    Disable an enabled skill\n' "$command_style" "$reset_style" "$placeholder_style" "$reset_style"
-  printf '  %ssync%s              Symlink all skills from source to enabled\n' "$command_style" "$reset_style"
+  printf '  %scleanup%s            Interactive tool to fix skill inconsistencies (fzf)\n' "$command_style" "$reset_style"
   printf '\n%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s-h, --help%s        Show this help.\n' "$flag_style" "$reset_style"
   printf '  %s--color%s           Force colored output.\n' "$flag_style" "$reset_style"
   printf '  %s--no-color%s        Disable colored output.\n' "$flag_style" "$reset_style"
   printf '  %s--verbose%s         Show full descriptions and verbose output.\n' "$flag_style" "$reset_style"
-  printf '  %s--prune%s           Remove orphaned symlinks (for sync command).\n' "$flag_style" "$reset_style"
-  printf '  %s--dry-run%s         Show what would be done without making changes.\n' "$flag_style" "$reset_style"
 }
 
 skills_error() { printf '%s\n' "$*" >&2; }
@@ -308,7 +306,7 @@ skills_parse_opts() {
             help)
               SKILLS_SHOW_HELP=1
               ;;
-            list|status|enable|disable|sync)
+            list|status|enable|disable|cleanup)
               SKILLS_SUBCOMMAND="$1"
               subcommand_set=1
               ;;
@@ -323,7 +321,7 @@ skills_parse_opts() {
           # - skill ID for enable/disable
           # - second subcommand (error)
           case "$1" in
-            list|status|enable|disable|sync)
+            list|status|enable|disable|cleanup)
               skills_error "Only one subcommand is supported."
               return 1
               ;;
@@ -378,14 +376,12 @@ skills_run() {
         printf '  --no-color    Disable colored output.\n'
         return 0
         ;;
-      sync)
-        printf 'Sync skills from source to enabled.\n\n'
-        printf 'Usage: %s sync [options]\n' "$(basename "$0")"
+      cleanup)
+        printf 'Fix skill inconsistencies interactively.\n\n'
+        printf 'Usage: %s cleanup [options]\n' "$(basename "$0")"
         printf 'Options:\n'
         printf '  -h, --help    Show this help.\n'
         printf '  --dry-run     Show what would be done without making changes.\n'
-        printf '  --prune       Remove orphaned symlinks.\n'
-        printf '  --verbose     Show detailed output.\n'
         printf '  --color       Force colored output.\n'
         printf '  --no-color    Disable colored output.\n'
         return 0
@@ -399,7 +395,7 @@ skills_run() {
     status) skills_status ;;
     enable) skills_enable "$SKILLS_ENABLE_ID" ;;
     disable) skills_disable "$SKILLS_ENABLE_ID" ;;
-    sync)   skills_sync ;;
+    cleanup) skills_cleanup ;;
   esac
 }
 skills_list() {
@@ -437,6 +433,43 @@ skills_list() {
   done
 }
 
+skills_check_inconsistencies() {
+  local inconsistent=()
+  local id=""
+
+  # Check .agents/skills-enabled/ for real files (should be moved/organized differently)
+  if [[ -d "$SKILLS_ENABLED_ROOT" ]]; then
+    while IFS= read -r item; do
+      [[ -z "$item" ]] && continue
+      if [[ -d "$SKILLS_ENABLED_ROOT/$item" && ! -L "$SKILLS_ENABLED_ROOT/$item" ]]; then
+        # Real directory in skills-enabled (these should typically be via symlinks)
+        inconsistent+=("REAL_FILE_ENABLED:$item")
+      fi
+    done < <(find "$SKILLS_ENABLED_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -I {} basename {} | sort)
+  fi
+
+  # Check .agents/skills/ for real files (should be symlinks)
+  if [[ -d "$SKILLS_SYMLINK_ROOT" ]]; then
+    while IFS= read -r item; do
+      [[ -z "$item" ]] && continue
+      local path="$SKILLS_SYMLINK_ROOT/$item"
+      if [[ -d "$path" && ! -L "$path" ]]; then
+        # Real directory in skills/ (should be symlink)
+        inconsistent+=("REAL_FILE_SYMLINK:$item")
+      elif [[ -L "$path" ]]; then
+        local target
+        target="$(readlink -f "$path")"
+        if [[ ! -d "$target" ]]; then
+          # Broken symlink
+          inconsistent+=("BROKEN_SYMLINK:$item")
+        fi
+      fi
+    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null | xargs -I {} basename {} | sort)
+  fi
+
+  printf '%s\n' "${inconsistent[@]}"
+}
+
 skills_status() {
   local id=""
   local total=0
@@ -444,9 +477,11 @@ skills_status() {
   local disabled_count=0
   local enabled_ids=()
   local disabled_ids=()
+  local inconsistent_items=()
 
   mapfile -t enabled_ids < <(skills_list_ids "$SKILLS_SYMLINK_ROOT" 2>/dev/null || true)
   mapfile -t disabled_ids < <(skills_list_ids "$SKILLS_DISABLED_ROOT" 2>/dev/null || true)
+  mapfile -t inconsistent_items < <(skills_check_inconsistencies)
 
   for id in "${enabled_ids[@]}"; do
     [[ -n "$id" ]] || continue
@@ -461,6 +496,31 @@ skills_status() {
 
   if (( enabled_count > 0 )); then
     printf '\n'
+  fi
+
+  # Show inconsistencies if any
+  if (( ${#inconsistent_items[@]} > 0 )); then
+    if (( SKILLS_COLOR_ENABLED )); then
+      printf '%s⚠ Issues found:%s\n' "$SKILLS_C_YELLOW" "$SKILLS_C_RESET"
+    else
+      printf '⚠ Issues found:\n'
+    fi
+    for item in "${inconsistent_items[@]}"; do
+      local issue_type="${item%%:*}"
+      local item_id="${item#*:}"
+      case "$issue_type" in
+        REAL_FILE_ENABLED)
+          printf '  Real file in skills-enabled: %s (should be in skills-disabled or moved)\n' "$item_id"
+          ;;
+        REAL_FILE_SYMLINK)
+          printf '  Real file in skills (not symlinked): %s\n' "$item_id"
+          ;;
+        BROKEN_SYMLINK)
+          printf '  Broken symlink: %s (target missing)\n' "$item_id"
+          ;;
+      esac
+    done
+    printf '\n  Run: %s cleanup\n\n' "$(basename "$0")"
   fi
 
   for id in "${disabled_ids[@]}"; do
@@ -523,7 +583,7 @@ skills_enable() {
 
   mkdir -p "$SKILLS_ENABLED_ROOT"
   mv "$src_dir" "$dst_dir"
-  skills_success "Enabled skill '$id'. Run 'skill sync' to update symlinks."
+  skills_success "Enabled skill '$id'."
 }
 
 skills_disable() {
@@ -554,7 +614,214 @@ skills_disable() {
 
   mkdir -p "$SKILLS_DISABLED_ROOT"
   mv "$src_dir" "$dst_dir"
-  skills_success "Disabled skill '$id'. Run 'skill sync' to update symlinks."
+  skills_success "Disabled skill '$id'."
+}
+
+skills_cleanup() {
+  local inconsistent_items=()
+
+  mapfile -t inconsistent_items < <(skills_check_inconsistencies)
+
+  if (( ${#inconsistent_items[@]} == 0 )); then
+    skills_success "No inconsistencies found!"
+    return 0
+  fi
+
+  printf '\n%sFound %d inconsistencies. Fix them interactively:\n%s\n' \
+    "$SKILLS_C_YELLOW" "${#inconsistent_items[@]}" "$SKILLS_C_RESET"
+
+  skills_interactive_cleanup "${inconsistent_items[@]}"
+}
+
+skills_interactive_cleanup() {
+  local inconsistent_items=("$@")
+  local item=""
+  local count=1
+  local total=${#inconsistent_items[@]}
+
+  if (( SKILLS_DRY_RUN )); then
+    skills_info "[DRY-RUN] Showing what would be done (no changes will be made)\n"
+  fi
+
+  for item in "${inconsistent_items[@]}"; do
+    local issue_type="${item%%:*}"
+    local item_id="${item#*:}"
+    local symlink_path="$SKILLS_SYMLINK_ROOT/$item_id"
+    local enabled_path="$SKILLS_ENABLED_ROOT/$item_id"
+    local disabled_path="$SKILLS_DISABLED_ROOT/$item_id"
+
+    printf '\n%s[%d/%d] %s%s\n' "$SKILLS_C_BOLD" "$count" "$total" "$item_id" "$SKILLS_C_RESET"
+    count=$((count + 1))
+
+    case "$issue_type" in
+      REAL_FILE_SYMLINK)
+        printf '  Issue: Real file in skills (should be symlinked)\n'
+        printf '  Path: %s\n' "$symlink_path"
+        printf '  Options: [E]nable (create symlink from skills-enabled)\n'
+        printf '           [D]isable (move to skills-disabled)\n'
+        printf '           [X]delete (remove completely)\n'
+        printf '           [S]kip\n'
+        if (( SKILLS_DRY_RUN )); then
+          printf '  Action (dry-run, showing example)? (E/D/X/S) > '
+        else
+          printf '  Action? (E/D/X/S) > '
+        fi
+        read -r action
+        case "$action" in
+          E|e)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: mv %s %s\n' "$symlink_path" "$enabled_path"
+              printf '  [DRY-RUN] Would: ln -s %s %s\n' "$enabled_path" "$symlink_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              mkdir -p "$SKILLS_ENABLED_ROOT"
+              if [[ -d "$symlink_path" ]]; then
+                mv "$symlink_path" "$enabled_path"
+                ln -s "$enabled_path" "$symlink_path"
+                skills_success "  ✓ Moved to enabled and created symlink"
+              else
+                skills_warn "  ! Skill not accessible"
+              fi
+            fi
+            ;;
+          D|d)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: mv %s %s\n' "$symlink_path" "$disabled_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              mkdir -p "$SKILLS_DISABLED_ROOT"
+              if [[ -d "$symlink_path" ]]; then
+                mv "$symlink_path" "$disabled_path"
+                skills_success "  ✓ Moved to disabled"
+              else
+                skills_warn "  ! Skill not accessible"
+              fi
+            fi
+            ;;
+          X|x)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: rm -rf %s\n' "$symlink_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              printf '  Confirm delete %s? (yes/no) > ' "$item_id"
+              read -r confirm
+              if [[ "$confirm" == "yes" ]]; then
+                rm -rf "$symlink_path"
+                skills_success "  ✓ Deleted"
+              else
+                skills_info "  → Skipped"
+              fi
+            fi
+            ;;
+          *)
+            skills_info "  → Skipped"
+            ;;
+        esac
+        ;;
+      REAL_FILE_ENABLED)
+        printf '  Issue: Real file in skills-enabled (inconsistent state)\n'
+        printf '  Path: %s\n' "$enabled_path"
+        printf '  Options: [S]ymblic (create symlink in skills)\n'
+        printf '           [D]isable (move to skills-disabled)\n'
+        printf '           [X]delete (remove completely)\n'
+        printf '           [K]eep\n'
+        if (( SKILLS_DRY_RUN )); then
+          printf '  Action (dry-run, showing example)? (S/D/X/K) > '
+        else
+          printf '  Action? (S/D/X/K) > '
+        fi
+        read -r action
+        case "$action" in
+          S|s)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: ln -s %s %s\n' "$enabled_path" "$symlink_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              mkdir -p "$SKILLS_SYMLINK_ROOT"
+              ln -s "$enabled_path" "$symlink_path"
+              skills_success "  ✓ Created symlink in skills"
+            fi
+            ;;
+          D|d)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: mv %s %s\n' "$enabled_path" "$disabled_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              mkdir -p "$SKILLS_DISABLED_ROOT"
+              mv "$enabled_path" "$disabled_path"
+              skills_success "  ✓ Moved to disabled"
+            fi
+            ;;
+          X|x)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: rm -rf %s\n' "$enabled_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              printf '  Confirm delete %s? (yes/no) > ' "$item_id"
+              read -r confirm
+              if [[ "$confirm" == "yes" ]]; then
+                rm -rf "$enabled_path"
+                skills_success "  ✓ Deleted"
+              else
+                skills_info "  → Skipped"
+              fi
+            fi
+            ;;
+          *)
+            skills_info "  → Kept as-is"
+            ;;
+        esac
+        ;;
+      BROKEN_SYMLINK)
+        local target
+        target="$(readlink "$symlink_path" 2>/dev/null || echo 'unknown')"
+        printf '  Issue: Broken symlink (target missing)\n'
+        printf '  Symlink: %s\n' "$symlink_path"
+        printf '  Target: %s (missing)\n' "$target"
+        printf '  Options: [R]emove (delete symlink)\n'
+        printf '           [D]elete (also remove target if it exists)\n'
+        printf '           [S]kip\n'
+        if (( SKILLS_DRY_RUN )); then
+          printf '  Action (dry-run, showing example)? (R/D/S) > '
+        else
+          printf '  Action? (R/D/S) > '
+        fi
+        read -r action
+        case "$action" in
+          R|r)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: rm -f %s\n' "$symlink_path"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              rm -f "$symlink_path"
+              skills_success "  ✓ Removed broken symlink"
+            fi
+            ;;
+          D|d)
+            if (( SKILLS_DRY_RUN )); then
+              printf '  [DRY-RUN] Would: rm -f %s\n' "$symlink_path"
+              printf '  [DRY-RUN] Would: rm -rf %s\n' "$target"
+              skills_info "  → (dry-run, no changes made)"
+            else
+              rm -f "$symlink_path"
+              rm -rf "$target" 2>/dev/null || true
+              skills_success "  ✓ Removed symlink and target"
+            fi
+            ;;
+          *)
+            skills_info "  → Skipped"
+            ;;
+        esac
+        ;;
+    esac
+  done
+
+  printf '\n'
+  if (( SKILLS_DRY_RUN )); then
+    skills_success "[DRY-RUN] Cleanup preview complete (no changes were made)"
+  else
+    skills_success "Cleanup complete!"
+  fi
 }
 
 skills_sync() {
