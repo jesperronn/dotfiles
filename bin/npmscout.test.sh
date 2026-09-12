@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npmscout.sh"
+SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npmscout"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
@@ -126,7 +126,7 @@ test_default_packages_finds_keyv_and_cachable() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh 2>&1)
+  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout completes successfully"
@@ -152,7 +152,7 @@ test_custom_packages_flag() {
 
   # Run the script directly instead of using capture_command
   cd "$work_dir"
-  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --packages lodash 2>&1)
+  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages lodash 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout completes with custom packages"
@@ -176,7 +176,7 @@ test_scoped_packages() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --packages '@types/node' 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages '@types/node' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles scoped packages"
@@ -199,7 +199,7 @@ test_multiple_packages() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --packages 'keyv,lodash' 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'keyv,lodash' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles comma-separated packages"
@@ -224,7 +224,7 @@ test_no_matching_packages() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --packages 'nonexistent' 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'nonexistent' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout exits cleanly when no matches found"
@@ -247,7 +247,7 @@ test_multiple_project_folders() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles multiple project folders"
@@ -270,7 +270,7 @@ test_help_flag() {
 
   # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --help 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --help 2>&1)
   status=0
 
   assert_contains "$output" "Usage:" "output contains usage information"
@@ -292,7 +292,7 @@ test_specified_folder() {
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
   # Run the script directly
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout.sh --packages keyv "$work_dir/test-project" 2>&1)
+  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages keyv "$work_dir/test-project" 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles specified folder"
