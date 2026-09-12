@@ -7,13 +7,13 @@ set -euo pipefail
 #
 # Purpose:
 #   Interactive git worktree manager using fzf. Lists existing worktrees,
-#   lets you select one to delete, or press Ctrl-A to create a new one.
+#   lets you select one or more to delete, or press Ctrl-A to create a new one.
 #
 # Usage:
 #   bin/gwt
 #
 # Interactions:
-#   fzf worktree picker   Select a worktree to delete.
+#   fzf worktree picker   Select one or more worktrees to delete (Tab toggles).
 #   Ctrl-A                Create a new worktree (auto-generated name).
 #   -h, --help            Show this help and exit.
 #
@@ -99,7 +99,8 @@ gwt_usage() {
 
   printf '%sUsage:%s %sgwt%s\n\n' "$section_style" "$reset_style" "$tool_style" "$reset_style"
   printf '%sDescription:%s Manage git worktrees interactively.\n' "$section_style" "$reset_style"
-  printf '  Lists existing worktrees via fzf. Select one to delete it.\n'
+  printf '  Lists existing worktrees via fzf. Select one or more to delete.\n'
+  printf '  Tab toggles selection; Enter deletes everything selected.\n'
   printf '  Press Ctrl-A (or your fzf binding) to create a new worktree.\n\n'
   printf '%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s-h, --help%s  Show this help.\n\n' "$GWT_C_GREEN" "$GWT_C_RESET"
@@ -186,8 +187,6 @@ gwt_list_worktrees() {
 # ── Fzf selector ───────────────────────────────────────────────────────
 
 gwt_select_worktree() {
-  local selected_line=""
-
   if (( ! GWT_FZF_FOUND )); then
     gwt_error "fzf is required for interactive mode."
     return 1
@@ -200,17 +199,19 @@ gwt_select_worktree() {
     display_lines+=("$entry")
   done
 
-  # Compute fzf height: min of 30% of terminal or 20 lines
+  # Compute fzf height: min of 30% of terminal or 15 lines
   local terminal_lines
   terminal_lines="$(tput lines 2>/dev/null)" || terminal_lines=24
   local thirty_pct=$(( (terminal_lines * 30) / 100 ))
   (( thirty_pct < 1 )) && thirty_pct=1
-  local fzf_height=$(( thirty_pct < 20 ? thirty_pct : 20 ))
+  local fzf_height=$(( thirty_pct < 15 ? thirty_pct : 15 ))
 
   # We use a signal file to communicate "add" vs "select"
   # because fzf's --bind execute can't return a value to bash easily.
+  # --multi lets the user toggle several worktrees with Tab; fzf prints
+  # every selected line, newline-separated.
   local fzf_output=""
-  local fzf_args=(--prompt='Worktree> ' --height "$fzf_height" --bind 'ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
+  local fzf_args=(--multi --prompt='Delete> ' --header='Tab: select · Enter: delete · Ctrl-A: add' --height "$fzf_height" --bind 'ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
 
   fzf_output="$(printf '%s\n' "${display_lines[@]}" | fzf "${fzf_args[@]}" 2>/dev/null)" || true
 
@@ -315,28 +316,49 @@ gwt_countdown_navigate() {
   return 0
 }
 
-# ── Delete worktree ────────────────────────────────────────────────────
+# ── Delete worktree(s) ─────────────────────────────────────────────────
 
 gwt_apply_delete() {
-  local selected_line="$1"
+  local selected_lines="$1"
   local worktree_path=""
+  local removed=0
+  local failed=0
 
-  # Parse the path from the worktree list line
-  # Format: "path\tbranch\tHEAD"
-  worktree_path="$(echo "$selected_line" | awk '{print $1}')"
+  # Each line has the format "path\tbranch\tHEAD"; remove every selected one.
+  local line
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
 
-  if [[ -z "$worktree_path" ]]; then
-    gwt_error "Could not parse worktree path from: $selected_line"
-    return 1
+    worktree_path="$(echo "$line" | awk '{print $1}')"
+
+    if [[ -z "$worktree_path" ]]; then
+      gwt_error "Could not parse worktree path from: $line"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    gwt_dim "git worktree remove ${worktree_path}"
+    if git -C "$GWT_REPOSITORY_ROOT" worktree remove "$worktree_path" 2>/dev/null; then
+      removed=$((removed + 1))
+    else
+      gwt_error "Failed to remove worktree: $worktree_path"
+      failed=$((failed + 1))
+    fi
+  done <<< "$selected_lines"
+
+  if (( removed == 0 && failed == 0 )); then
+    return 0
   fi
-
-  gwt_dim "git worktree remove ${worktree_path}"
-  git -C "$GWT_REPOSITORY_ROOT" worktree remove "$worktree_path" 2>&1 || true
 
   gwt_dim "git worktree prune"
   git -C "$GWT_REPOSITORY_ROOT" worktree prune 2>&1 || true
 
-  gwt_success "Worktree removed and pruned: $worktree_path"
+  if (( failed > 0 )); then
+    return 1
+  fi
+
+  gwt_success "Removed $removed worktree(s) and pruned"
+  return 0
 }
 
 # ── Main entry point ───────────────────────────────────────────────────
@@ -353,7 +375,7 @@ gwt_run_main() {
   if (( ${#GWT_WORKTREE_LINES[@]} == 0 )); then
     gwt_info "No worktrees found. Use Ctrl-A to create one."
   else
-    gwt_info "Select a worktree to delete (Ctrl-A to add new):"
+    gwt_info "Select worktree(s) to delete — Tab toggles, Enter confirms (Ctrl-A adds new):"
   fi
 
   local selected=""

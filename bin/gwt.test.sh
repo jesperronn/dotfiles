@@ -21,7 +21,7 @@ TEST_C_GREEN=$'\033[32m'
 test_pass() {
   local msg="$1"
   printf '%b[PASS]%b %s\n' "$TEST_C_GREEN" "$TEST_C_RESET" "$msg"
-  (( TEST_PASS++ )) || true
+  ((TEST_PASS++)) || true
 }
 
 test_fail() {
@@ -31,7 +31,7 @@ test_fail() {
   if [[ -n "$actual" ]]; then
     printf '       actual: %s\n' "$actual"
   fi
-  (( TEST_FAIL++ )) || true
+  ((TEST_FAIL++)) || true
 }
 
 test_assert_eq() {
@@ -175,7 +175,7 @@ ${TEST_TMP_DIR}/wt2	branch-b	def5678"
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     lines+=("$line")
-  done <<< "$fake_output"
+  done <<<"$fake_output"
 
   test_assert_eq "parsed 2 worktree lines" "2" "${#lines[@]}"
 
@@ -256,6 +256,90 @@ gwt_test_delete_flow() {
   echo ""
 }
 
+gwt_test_delete_flow_multi() {
+  echo "--- delete flow (multi-select) ---"
+
+  # fzf --multi returns every selected line, newline-separated.
+  local selected_lines
+  selected_lines="$(printf '%s\tbranch-a\tabc1234\n%s\tbranch-b\tdef5678' "${TEST_TMP_DIR}/wt1" "${TEST_TMP_DIR}/wt2")"
+  gwt_test_select_output="$selected_lines"
+  TEST_REPOSITORY_ROOT="$TEST_TMP_DIR/myproject"
+
+  gwt_reset_state
+  GWT_REPOSITORY_ROOT="$TEST_TMP_DIR/myproject"
+  gwt_parse_prereqs
+  gwt_test_delete_called=0
+
+  gwt_run_main 2>/dev/null || true
+
+  test_assert_eq "apply_delete was called with multi-select" "1" "$gwt_test_delete_called"
+  local expected_paths
+  expected_paths="$(printf '%s\n%s' "${TEST_TMP_DIR}/wt1" "${TEST_TMP_DIR}/wt2")"
+  test_assert_eq "both selected paths passed to delete" "$expected_paths" "$gwt_test_delete_path"
+
+  echo ""
+}
+
+gwt_test_apply_delete_real_multi() {
+  echo "--- apply_delete with real worktrees (multi) ---"
+
+  local repo="$TEST_TMP_DIR/real-repo"
+  mkdir -p "$repo"
+  git init -q "$repo"
+  git -C "$repo" -c user.email=test@test -c user.name=test -c commit.gpgsign=false commit -q --allow-empty -m init
+  git -C "$repo" worktree add -q "$TEST_TMP_DIR/real-wt1" -b real-a
+  git -C "$repo" worktree add -q "$TEST_TMP_DIR/real-wt2" -b real-b
+
+  local sel
+  sel="$(printf '%s\treal-a\tabc1234\n%s\treal-b\tdef5678' "$TEST_TMP_DIR/real-wt1" "$TEST_TMP_DIR/real-wt2")"
+
+  # Fresh subshell sources the script, so the real gwt_apply_delete
+  # replaces the test override.
+  local status=0
+  (
+    # shellcheck source=/dev/null
+    source "$(dirname "$0")/gwt"
+    GWT_REPOSITORY_ROOT="$repo"
+    GWT_COLOR_ENABLED=0
+    gwt_apply_delete "$sel"
+  ) >/dev/null 2>&1 || status=$?
+
+  test_assert_status "multi-delete of two worktrees exits 0" "0" "$status"
+
+  local remaining
+  remaining="$(git -C "$repo" worktree list | wc -l | tr -d ' ')"
+  test_assert_eq "only main worktree remains" "1" "$remaining"
+
+  echo ""
+}
+
+gwt_test_apply_delete_real_failure() {
+  echo "--- apply_delete with a non-removable selection ---"
+
+  # Selecting the main checkout cannot be removed — must report failure
+  # instead of claiming success.
+  local repo="$TEST_TMP_DIR/real-repo2"
+  mkdir -p "$repo"
+  git init -q "$repo"
+  git -C "$repo" -c user.email=test@test -c user.name=test -c commit.gpgsign=false commit -q --allow-empty -m init
+
+  local sel
+  sel="$repo"
+
+  local status=0
+  (
+    # shellcheck source=/dev/null
+    source "$(dirname "$0")/gwt"
+    GWT_REPOSITORY_ROOT="$repo"
+    GWT_COLOR_ENABLED=0
+    gwt_apply_delete "$sel"
+  ) >/dev/null 2>&1 || status=$?
+
+  test_assert_status "deleting the main checkout exits 1" "1" "$status"
+
+  echo ""
+}
+
 gwt_test_countdown_navigate() {
   echo "--- countdown_navigate ---"
 
@@ -276,13 +360,16 @@ main() {
   gwt_test_select_worktree
   gwt_test_add_flow
   gwt_test_delete_flow
+  gwt_test_delete_flow_multi
+  gwt_test_apply_delete_real_multi
+  gwt_test_apply_delete_real_failure
   gwt_test_countdown_navigate
 
   echo ""
   printf '%bResults: %s passed, %s failed%s\n' \
     "$TEST_C_GREEN" "$TEST_PASS" "$TEST_FAIL" "$TEST_C_RESET"
 
-  if (( TEST_FAIL > 0 )); then
+  if ((TEST_FAIL > 0)); then
     return 1
   fi
   return 0
