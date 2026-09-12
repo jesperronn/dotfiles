@@ -16,8 +16,10 @@
 #   -h, --help         Show this help and exit
 #
 # Auto-detection (when no command given):
-#   pom.xml present     → mvn test
-#   package.json        → npm test
+#   pom.xml only        → mvn test
+#   package.json only   → npm test
+#   Both present        → error; pass a command explicitly:
+#                         flakyfinder -- <command>
 #
 # Examples:
 #   flakyfinder                            # auto-detect, defaults
@@ -79,8 +81,10 @@ $(ff_color "${FF_C_BOLD}" "Options:")
   $(ff_color "$FF_C_GREEN" "-h, --help")         Show this help and exit
 
 $(ff_color "${FF_C_BOLD}" "Auto-detection (no command given):")
-  pom.xml present  → mvn test
-  package.json     → npm test
+  pom.xml only      → mvn test
+  package.json only → npm test
+  Both present      → error; choose one explicitly:
+                      flakyfinder -- <command>
 
 $(ff_color "${FF_C_BOLD}" "Examples:")
   flakyfinder
@@ -140,7 +144,13 @@ parse_opts() {
 }
 
 ff_detect_command() {
-  if [[ -f pom.xml ]]; then
+  if [[ -f pom.xml && -f package.json ]]; then
+    ff_error "Ambiguous project: both pom.xml and package.json found."
+    ff_error "Cannot auto-detect test command. Choose one and pass it explicitly:"
+    ff_error "  flakyfinder -- mvn test"
+    ff_error "  flakyfinder -- npm test"
+    return 1
+  elif [[ -f pom.xml ]]; then
     FF_COMMAND=(mvn test)
     ff_println "$FF_C_DIM" "Auto-detected: mvn test"
   elif [[ -f package.json ]]; then

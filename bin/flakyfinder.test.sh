@@ -83,6 +83,17 @@ test_detect_npm() {
   assert_status "0" "$rc" "detect npm exits 0"
 }
 
+test_detect_both_ambiguous() {
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  touch "$tmpdir/pom.xml"
+  echo '{}' > "$tmpdir/package.json"
+  local rc=0
+  (cd "$tmpdir" && ff_detect_command >/dev/null 2>&1) || rc=$?
+  rm -rf "$tmpdir"
+  assert_status "1" "$rc" "both pom.xml and package.json returns non-zero"
+}
+
 test_detect_none() {
   local tmpdir
   tmpdir=$(mktemp -d)
@@ -129,6 +140,7 @@ run_tests \
   test_invalid_runs \
   test_detect_maven \
   test_detect_npm \
+  test_detect_both_ambiguous \
   test_detect_none \
   test_extract_maven_failure \
   test_extract_no_failures
