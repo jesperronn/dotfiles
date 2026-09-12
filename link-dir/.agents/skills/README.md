@@ -1,6 +1,6 @@
 # Skills Index
 
-30 skills — grouped by domain.
+41 skills — grouped by domain.
 
 > **To update:** edit `group` and `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -71,13 +71,24 @@
 
 | Skill | Does |
 |-------|------|
+| **code-review** | — |
+| **codebase-design** | — |
+| **diagnosing-bugs** | — |
+| **domain-modeling** | — |
+| **grill-me** | — |
+| **grill-with-docs** | — |
+| **grilling** | — |
+| **handoff** | — |
+| **implement** | — |
+| **improve-codebase-architecture** | — |
 | **ponytail** | — |
 | **ponytail-audit** | — |
 | **ponytail-debt** | — |
 | **ponytail-gain** | — |
 | **ponytail-help** | — |
 | **ponytail-review** | — |
+| **tdd** | — |
 
 ---
 
-*Last updated: 2026-09-08 · 30 skills*
+*Last updated: 2026-09-12 · 41 skills*
