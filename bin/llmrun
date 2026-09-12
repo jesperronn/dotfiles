@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # llmrun — universal adapter launcher (standalone)
-# Generated: 2026-08-24
+# Generated: 2026-09-12
 # Source project: /Users/jesper/src/local-model-evaluator-bench
 # Regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun
 #
@@ -24,6 +24,8 @@ _OMLX_URL="${OMLX_BASE_URL:-http://127.0.0.1:8000/v1}"
 _OMLX_KEY="${OMLX_API_KEY:-omlx}"
 _MTPLX_URL="${MTPLX_BASE_URL:-http://127.0.0.1:8001/v1}"
 _MTPLX_KEY="${MTPLX_API_KEY:-mtplx}"
+_LITELLM_URL="${LITELLM_BASE_URL:-http://127.0.0.1:4444/v1}"
+_LITELLM_KEY="${LITELLM_MASTER_KEY:-DUMMY}"
 
 # ── Inline helpers ────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -40,8 +42,8 @@ die()       { err "$*"; exit 1; }
 lms_up()    { curl -fsS --max-time 5 "$_LMS_URL/models" >/dev/null 2>&1; }
 ollama_up() { curl -fsS --max-time 5 "http://localhost:11434/api/tags" >/dev/null 2>&1; }
 mlx_up()    { curl -fsS --max-time 5 "http://localhost:8080/v1/models" >/dev/null 2>&1; }
-omlx_up()   { curl -fsS --max-time 5 "$_OMLX_URL/models" >/dev/null 2>&1; }
-mtplx_up()  { curl -fsS --max-time 5 "$_MTPLX_URL/models" >/dev/null 2>&1; }
+omlx_up()   { curl -fsS --max-time 2 -H "Authorization: Bearer $_OMLX_KEY" "$_OMLX_URL/models" >/dev/null 2>&1; }
+mtplx_up()  { curl -fsS --max-time 2 -H "Authorization: Bearer $_MTPLX_KEY" "$_MTPLX_URL/models" >/dev/null 2>&1; }
 
 # ── runtime: status/start/stop/logs (lms|ollama|mlx lifecycle, no repo needed) ──
 _rt_lms_loaded() {
@@ -65,12 +67,17 @@ _rt_mlx_models() {
     | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
 }
 _rt_omlx_models() {
-  curl -fsS --max-time 2 "$_OMLX_URL/models" 2>/dev/null \
+  curl -fsS --max-time 2 -H "Authorization: Bearer $_OMLX_KEY" "$_OMLX_URL/models" 2>/dev/null \
     | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
 }
 _rt_mtplx_models() {
-  curl -fsS --max-time 2 "$_MTPLX_URL/models" 2>/dev/null \
+  curl -fsS --max-time 2 -H "Authorization: Bearer $_MTPLX_KEY" "$_MTPLX_URL/models" 2>/dev/null \
     | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[])]" 2>/dev/null
+}
+litellm_up() { curl -fsS --max-time 2 -H "Authorization: Bearer $_LITELLM_KEY" "$_LITELLM_URL/models" >/dev/null 2>&1; }
+_rt_litellm_models() {
+  curl -fsS --max-time 5 -H "Authorization: Bearer $_LITELLM_KEY" "$_LITELLM_URL/models" 2>/dev/null \
+    | python3 -c "import sys,json; [print(m['id']) for m in json.load(sys.stdin).get('data',[]) if '*' not in m['id']]" 2>/dev/null
 }
 # Strip trailing slash from TMPDIR (typically ends with /) to avoid double-slash paths
 _rt_tmpdir="${TMPDIR%/}"; _rt_tmpdir="${_rt_tmpdir:-/tmp}"
@@ -784,11 +791,18 @@ command -v fzf >/dev/null 2>&1 || die "fzf not installed — brew install fzf"
 [ -d "$_ADAPTERS" ] || die "adapter directory not found: $_ADAPTERS — set LLMRUN_ADAPTERS or regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun"
 
 # ── Unified proxy model discovery via /v1/models ───────────────────────────────
+# Prefer LiteLLM's own /v1/models — one fresh, authoritative list already
+# prefixed provider/model (e.g. "omlx/Ornith-1.5-35B-A3B-MLX-4bit"). Only if
+# the proxy itself is down do we fall back to asking each runtime directly,
+# so the picker still works while the proxy is being restarted.
 proxy_models() {
-  # Query /v1/models from all available proxies and runtimes, prefixing with provider
-  local all_models=""
+  if litellm_up 2>/dev/null; then
+    _rt_litellm_models
+    return
+  fi
+  warn "LiteLLM proxy not reachable at $_LITELLM_URL — falling back to per-runtime discovery (start it: bin/litellm-proxy start)"
 
-  # Try LMS
+  local all_models=""
   if lms_up 2>/dev/null; then
     local lms_models
     lms_models=$(lms ls 2>/dev/null | awk '$1 ~ /\// {print "lms/" $1}')
@@ -796,7 +810,6 @@ proxy_models() {
     [ -n "$all_models" ] && all_models="${all_models}"$'\n'
   fi
 
-  # Try Ollama
   if ollama_up 2>/dev/null; then
     local ollama_models
     ollama_models=$(_rt_ollama_models | sed 's/^/ollama\//')
@@ -804,7 +817,6 @@ proxy_models() {
     [ -n "$all_models" ] && all_models="${all_models}"$'\n'
   fi
 
-  # Try MLX
   if mlx_up 2>/dev/null; then
     local mlx_models
     mlx_models=$(_rt_mlx_models | sed 's/^/mlx\//')
@@ -812,7 +824,6 @@ proxy_models() {
     [ -n "$all_models" ] && all_models="${all_models}"$'\n'
   fi
 
-  # Try oMLX
   if omlx_up 2>/dev/null; then
     local omlx_models
     omlx_models=$(_rt_omlx_models | sed 's/^/omlx\//')
@@ -820,7 +831,6 @@ proxy_models() {
     [ -n "$all_models" ] && all_models="${all_models}"$'\n'
   fi
 
-  # Try MTPLX
   if mtplx_up 2>/dev/null; then
     local mtplx_models
     mtplx_models=$(_rt_mtplx_models | sed 's/^/mtplx\//')
@@ -897,6 +907,20 @@ case "$RUNTIME" in
   mtplx)  mtplx_up  || die "MTPLX not reachable at $_MTPLX_URL — start with: mtplx quickstart --port ${MTPLX_PORT:-8001} --model <model>";;
 esac
 
+# TOOL "omp" routes exclusively through LiteLLM (adapters/omp.sh), not the
+# runtime directly — a healthy runtime doesn't mean LiteLLM can reach it, so
+# verify the proxy itself, then that it actually lists this runtime/model.
+if [ "$TOOL" = omp ]; then
+  litellm_up || die "LiteLLM proxy not reachable at $_LITELLM_URL — start with: bin/litellm-proxy start"
+  if ! _rt_litellm_models | grep -qx "${RUNTIME}/${MODEL_ID}"; then
+    die "LiteLLM is up but does not list ${RUNTIME}/${MODEL_ID} — check its config for a ${RUNTIME} provider entry, or run: bin/litellm-proxy restart"
+  fi
+  # omp keeps its own model catalog (~/.omp/models.db) and doesn't notice
+  # when LiteLLM's model list changes — refresh it before every omp run so a
+  # model just added to litellm.yaml doesn't show as "not found" in omp.
+  command -v omp >/dev/null 2>&1 && omp models refresh >/dev/null 2>&1
+fi
+
 if ! command -v "$TOOL" >/dev/null 2>&1; then
   hint="$(grep -m1 '^# Adapter:' "$ADAPTER_FILE" | sed 's/^# Adapter:[[:space:]]*//')"
   err "tool binary '$TOOL' not found on PATH"
@@ -924,6 +948,9 @@ case "$RUNTIME" in
   omlx)   export OMLX_BASE_URL="$_OMLX_URL"               OMLX_API_KEY="$_OMLX_KEY";;
   mtplx)  export MTPLX_BASE_URL="$_MTPLX_URL"             MTPLX_API_KEY="$_MTPLX_KEY";;
 esac
+# Proxy-based adapters (e.g. omp) route through LiteLLM regardless of RUNTIME —
+# export these unconditionally so they don't fall back to a wrong default.
+export LITELLM_BASE_URL="$_LITELLM_URL" LITELLM_MASTER_KEY="$_LITELLM_KEY"
 export RUNTIME
 if [ "${#PROMPT_ARGS[@]}" -gt 0 ]; then
   printf '%s' "${PROMPT_ARGS[*]}" | exec "$ADAPTER_FILE"
