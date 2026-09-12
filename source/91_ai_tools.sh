@@ -1,5 +1,24 @@
 # shellcheck shell=bash
 
+# CLI paths for local AI tools
+case ":$PATH:" in
+  *":$HOME/Library/Application Support/MTPLX/runtime-venv/bin:"*) ;;
+  *) export PATH="$HOME/Library/Application Support/MTPLX/runtime-venv/bin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":$HOME/.omlx/bin:"*) ;;
+  *) export PATH="$HOME/.omlx/bin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":$HOME/.lmstudio/bin:"*) ;;
+  *) export PATH="$HOME/.lmstudio/bin:$PATH" ;;
+esac
+
+# LiteLLM proxy — route local models through local-model-evaluator-bench/bin/litellm-proxy
+# instead of talking to Ollama/LM Studio directly.
+export LITELLM_BASE_URL="${LITELLM_BASE_URL:-http://127.0.0.1:4444/v1}"
+export LITELLM_API_KEY="${LITELLM_API_KEY:-litellm}"
+
 # Ollama defaults used by shells, launchd, and the Homebrew service.
 # Keep these aligned with bin/verify_ollama so GUI apps and terminal sessions
 # see the same server settings.
