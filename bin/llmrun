@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # llmrun — universal adapter launcher (standalone)
-# Generated: 2026-09-12
+# Generated: 2026-09-13
 # Source project: /Users/jesper/src/local-model-evaluator-bench
 # Regenerate: cd /Users/jesper/src/local-model-evaluator-bench && bin/build-llmrun
 #
