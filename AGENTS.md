@@ -2,22 +2,26 @@
 
 ## Commits
 
-- Conventional commits: `type(scope): subject` — prefer `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:` prefixes.
-- One logical change per commit; only stage files you actually changed.
+- Conventional: `type(scope): subject` (`feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`).
+- One logical change per commit; only stage files changed.
 
-## Verify before done
+## Before done
 
-- Run `bin/lint` (ShellCheck over `bin/`) and `bin/test` (runs all `bin/**/*.test.sh`)
-  before declaring work complete. Single file: `bin/test bin/<name>.test.sh`.
-- If a script has a colocated `bin/<name>.test.sh`, always run it after touching
-  the script or its test.
-- New or changed scripts require a colocated `bin/<name>.test.sh` unless the user
-  explicitly says not to write tests. Test helper: `bin/lib/bash_test.sh`
-  (see an existing `*.test.sh` for the pattern; source the script under test).
+- Run `bin/lint` and `bin/test` (or single test: `bin/test bin/<name>.test.sh`).
+- New/changed scripts need colocated `bin/<name>.test.sh` unless user says skip.
+- Use `bin/lib/bash_test.sh` helper; source the script under test.
+
+## Tests must be mocked
+
+- No real host state or network. Stub external binaries (`podman`, `curl`, etc.) via `PATH`-shadowing stub dir.
+- Inject hardcoded tool paths via env vars (e.g., `OLLAMA_PLIST_BUDDY`) instead of absolute paths.
+- No real `sleep` or network waits: make durations configurable env vars, set to `0` in tests.
+- Tests against real host state pass/fail based on machine state, not code — not a unit test.
+- Use `--verbose` flag to print per-test timing when diagnosing slow suites.
 
 ## Layout
 
-- `bin/` — executable tools and their `*.test.sh`; shared helpers in `bin/lib/`.
-- `link-file/` — files symlinked into `$HOME` (dotfiles).
-- `link-dir/` — directories symlinked into `$HOME` (e.g. `.agents/`).
-- `source/`, `init/` — shell snippets sourced at startup / one-time setup scripts.
+- `bin/` — tools and their `*.test.sh`; helpers in `bin/lib/`.
+- `link-file/` — files symlinked to `$HOME`.
+- `link-dir/` — directories symlinked to `$HOME`.
+- `source/`, `init/` — shell snippets for startup and one-time setup.
