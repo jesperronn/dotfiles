@@ -48,6 +48,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   PODMAN_TROUBLESHOOT_MACHINE_CPUS
 #                         CPUs for a machine created via --init or a --fix recreate
 #                         (default: 9).
+#   PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS
+#                         Gap between the two `podman ps` probes used to detect
+#                         post-boot runtime instability (default: 10).
 #
 # Dependencies:
 #   podman, jq, bash >= 4
@@ -72,6 +75,7 @@ VM_CLOCK_DRIFT_THRESHOLD_SECONDS="${PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SE
 MIN_MACHINE_MEMORY_MB="${PODMAN_TROUBLESHOOT_MIN_MEMORY_MB:-4096}"
 MACHINE_MEMORY_MB="${PODMAN_TROUBLESHOOT_MACHINE_MEMORY_MB:-8192}"
 MACHINE_CPUS="${PODMAN_TROUBLESHOOT_MACHINE_CPUS:-9}"
+STABILITY_SLEEP_SECONDS="${PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS:-10}"
 DEFAULT_MACHINE_NAME="podman-machine-default"
 
 if [[ -n "${NO_COLOR:-}" ]]; then
@@ -154,19 +158,26 @@ capture_command_with_timeout() {
 
   local output_file
   local pid=""
-  local waited=0
   local status=0
+  local start_epoch=0
+  local elapsed=0
+  local last_reported=-1
 
   output_file="$(mktemp)"
 
   "$@" >"$output_file" 2>&1 &
   pid=$!
+  start_epoch="$EPOCHSECONDS"
 
+  # Poll at a fine grain so a command that finishes quickly (as every stubbed
+  # command in tests does) isn't held up by a full second of sleep latency.
   while kill -0 "$pid" 2>/dev/null; do
-    if [[ "$VERBOSE_MODE" == "1" ]] && (( waited == 0 || waited % 5 == 0 )); then
-      log_verbose "still waiting (${waited}s/${timeout_seconds}s)"
+    elapsed=$((EPOCHSECONDS - start_epoch))
+    if [[ "$VERBOSE_MODE" == "1" ]] && (( elapsed != last_reported && (elapsed == 0 || elapsed % 5 == 0) )); then
+      log_verbose "still waiting (${elapsed}s/${timeout_seconds}s)"
+      last_reported=$elapsed
     fi
-    if (( waited >= timeout_seconds )); then
+    if (( elapsed >= timeout_seconds )); then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
       printf -v "$output_var" '%s' "$(<"$output_file")"$'\n'"timed out after ${timeout_seconds}s"
@@ -175,8 +186,7 @@ capture_command_with_timeout() {
       return 0
     fi
 
-    sleep 1
-    waited=$((waited + 1))
+    sleep 0.2
   done
 
   if wait "$pid"; then
@@ -1008,7 +1018,9 @@ check_docker_socket_rootless() {
     return 0
   fi
 
-  if [[ ! -x "$SCRIPT_DIR/docker_socket_rootless_test" ]]; then
+  local rootless_test_bin="${PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN:-$SCRIPT_DIR/docker_socket_rootless_test}"
+
+  if [[ ! -x "$rootless_test_bin" ]]; then
     log_action "docker_socket_rootless_test not found"
     printf '    next: add bin/docker_socket_rootless_test from repo or test manually\n'
     return 0
@@ -1023,7 +1035,7 @@ check_docker_socket_rootless() {
     fi
 
     capture_command_with_timeout output status 60 \
-      "$SCRIPT_DIR/docker_socket_rootless_test" --port "$test_port" 2>&1
+      "$rootless_test_bin" --port "$test_port" 2>&1
 
     if [[ $status -eq 0 ]] || printf '%s\n' "$output" | grep -qi 'working'; then
       log_ok "Docker socket rootless routing working on port $test_port"
@@ -1573,7 +1585,7 @@ check_machine_stability() {
   fi
 
   if [[ "$VERBOSE_MODE" == "1" ]]; then
-    log_verbose "checking machine stability: probing podman ps at T+0s and T+10s"
+    log_verbose "checking machine stability: probing podman ps at T+0s and T+${STABILITY_SLEEP_SECONDS}s"
   fi
 
   local ps_probe_1="" ps_probe_2="" machine_list_probe=""
@@ -1583,8 +1595,8 @@ check_machine_stability() {
   capture_command_with_timeout ps_probe_1 status_1 "$PODMAN_PS_TIMEOUT_SECONDS" \
     podman ps -a
 
-  # Wait 10 seconds to allow vfkit/gvproxy instability to appear
-  sleep 10
+  # Wait to allow vfkit/gvproxy instability to appear
+  sleep "$STABILITY_SLEEP_SECONDS"
 
   # Second ps probe
   capture_command_with_timeout ps_probe_2 status_2 "$PODMAN_PS_TIMEOUT_SECONDS" \

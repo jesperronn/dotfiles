@@ -14,6 +14,15 @@ make_stub_dir() {
   mkdir -p "$stub_dir"
 }
 
+write_fast_rootless_test_stub() {
+  local file_path="$1"
+
+  write_stub "$file_path" '
+printf "Docker socket rootless routing is working on port 8080\n"
+exit 0
+'
+}
+
 write_stub() {
   local file_path="$1"
   shift
@@ -164,11 +173,15 @@ grep -Ein "$pattern"
 [435792.875597] systemd-journald[770]: Failed to rotate /var/log/journal/ad209d968eb84885b8fc2b9f8e277dd3/system.journal: Input/output error
 EOF
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully"
@@ -324,11 +337,15 @@ Entering emergency mode. Exit the shell to continue.
 Press Enter for system maintenance
 EOF
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully with emergency-mode log hints"
@@ -484,11 +501,15 @@ systemd[1]: Finished coreos-ignition-unique-boot.service - CoreOS Ignition Ensur
 systemd[1]: Stopped coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
 EOF
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully with benign ignition log lines"
@@ -642,12 +663,16 @@ case "$query" in
 esac
 '
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
   assert_status "0" "$status" "podman_troubleshoot --fix --force completes successfully"
@@ -805,12 +830,16 @@ case "$query" in
 esac
 '
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
   assert_status "0" "$status" "podman_troubleshoot --fix --force completes successfully with a low-memory machine"
@@ -936,11 +965,15 @@ case "$query" in
 esac
 '
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully when port 443 policy is blocked"
@@ -1058,11 +1091,15 @@ case "$query" in
 esac
 '
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully with a starting machine"
@@ -1188,11 +1225,15 @@ case "$query" in
 esac
 '
 
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
   capture_command output status env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --verbose"
 
   assert_status "0" "$status" "podman_troubleshoot completes successfully with --verbose"

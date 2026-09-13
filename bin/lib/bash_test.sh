@@ -145,15 +145,37 @@ capture_command() {
 
 run_test_function() {
   local test_name="$1"
+  local start_time="" end_time="" elapsed=""
+
   test_run "$test_name"
+  start_time="$EPOCHREALTIME"
   "$test_name"
+  end_time="$EPOCHREALTIME"
   BASH_TEST_CASES=$((BASH_TEST_CASES + 1))
+
+  if [[ "${BASH_TEST_VERBOSE}" == "1" ]]; then
+    elapsed="$(awk -v s="$start_time" -v e="$end_time" 'BEGIN { printf "%.2f", e - s }')"
+    bash_test_color_print "${BASH_TEST_C_CYAN}" "[TIME] $test_name: ${elapsed}s"
+  fi
 }
 
 run_tests() {
-  local -a requested_tests=("$@")
+  local -a requested_tests=()
   local -a test_names=()
   local test_name=""
+  local arg=""
+  local suite_start="" suite_end="" suite_elapsed=""
+
+  for arg in "$@"; do
+    case "$arg" in
+      --verbose|-v)
+        BASH_TEST_VERBOSE=1
+        ;;
+      *)
+        requested_tests+=("$arg")
+        ;;
+    esac
+  done
 
   if [[ ${#requested_tests[@]} -gt 0 ]]; then
     test_names=("${requested_tests[@]}")
@@ -166,13 +188,16 @@ run_tests() {
     return 1
   fi
 
+  suite_start="$EPOCHREALTIME"
   for test_name in "${test_names[@]}"; do
     if ! declare -F "$test_name" >/dev/null 2>&1; then
       test_fail "missing test function" "Unknown test: [$test_name]"
     fi
     run_test_function "$test_name"
   done
+  suite_end="$EPOCHREALTIME"
 
+  suite_elapsed="$(awk -v s="$suite_start" -v e="$suite_end" 'BEGIN { printf "%.2f", e - s }')"
   bash_test_color_print "${BASH_TEST_C_BOLD}${BASH_TEST_C_GREEN}" \
-    "SUMMARY: ${BASH_TEST_CASES} test(s), ${BASH_TEST_ASSERTIONS} assertion(s)"
+    "SUMMARY: ${BASH_TEST_CASES} test(s), ${BASH_TEST_ASSERTIONS} assertion(s), ${suite_elapsed}s"
 }
