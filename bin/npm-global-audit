@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1090,SC1091,SC2155
+set -euo pipefail
+
+# npm-global-audit — report severity totals for every globally installed npm
+# package. npm rejects `npm audit -g` (EAUDITGLOBAL), so we discover the
+# top-level packages with `npm ls -g --depth=0 --json`, then for each
+# name@version resolve that exact package into a disposable project and audit it
+# there. No global package is ever changed; transitive dependencies are freshly
+# resolved and are NOT the installed globally hoisted tree.
+
+PROG="$(basename "$0")"
+
+COLOR_MODE="auto"
+COLOR_ENABLED=0
+WORK_DIR=""
+HAD_FAILURE=0
+
+C_RESET=$'\033[0m'
+C_GREEN=$'\033[32m'
+C_YELLOW=$'\033[33m'
+C_ORANGE=$'\033[38;5;208m'
+C_RED=$'\033[31m'
+
+usage_short() {
+  printf 'Usage: %s [--color|--no-color|--help]\n' "$PROG" >&2
+}
+
+print_help() {
+  cat <<EOF
+$PROG — report severity totals for every global npm package.
+
+npm rejects "npm audit -g", so this command discovers top-level global packages
+with "npm ls -g --depth=0 --json" and, for each name@version, resolves that exact
+package into a temporary project and audits it there. Global packages are never
+changed; freshly resolved transitive dependencies are reported and are NOT the
+installed globally hoisted tree.
+
+Usage:
+  $PROG [--color|--no-color|--help]
+
+Options:
+  --color        Force colorized output.
+  --no-color     Disable colorized output (also the default when stdout is not a TTY).
+  -h, --help     Show this help.
+
+Output:
+  One aligned row per package: "name@version" followed by its severity totals.
+  Exit status: 0 when every package reports valid metadata, 1 after any package
+  failure, 2 for invalid options.
+EOF
+}
+
+parse_opts() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --color)
+        COLOR_MODE="always"
+        ;;
+      --no-color)
+        COLOR_MODE="never"
+        ;;
+      -h|--help)
+        print_help
+        exit 0
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        printf '%s: unknown option: %s\n' "$PROG" "$1" >&2
+        usage_short
+        exit 2
+        ;;
+      *)
+        printf '%s: unexpected argument: %s\n' "$PROG" "$1" >&2
+        usage_short
+        exit 2
+        ;;
+    esac
+    shift
+  done
+}
+
+enable_color() {
+  case "$COLOR_MODE" in
+    always)
+      COLOR_ENABLED=1
+      ;;
+    never)
+      COLOR_ENABLED=0
+      ;;
+    *)
+      if [[ -n "${NO_COLOR:-}" ]]; then
+        COLOR_ENABLED=0
+      elif command -v tput >/dev/null 2>&1 && [[ -t 1 ]]; then
+        COLOR_ENABLED=1
+      else
+        COLOR_ENABLED=0
+      fi
+      ;;
+  esac
+}
+
+# Removed on exit via the trap; shellcheck cannot see trap-based calls.
+# shellcheck disable=SC2329
+cleanup() {
+  if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+
+# Print the last non-empty line of a string (used for error rows).
+last_nonempty() {
+  local text="$1" line last=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ -n "${line//[[:space:]]/}" ]]; then
+      last="$line"
+    fi
+  done <<<"$text"
+  printf '%s' "$last"
+}
+
+# Validate one `npm audit --json` response; emit "total<TAB>low<TAB>moderate<TAB>
+# high<TAB>critical<TAB>info". Missing keys default to 0; a nonnumeric or
+# negative value rejects the response (nonzero exit).
+parse_vulns() {
+  local file="$1"
+  node -e '
+    const fs = require("fs");
+    let data;
+    try { data = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+    catch (e) { process.exit(1); }
+    const v = data && data.metadata && data.metadata.vulnerabilities;
+    if (!v || typeof v !== "object") { process.exit(1); }
+    function num(k) {
+      if (!(k in v)) { return 0; }
+      const x = v[k];
+      if (typeof x !== "number" || !Number.isFinite(x) || x < 0) { process.exit(1); }
+      return Math.floor(x);
+    }
+    process.stdout.write([num("total"), num("low"), num("moderate"), num("high"), num("critical"), num("info")].join("\t") + "\n");
+  ' "$file"
+}
+
+# Format the severity sentence. Singular "vulnerability" only when total is 1;
+# a parenthesized breakdown appears for every nonzero total; critical is shown
+# only when nonzero.
+format_vuln_text() {
+  local total="$1" low="$2" moderate="$3" high="$4" critical="$5"
+  local word="vulnerabilities"
+  [[ "$total" == "1" ]] && word="vulnerability"
+  local text="${total} ${word}"
+  if [[ "$total" != "0" ]]; then
+    text="${text} (${low} low, ${moderate} moderate, ${high} high"
+    if [[ "$critical" != "0" ]]; then
+      text="${text}, ${critical} critical"
+    fi
+    text="${text})"
+  fi
+  printf '%s' "$text"
+}
+
+# Wrap only the result text in color: green for zero, yellow for low-only,
+# orange when moderate is the highest severity, red for any high/critical.
+colorize_result() {
+  local total="$1" low="$2" moderate="$3" high="$4" critical="$5" text="$6"
+  if [[ "$COLOR_ENABLED" != "1" ]]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  local color="$C_GREEN"
+  if [[ "$total" != "0" ]]; then
+    if [[ "$high" != "0" || "$critical" != "0" ]]; then
+      color="$C_RED"
+    elif [[ "$moderate" != "0" ]]; then
+      color="$C_ORANGE"
+    elif [[ "$low" != "0" ]]; then
+      color="$C_YELLOW"
+    fi
+  fi
+  printf '%s%s%s' "$color" "$text" "$C_RESET"
+}
+
+render_result_row() {
+  local spec="$1" total="$2" low="$3" moderate="$4" high="$5" critical="$6" text="$7"
+  local colored
+  colored="$(colorize_result "$total" "$low" "$moderate" "$high" "$critical" "$text")"
+  printf '%-*s  %s\n' "$width" "$spec" "$colored"
+}
+
+render_error_row() {
+  local spec="$1" text="$2"
+  printf '%-*s  %s\n' "$width" "$spec" "$text"
+}
+
+main() {
+  parse_opts "$@"
+  enable_color
+
+  trap cleanup EXIT
+
+  local list_json=""
+  list_json="$(npm --no-audit ls -g --depth=0 --json 2>/dev/null)" || {
+    printf '%s: unable to list global packages\n' "$PROG" >&2
+    exit 1
+  }
+
+  local records=""
+  records="$(printf '%s' "$list_json" | node -e '
+    const fs = require("fs");
+    let data;
+    try { data = JSON.parse(fs.readFileSync(0, "utf8")); }
+    catch (e) { process.exit(1); }
+    const deps = data && data.dependencies;
+    if (!deps || typeof deps !== "object") { process.exit(0); }
+    const rows = [];
+    Object.keys(deps).forEach(function (name) {
+      const info = deps[name];
+      if (typeof name === "string" && name.length > 0 && info && typeof info.version === "string" && info.version.length > 0) {
+        rows.push(name + "\t" + info.version);
+      }
+    });
+    if (rows.length > 0) { process.stdout.write(rows.join("\n") + "\n"); }
+    process.exit(0);
+  ' | LC_ALL=C sort)" || {
+    printf '%s: unable to list global packages\n' "$PROG" >&2
+    exit 1
+  }
+
+  if [[ -z "$records" ]]; then
+    printf 'No global npm packages found.\n'
+    exit 0
+  fi
+
+  WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npm-global-audit.XXXXXX")"
+
+  local width=0 name version spec len
+  while IFS=$'\t' read -r name version; do
+    [[ -n "$name" ]] || continue
+    spec="${name}@${version}"
+    len=${#spec}
+    (( len > width )) && width=$len
+  done <<<"$records"
+
+  while IFS=$'\t' read -r name version; do
+    [[ -n "$name" ]] || continue
+    spec="${name}@${version}"
+
+    local package_dir=""
+    package_dir="$(mktemp -d "$WORK_DIR/pkg.XXXXXX")"
+
+    local install_out="" install_status=0
+    set +e
+    install_out="$(npm --prefix "$package_dir" install --package-lock-only --ignore-scripts --no-audit "$spec" 2>&1)"
+    install_status=$?
+    set -e
+    if (( install_status != 0 )); then
+      render_error_row "$spec" "install failed: $(last_nonempty "$install_out")"
+      HAD_FAILURE=1
+      continue
+    fi
+
+    local audit_out_file audit_err_file=""
+    audit_out_file="$(mktemp "$WORK_DIR/audit.out.XXXXXX")"
+    audit_err_file="$(mktemp "$WORK_DIR/audit.err.XXXXXX")"
+    set +e
+    npm --prefix "$package_dir" audit --json >"$audit_out_file" 2>"$audit_err_file" || true
+    set -e
+
+    local counts=""
+    counts="$(parse_vulns "$audit_out_file" 2>/dev/null)" || counts=""
+    if [[ -z "$counts" ]]; then
+      local err_line=""
+      err_line="$(last_nonempty "$(cat "$audit_err_file" 2>/dev/null || true)")"
+      if [[ -n "$err_line" ]]; then
+        render_error_row "$spec" "audit failed: ${err_line}"
+      else
+        render_error_row "$spec" "audit failed: invalid npm audit response"
+      fi
+      HAD_FAILURE=1
+      continue
+    fi
+
+    local total low moderate high critical
+    IFS=$'\t' read -r total low moderate high critical _ <<<"$counts"
+    local text
+    text="$(format_vuln_text "$total" "$low" "$moderate" "$high" "$critical")"
+    render_result_row "$spec" "$total" "$low" "$moderate" "$high" "$critical" "$text"
+  done <<<"$records"
+
+  if (( HAD_FAILURE )); then
+    exit 1
+  fi
+  exit 0
+}
+
+main "$@"
