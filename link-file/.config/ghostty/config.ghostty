@@ -26,6 +26,9 @@ selection-foreground = #ffffff
 # sets a git-aware CWD title at each prompt and lets it persist during commands.
 shell-integration-features = cursor,no-sudo,no-title,no-ssh-env,no-ssh-terminfo,path
 
+#### scrollback #####
+scrollback-limit = 50000
+
 #### keyboard bindings #####
 
 keybind = super+shift+right=next_tab
