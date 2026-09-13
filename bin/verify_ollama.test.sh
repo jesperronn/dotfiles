@@ -15,6 +15,13 @@ reset_state() {
   true
 }
 
+# Fast stub writer: use printf instead of cat <<'EOF' to reduce overhead
+fast_stub() {
+  local path="$1" body="$2"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$body" >"$path"
+  chmod +x "$path"
+}
+
 test_desired_keep_alive_defaults_to_30m() {
   local output=""
   local status=0
