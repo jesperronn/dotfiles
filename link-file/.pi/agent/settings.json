@@ -1,6 +1,9 @@
 {
-  "lastChangelogVersion": "0.84.3",
+  "lastChangelogVersion": "0.85.1",
   "theme": "dark",
   "defaultProvider": "omlx",
-  "defaultModel": "Qwen3.6-35B-A3B-MLX-4bit"
+  "defaultModel": "Qwen3.6-35B-A3B-MLX-4bit",
+  "skills": [
+    "+skills/bash-shell-testing/SKILL.md"
+  ]
 }

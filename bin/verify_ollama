@@ -87,7 +87,7 @@ verify_ollama_set_plist_env_value() {
   local plist_path="$1"
   local env_name="$2"
   local desired_value="$3"
-  local plist_buddy="/usr/libexec/PlistBuddy"
+  local plist_buddy="$OLLAMA_PLIST_BUDDY"
 
      [[ "$(uname -s)" == "Darwin" ]] || return 0
      [[ -f "$plist_path" && -w "$plist_path" ]] || return 0
@@ -214,6 +214,8 @@ verify_ollama_check_plist_env() {
       verify_ollama_set_plist_env_value "$OLLAMA_HOMEBREW_PLIST" "$env_name" "$desired_value"
       plist_value="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" "$env_name")"
       if [[ "$plist_value" == "$desired_value" ]]; then
+        printf "${C_GREEN}[PASS]${C_0} done, edit successful for %s=%s\n" "$env_name" "$desired_value"
+        printf "${C_ORANGE}next step: brew services restart ollama${C_0}\n"
         return 0
       else
         printf "${C_RED}next step: edit $OLLAMA_HOMEBREW_PLIST, then run 'brew services restart ollama'${C_0}\n" >&2
@@ -260,12 +262,15 @@ verify_ollama_sync_env_vars() {
   if [[ "$current_value" != "$desired_value" ]]; then
     if verify_ollama_set_env_value "$env_name" "$desired_value" 2>/dev/null; then
       printf "${C_GREEN}[PASS]${C_0} Set %s=%s for this login session.\n" "$env_name" "$desired_value"
+      return 0
     else
       printf "${C_ORANGE}[WARN]${C_0} Could not set %s=%s for this login session.\n" "$env_name" "$desired_value" >&2
       printf "${C_ORANGE}next step: run bin/verify_ollama without sudo, or set it manually with launchctl${C_0}\n" >&2
+      return 1
     fi
   else
     printf "${C_GREEN}[PASS]${C_0} %s already set to %s for this login session.\n" "$env_name" "$desired_value"
+    return 1
   fi
 }
 
@@ -338,8 +343,8 @@ run_main() {
   running_command="$(verify_ollama_running_command "$running_pid")"
 
   # Step 9: Sync environment variables for current session
-  verify_ollama_sync_env_vars "OLLAMA_KEEP_ALIVE" "$desired_keep_alive"
-  verify_ollama_sync_env_vars "OLLAMA_CONTEXT_LENGTH" "$desired_context_length"
+  verify_ollama_sync_env_vars "OLLAMA_KEEP_ALIVE" "$desired_keep_alive" && restart_required=1
+  verify_ollama_sync_env_vars "OLLAMA_CONTEXT_LENGTH" "$desired_context_length" && restart_required=1
 
   # Step 10: Get plist values for summary
   plist_keep_alive="$(verify_ollama_plist_env_value "$OLLAMA_HOMEBREW_PLIST" OLLAMA_KEEP_ALIVE)"
@@ -350,7 +355,7 @@ run_main() {
 
   # Step 12: Print next step if restart is required
   if (( restart_required )); then
-    printf "${C_RED}next step: bin/verify_ollama --fix${C_0}\n"
+    printf "${C_ORANGE}next step: Restart Ollama and any VS Code windows to pick up the new setting.${C_0}\n"
   fi
 
   if (( has_error )); then
