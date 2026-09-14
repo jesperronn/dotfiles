@@ -25,7 +25,7 @@ if [[ -n "$HOME" && ( "$CODEX_SANDBOX" == "true" || "$TERM" == "dumb" ) ]]; then
   return
 fi
 
-eval "$(/opt/homebrew/bin/brew shellenv)"
+eval "$(/opt/workbrew/bin/brew shellenv)"
 
 # Source all files in "source"
 function src() {
