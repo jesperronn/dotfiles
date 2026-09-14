@@ -60,8 +60,8 @@ lint_usage() {
   fi
 
   printf 'Run syntax checks for one or more shell files.\n'
-  printf "If no files are supplied, lint shell files under \`bin/\`.\n\n"
-  printf '%sUsage:%s %sbin/lint%s [%s--verbose%s] [%s--format%s %sFORMAT%s|%s-f%s %sFORMAT%s] [%s--autocorrect%s] [%sfile ...%s]\n\n' \
+  printf "If no paths are supplied, lint shell files under \`bin/\`. Directories are expanded recursively.\n\n"
+  printf '%sUsage:%s %sbin/lint%s [%s--verbose%s] [%s--format%s %sFORMAT%s|%s-f%s %sFORMAT%s] [%s--autofix%s] [%sfile-or-dir ...%s]\n\n' \
     "$section_style" "$reset_style" \
     "$tool_style" "$reset_style" \
     "$flag_style" "$reset_style" \
@@ -74,7 +74,7 @@ lint_usage() {
   printf '%sOptions:%s\n' "$section_style" "$reset_style"
   printf "  %s-f, --format%s %sFORMAT%s  Select output format: \`default\`, \`offenses\` (\`o\`), or \`worst\` (\`w\`).\n" \
     "$flag_style" "$reset_style" "$placeholder_style" "$reset_style"
-  printf "  %s--autocorrect%s      Apply ShellCheck \`-f diff\` fixes with \`patch\` before the final lint pass.\n" \
+  printf "  %s--autofix%s (--autocorrect)  Apply ShellCheck \`-f diff\` fixes with \`patch\` before the final lint pass.\n" \
     "$flag_style" "$reset_style"
   printf '  %s--color%s            Force colored output.\n' "$flag_style" "$reset_style"
   printf '  %s--no-color%s         Disable colored output.\n' "$flag_style" "$reset_style"
@@ -138,19 +138,32 @@ is_shell_file() {
   [[ "$first_line" == '#!'*sh* ]]
 }
 
-collect_shell_files() {
+collect_shell_files_under() {
+  local dir="$1"
   local file=""
-
-  if [[ $# -gt 0 ]]; then
-    printf '%s\n' "$@"
-    return 0
-  fi
 
   while IFS= read -r file; do
     if is_shell_file "$file"; then
       printf '%s\n' "$file"
     fi
-  done < <(find "$ROOT_DIR/bin" -type f | sort)
+  done < <(find "$dir" -type f | sort)
+}
+
+collect_shell_files() {
+  local path=""
+
+  if [[ $# -gt 0 ]]; then
+    for path in "$@"; do
+      if [[ -d "$path" ]]; then
+        collect_shell_files_under "$path"
+      else
+        printf '%s\n' "$path"
+      fi
+    done
+    return 0
+  fi
+
+  collect_shell_files_under "$ROOT_DIR/bin"
 }
 
 run_bash_syntax_check() {
@@ -366,7 +379,7 @@ lint_parse_opts() {
       --verbose)
         LINT_VERBOSE=1
         ;;
-      --autocorrect)
+      --autocorrect|--autofix)
         LINT_AUTOCORRECT=1
         ;;
       --color)
