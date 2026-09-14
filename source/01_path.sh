@@ -8,6 +8,7 @@ paths=(
   $DOTFILES/bin
   "/Applications/IntelliJ IDEA.app/Contents/MacOS"
   /usr/local/bin
+  /opt/homebrew/sbin
   /opt/homebrew/bin
 )
 
