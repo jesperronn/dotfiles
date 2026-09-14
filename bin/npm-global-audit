@@ -111,6 +111,51 @@ cleanup() {
   fi
 }
 
+# Emit "name<TAB>latest" for every global package with a newer version,
+# from `npm outdated -g --json` (which exits nonzero when anything is outdated).
+parse_outdated() {
+  local file="$1"
+  node -e '
+    const fs = require("fs");
+    let data;
+    try { data = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+    catch (e) { process.exit(0); }
+    if (!data || typeof data !== "object") { process.exit(0); }
+    Object.keys(data).forEach(function (name) {
+      const info = data[name];
+      if (info && typeof info.latest === "string" && info.latest.length > 0) {
+        process.stdout.write(name + "\t" + info.latest + "\n");
+      }
+    });
+  ' "$file"
+}
+
+# Emit one line per advisory: "severity<TAB>title<TAB>url", for a package that
+# has vulnerabilities and no newer version to upgrade to.
+parse_advisories() {
+  local file="$1"
+  node -e '
+    const fs = require("fs");
+    let data;
+    try { data = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
+    catch (e) { process.exit(0); }
+    const vulns = data && data.vulnerabilities;
+    if (!vulns || typeof vulns !== "object") { process.exit(0); }
+    Object.keys(vulns).forEach(function (depName) {
+      const v = vulns[depName];
+      const severity = (v && v.severity) || "unknown";
+      const via = Array.isArray(v && v.via) ? v.via : [];
+      via.forEach(function (item) {
+        if (item && typeof item === "object") {
+          const title = item.title || depName;
+          const url = item.url || "";
+          process.stdout.write(severity + "\t" + title + "\t" + url + "\n");
+        }
+      });
+    });
+  ' "$file"
+}
+
 # Print the last non-empty line of a string (used for error rows).
 last_nonempty() {
   local text="$1" line last=""
@@ -160,6 +205,22 @@ format_vuln_text() {
     text="${text})"
   fi
   printf '%s' "$text"
+}
+
+# Wrap severity text in the same color used for that severity elsewhere.
+colorize_severity() {
+  local severity="$1" text="$2"
+  if [[ "$COLOR_ENABLED" != "1" ]]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  local color="$C_RESET"
+  case "$severity" in
+    low) color="$C_YELLOW" ;;
+    moderate) color="$C_ORANGE" ;;
+    high|critical) color="$C_RED" ;;
+  esac
+  printf '%s%s%s' "$color" "$text" "$C_RESET"
 }
 
 # Wrap only the result text in color: green for zero, yellow for low-only,
@@ -236,6 +297,17 @@ main() {
 
   WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npm-global-audit.XXXXXX")"
 
+  local outdated_json="" outdated_file=""
+  outdated_json="$(npm --no-audit outdated -g --json 2>/dev/null || true)"
+  outdated_file="$WORK_DIR/outdated.json"
+  printf '%s' "${outdated_json:-\{\}}" >"$outdated_file"
+  local -A latest_map=()
+  local o_name o_latest
+  while IFS=$'\t' read -r o_name o_latest; do
+    [[ -n "$o_name" ]] || continue
+    latest_map["$o_name"]="$o_latest"
+  done < <(parse_outdated "$outdated_file" 2>/dev/null || true)
+
   local width=0 name version spec len
   while IFS=$'\t' read -r name version; do
     [[ -n "$name" ]] || continue
@@ -243,6 +315,10 @@ main() {
     len=${#spec}
     (( len > width )) && width=$len
   done <<<"$records"
+
+  local outdated_names=()
+  local vulnerable_without_update=()
+  local -A advisory_text=()
 
   while IFS=$'\t' read -r name version; do
     [[ -n "$name" ]] || continue
@@ -287,8 +363,53 @@ main() {
     IFS=$'\t' read -r total low moderate high critical _ <<<"$counts"
     local text
     text="$(format_vuln_text "$total" "$low" "$moderate" "$high" "$critical")"
+
+    local latest="${latest_map[$name]:-}"
+    local is_outdated=0
+    if [[ -n "$latest" && "$latest" != "$version" ]]; then
+      is_outdated=1
+      text="${text} — outdated, ${latest} available"
+      outdated_names+=("$name")
+    fi
+
     render_result_row "$spec" "$total" "$low" "$moderate" "$high" "$critical" "$text"
+
+    if [[ "$total" != "0" && "$is_outdated" == "0" ]]; then
+      vulnerable_without_update+=("$spec")
+      local lines=""
+      lines="$(parse_advisories "$audit_out_file" 2>/dev/null || true)"
+      local a_severity a_title a_url entry=""
+      while IFS=$'\t' read -r a_severity a_title a_url; do
+        [[ -n "$a_severity" ]] || continue
+        local colored_severity
+        colored_severity="$(colorize_severity "$a_severity" "$a_severity")"
+        if [[ -n "$a_url" ]]; then
+          entry="${entry}    - [${colored_severity}] ${a_title} (${a_url})"$'\n'
+        else
+          entry="${entry}    - [${colored_severity}] ${a_title}"$'\n'
+        fi
+      done <<<"$lines"
+      advisory_text["$spec"]="$entry"
+    fi
   done <<<"$records"
+
+  printf '\n'
+  if (( ${#outdated_names[@]} == 0 && ${#vulnerable_without_update[@]} == 0 )); then
+    printf 'Next: nothing to do — no vulnerabilities found.\n'
+  else
+    if (( ${#outdated_names[@]} > 0 )); then
+      printf 'Next: updates available:\n'
+      printf '  npm update -g %s\n' "${outdated_names[@]}"
+    fi
+    if (( ${#vulnerable_without_update[@]} > 0 )); then
+      printf 'Next: already on latest, needs manual review:\n'
+      local vspec
+      for vspec in "${vulnerable_without_update[@]}"; do
+        printf '  %s\n' "$vspec"
+        printf '%s' "${advisory_text[$vspec]:-}"
+      done
+    fi
+  fi
 
   if (( HAD_FAILURE )); then
     exit 1
