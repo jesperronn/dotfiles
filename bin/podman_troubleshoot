@@ -1026,6 +1026,8 @@ check_docker_socket_rootless() {
     return 0
   fi
 
+  log_ok "docker_socket_rootless_test is available"
+
   # Try to run test on available port (443, then 444, 445, ...)
   local port="" test_port=443 max_attempts=10 attempt=0 output="" status=0
 
@@ -1148,7 +1150,7 @@ check_podman_system_container() {
 
   capture_command output status podman version --format '{{.Version}}'
   if [[ $status -ne 0 ]] || [[ -z "$output" ]]; then
-    log_action "`podman version` failed"
+    log_action "$(podman version) failed"
     return 0
   fi
 
@@ -1758,7 +1760,9 @@ print_recovery_hints() {
     printf '      podman machine start\n'
     printf '      podman_troubleshoot --fix\n'
     return 0
-  elif [[ $LOG_HEALTH_FAILURES -ge 1 ]]; then
+  fi
+
+  if [[ $LOG_HEALTH_FAILURES -ge 1 ]]; then
     printf '\n⚠️  VM log shows I/O errors from systemd-journald\n'
     printf '    After backing up important data from inside the VM, rebuild:\n'
     printf '      podman machine stop\n'
@@ -1766,7 +1770,6 @@ print_recovery_hints() {
     printf '      podman machine init\n'
     printf '      podman machine start\n'
     printf '      podman_troubleshoot --fix\n'
-    return 0
   fi
 
   # Dynamic hints based on failures
