@@ -5,8 +5,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILDER="$DIR/presentation-builder"
 PASS=0; FAIL=0
 
-ok()   { echo "[PASS] $1"; ((PASS++)); }
-fail() { echo "[FAIL] $1"; ((FAIL++)); }
+ok()   { echo "[PASS] $1"; ((++PASS)); }
+fail() { echo "[FAIL] $1"; ((++FAIL)); }
 
 # Setup
 TMP="$(mktemp -d)"

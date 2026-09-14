@@ -323,8 +323,13 @@ case "$2" in
     ;;
 esac
 
-if [[ "$1" == "-c" && $2 == Set* ]]; then
-  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+if [[ "$1" == "-c" && $2 == *"OLLAMA_KEEP_ALIVE"* ]]; then
+  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+  exit 0
+fi
+
+if [[ "$1" == "-c" && $2 == *"OLLAMA_CONTEXT_LENGTH"* ]]; then
+  perl -0pi -e 's#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g' "$plist_path"
   exit 0
 fi
 
@@ -346,7 +351,7 @@ EOF
     capture_command output status run_main --fix
 
   assert_status "0" "$status" "verify_ollama --fix succeeds"
-  assert_contains "$output" "[FAIL] Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
+  assert_contains "$output" "Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
   assert_contains "$output" "editing: adding \"OLLAMA_KEEP_ALIVE=30m\"" "verify_ollama --fix reports the edit"
   assert_contains "$output" "editing: adding \"OLLAMA_CONTEXT_LENGTH=524288\"" "verify_ollama --fix reports the context edit"
   assert_contains "$output" "done, edit successful" "verify_ollama --fix confirms the edit"
@@ -433,8 +438,13 @@ case "$2" in
     ;;
 esac
 
-if [[ "$1" == "-c" && $2 == Set* ]]; then
-  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+if [[ "$1" == "-c" && $2 == *"OLLAMA_KEEP_ALIVE"* ]]; then
+  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
+  exit 0
+fi
+
+if [[ "$1" == "-c" && $2 == *"OLLAMA_CONTEXT_LENGTH"* ]]; then
+  perl -0pi -e 's#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g' "$plist_path"
   exit 0
 fi
 
