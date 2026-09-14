@@ -70,6 +70,10 @@ case "$*" in
 esac
 '
 
+  write_stub "$stub_dir/sleep" '
+exit 0
+'
+
   capture_command output status env \
     CALL_LOG="$call_log" \
     PATH="$stub_dir:$PATH" \
@@ -162,6 +166,10 @@ case "$*" in
 esac
 '
 
+  write_stub "$stub_dir/sleep" '
+exit 0
+'
+
   capture_command output status env \
     CALL_LOG="$call_log" \
     PATH="$stub_dir:$PATH" \
@@ -223,6 +231,10 @@ exit 0
 
   write_stub "$stub_dir/curl" '
 exit 1
+'
+
+  write_stub "$stub_dir/sleep" '
+exit 0
 '
 
   capture_command output status env \
