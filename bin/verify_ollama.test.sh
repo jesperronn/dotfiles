@@ -59,70 +59,52 @@ test_run_main_applies_launchctl_value_on_macos() {
 
   tmp_dir="$(mktemp -d)"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  cat >"$plist_path" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OLLAMA_KEEP_ALIVE</key>
-    <string>30m</string>
-    <key>OLLAMA_CONTEXT_LENGTH</key>
-    <string>524288</string>
-  </dict>
-</dict>
-</plist>
-EOF
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n'
+    printf '    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>30m</string>\n'
+    printf '    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>524288</string>\n'
+    printf '  </dict>\n</dict>\n</plist>\n'
+  } >"$plist_path"
 
   mkdir -p "$tmp_dir/bin"
-  cat >"$tmp_dir/bin/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Darwin\n'
-EOF
-  cat >"$tmp_dir/bin/pgrep" <<'EOF'
-#!/usr/bin/env bash
-printf '61055\n'
-EOF
-  cat >"$tmp_dir/bin/ps" <<'EOF'
-#!/usr/bin/env bash
-printf '/opt/homebrew/opt/ollama/bin/ollama serve\n'
-EOF
-  cat >"$tmp_dir/bin/launchctl" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
+  simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
+  simple_stub "$tmp_dir/bin/pgrep" "printf '61055\n'"
+  simple_stub "$tmp_dir/bin/ps" "printf '/opt/homebrew/opt/ollama/bin/ollama serve\n'"
 
-if [[ "$1" == "getenv" ]]; then
-  exit 0
-fi
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'if [[ "$1" == "getenv" ]]; then\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "$1" == "setenv" ]]; then\n'
+    printf '  printf "%%s %%s %%s\n" "$1" "$2" "$3" >>"${TEST_LAUNCHCTL_LOG:?}"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'printf "unexpected launchctl invocation: %%s\n" "$*" >&2\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/launchctl"
+  chmod +x "$tmp_dir/bin/launchctl"
 
-if [[ "$1" == "setenv" ]]; then
-  printf '%s %s %s\n' "$1" "$2" "$3" >>"${TEST_LAUNCHCTL_LOG:?}"
-  exit 0
-fi
-
-printf 'unexpected launchctl invocation: %s\n' "$*" >&2
-  exit 1
-EOF
-  cat >"$tmp_dir/bin/PlistBuddy" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-case "$2" in
-  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")
-    printf '30m\n'
-    exit 0
-    ;;
-  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")
-    printf '524288\n'
-    exit 0
-    ;;
-esac
-
-printf 'unexpected PlistBuddy invocation: %s\n' "$*" >&2
-exit 1
-EOF
-  chmod +x "$tmp_dir/bin/uname" "$tmp_dir/bin/pgrep" "$tmp_dir/bin/ps" "$tmp_dir/bin/launchctl" "$tmp_dir/bin/PlistBuddy"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'case "$2" in\n'
+    printf '  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")\n'
+    printf '    printf "30m\n"\n'
+    printf '    exit 0\n'
+    printf '    ;;\n'
+    printf '  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")\n'
+    printf '    printf "524288\n"\n'
+    printf '    exit 0\n'
+    printf '    ;;\n'
+    printf 'esac\n'
+    printf 'printf "unexpected PlistBuddy invocation: %%s\n" "$*" >&2\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/PlistBuddy"
+  chmod +x "$tmp_dir/bin/PlistBuddy"
 
   TEST_LAUNCHCTL_LOG="$tmp_dir/launchctl.log" \
     OLLAMA_HOMEBREW_PLIST="$plist_path" \
@@ -147,39 +129,27 @@ test_run_main_fails_when_homebrew_plist_is_wrong() {
 
   tmp_dir="$(mktemp -d)"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  cat >"$plist_path" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OLLAMA_KEEP_ALIVE</key>
-    <string>5m</string>
-    <key>OLLAMA_CONTEXT_LENGTH</key>
-    <string>131072</string>
-  </dict>
-</dict>
-</plist>
-EOF
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n'
+    printf '    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>5m</string>\n'
+    printf '    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>131072</string>\n'
+    printf '  </dict>\n</dict>\n</plist>\n'
+  } >"$plist_path"
 
   mkdir -p "$tmp_dir/bin"
-  cat >"$tmp_dir/bin/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Darwin\n'
-EOF
-  cat >"$tmp_dir/bin/PlistBuddy" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then
-  printf '5m\n'
-  exit 0
-fi
-
-exit 1
-EOF
-  chmod +x "$tmp_dir/bin/uname" "$tmp_dir/bin/PlistBuddy"
+  simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then\n'
+    printf '  printf "5m\n"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/PlistBuddy"
+  chmod +x "$tmp_dir/bin/PlistBuddy"
 
   TEST_LAUNCHCTL_LOG="$tmp_dir/launchctl.log" \
     OLLAMA_HOMEBREW_PLIST="$plist_path" \
@@ -201,48 +171,32 @@ test_run_main_fails_when_ollama_is_not_running() {
 
   tmp_dir="$(mktemp -d)"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  cat >"$plist_path" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OLLAMA_KEEP_ALIVE</key>
-    <string>30m</string>
-    <key>OLLAMA_CONTEXT_LENGTH</key>
-    <string>524288</string>
-  </dict>
-</dict>
-</plist>
-EOF
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n'
+    printf '    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>30m</string>\n'
+    printf '    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>524288</string>\n'
+    printf '  </dict>\n</dict>\n</plist>\n'
+  } >"$plist_path"
 
   mkdir -p "$tmp_dir/bin"
-  cat >"$tmp_dir/bin/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Darwin\n'
-EOF
-  cat >"$tmp_dir/bin/PlistBuddy" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then
-  printf '30m\n'
-  exit 0
-fi
-
-if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH" ]]; then
-  printf '524288\n'
-  exit 0
-fi
-
-exit 1
-EOF
-  cat >"$tmp_dir/bin/pgrep" <<'EOF'
-#!/usr/bin/env bash
-exit 1
-EOF
-  chmod +x "$tmp_dir/bin/uname" "$tmp_dir/bin/PlistBuddy" "$tmp_dir/bin/pgrep"
+  simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE" ]]; then\n'
+    printf '  printf "30m\n"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "$1" == "-c" && "$2" == "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH" ]]; then\n'
+    printf '  printf "524288\n"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/PlistBuddy"
+  simple_stub "$tmp_dir/bin/pgrep" "exit 1"
+  chmod +x "$tmp_dir/bin/PlistBuddy"
 
   TEST_LAUNCHCTL_LOG="$tmp_dir/launchctl.log" \
     OLLAMA_HOMEBREW_PLIST="$plist_path" \
@@ -307,20 +261,20 @@ test_run_main_fix_repairs_homebrew_plist_and_restarts() {
     printf 'plist_path="${@: -1}"\n'
     printf 'case "$2" in\n'
     printf '  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")\n'
-    printf '    grep -q "<string>30m</string>" "$plist_path" 2>/dev/null && printf "30m\n" || printf "5m\n"\n'
+    printf '    if grep -q "<string>30m</string>" "$plist_path" 2>/dev/null; then printf "30m\n"; else printf "5m\n"; fi\n'
     printf '    exit 0\n'
     printf '    ;;\n'
     printf '  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")\n'
-    printf '    grep -q "<string>524288</string>" "$plist_path" 2>/dev/null && printf "524288\n" || printf "131072\n"\n'
+    printf '    if grep -q "<string>524288</string>" "$plist_path" 2>/dev/null; then printf "524288\n"; else printf "131072\n"; fi\n'
     printf '    exit 0\n'
     printf '    ;;\n'
     printf 'esac\n'
     printf 'if [[ "$1" == "-c" && $2 == *"OLLAMA_KEEP_ALIVE"* ]]; then\n'
-    printf '  perl -0pi -e "s#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g" "$plist_path"\n'
+    printf '  sed -i "" "s#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g" "$plist_path"\n'
     printf '  exit 0\n'
     printf 'fi\n'
     printf 'if [[ "$1" == "-c" && $2 == *"OLLAMA_CONTEXT_LENGTH"* ]]; then\n'
-    printf '  perl -0pi -e "s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g" "$plist_path"\n'
+    printf '  sed -i "" "s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g" "$plist_path"\n'
     printf '  exit 0\n'
     printf 'fi\n'
     printf 'if [[ "$1" == "-c" && $2 == Add* ]]; then\n'
@@ -357,94 +311,64 @@ test_run_main_fix_survives_launchctl_setenv_failure() {
 
   tmp_dir="$(mktemp -d)"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  cat >"$plist_path" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>OLLAMA_KEEP_ALIVE</key>
-    <string>5m</string>
-    <key>OLLAMA_CONTEXT_LENGTH</key>
-    <string>131072</string>
-  </dict>
-</dict>
-</plist>
-EOF
+  {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+    printf '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+    printf '<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n'
+    printf '    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>5m</string>\n'
+    printf '    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>131072</string>\n'
+    printf '  </dict>\n</dict>\n</plist>\n'
+  } >"$plist_path"
 
   mkdir -p "$tmp_dir/bin"
-  cat >"$tmp_dir/bin/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Darwin\n'
-EOF
-  cat >"$tmp_dir/bin/pgrep" <<'EOF'
-#!/usr/bin/env bash
-printf '61055\n'
-EOF
-  cat >"$tmp_dir/bin/ps" <<'EOF'
-#!/usr/bin/env bash
-printf '/opt/homebrew/opt/ollama/bin/ollama serve\n'
-EOF
-  cat >"$tmp_dir/bin/launchctl" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
+  simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
+  simple_stub "$tmp_dir/bin/pgrep" "printf '61055\n'"
+  simple_stub "$tmp_dir/bin/ps" "printf '/opt/homebrew/opt/ollama/bin/ollama serve\n'"
 
-if [[ "$1" == "getenv" ]]; then
-  exit 0
-fi
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'if [[ "$1" == "getenv" ]]; then\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "$1" == "setenv" ]]; then\n'
+    printf '  printf "Could not set environment: 150: Operation not permitted while System Integrity Protection is engaged\n" >&2\n'
+    printf '  exit 1\n'
+    printf 'fi\n'
+    printf 'printf "unexpected launchctl invocation: %%s\n" "$*" >&2\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/launchctl"
+  chmod +x "$tmp_dir/bin/launchctl"
 
-if [[ "$1" == "setenv" ]]; then
-  printf 'Could not set environment: 150: Operation not permitted while System Integrity Protection is engaged\n' >&2
-  exit 1
-fi
-
-printf 'unexpected launchctl invocation: %s\n' "$*" >&2
-exit 1
-EOF
-  cat >"$tmp_dir/bin/PlistBuddy" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-plist_path="${@: -1}"
-
-case "$2" in
-  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")
-    if rg -n '<string>30m</string>' "$plist_path" >/dev/null 2>&1; then
-      printf '30m\n'
-    else
-      printf '5m\n'
-    fi
-    exit 0
-    ;;
-  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")
-    if rg -n '<string>524288</string>' "$plist_path" >/dev/null 2>&1; then
-      printf '524288\n'
-    else
-      printf '131072\n'
-    fi
-    exit 0
-    ;;
-esac
-
-if [[ "$1" == "-c" && $2 == *"OLLAMA_KEEP_ALIVE"* ]]; then
-  perl -0pi -e 's#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g' "$plist_path"
-  exit 0
-fi
-
-if [[ "$1" == "-c" && $2 == *"OLLAMA_CONTEXT_LENGTH"* ]]; then
-  perl -0pi -e 's#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g' "$plist_path"
-  exit 0
-fi
-
-if [[ "$1" == "-c" && $2 == Add* ]]; then
-  exit 0
-fi
-
-printf 'unexpected PlistBuddy invocation: %s\n' "$*" >&2
-exit 1
-EOF
-  chmod +x "$tmp_dir/bin/uname" "$tmp_dir/bin/pgrep" "$tmp_dir/bin/ps" "$tmp_dir/bin/launchctl" "$tmp_dir/bin/PlistBuddy"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf 'plist_path="${@: -1}"\n'
+    printf 'case "$2" in\n'
+    printf '  "Print :EnvironmentVariables:OLLAMA_KEEP_ALIVE")\n'
+    printf '    if grep -q "<string>30m</string>" "$plist_path" 2>/dev/null; then printf "30m\n"; else printf "5m\n"; fi\n'
+    printf '    exit 0\n'
+    printf '    ;;\n'
+    printf '  "Print :EnvironmentVariables:OLLAMA_CONTEXT_LENGTH")\n'
+    printf '    if grep -q "<string>524288</string>" "$plist_path" 2>/dev/null; then printf "524288\n"; else printf "131072\n"; fi\n'
+    printf '    exit 0\n'
+    printf '    ;;\n'
+    printf 'esac\n'
+    printf 'if [[ "$1" == "-c" && $2 == *"OLLAMA_KEEP_ALIVE"* ]]; then\n'
+    printf '  sed -i "" "s#<string>5m</string>#<string>30m</string>#g; s#<string>unset</string>#<string>30m</string>#g" "$plist_path"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "$1" == "-c" && $2 == *"OLLAMA_CONTEXT_LENGTH"* ]]; then\n'
+    printf '  sed -i "" "s#<string>131072</string>#<string>524288</string>#g; s#<string>unset</string>#<string>524288</string>#g" "$plist_path"\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'if [[ "$1" == "-c" && $2 == Add* ]]; then\n'
+    printf '  exit 0\n'
+    printf 'fi\n'
+    printf 'printf "unexpected PlistBuddy invocation: %%s\n" "$*" >&2\n'
+    printf 'exit 1\n'
+  } >"$tmp_dir/bin/PlistBuddy"
+  chmod +x "$tmp_dir/bin/PlistBuddy"
 
   TEST_LAUNCHCTL_LOG="$tmp_dir/launchctl.log" \
     OLLAMA_HOMEBREW_PLIST="$plist_path" \
@@ -480,11 +404,7 @@ test_run_main_skips_outside_macos() {
 
   tmp_dir="$(mktemp -d)"
   mkdir -p "$tmp_dir/bin"
-  cat >"$tmp_dir/bin/uname" <<'EOF'
-#!/usr/bin/env bash
-printf 'Linux\n'
-EOF
-  chmod +x "$tmp_dir/bin/uname"
+  simple_stub "$tmp_dir/bin/uname" "printf 'Linux\n'"
 
   PATH="$tmp_dir/bin:$PATH" capture_command output status run_main
 
