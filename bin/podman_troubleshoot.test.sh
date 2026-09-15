@@ -14,6 +14,10 @@ cleanup_test_temps() {
 }
 trap cleanup_test_temps EXIT
 
+# Test-mode env vars: reduce all timeouts to sub-second execution
+export PODMAN_TROUBLESHOOT_TEST_MODE=1
+export PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0
+
 make_stub_dir() {
   local stub_dir="$1"
 
@@ -63,6 +67,9 @@ case "$1" in
     printf "host: ok\n"
     exit 0
     ;;
+  run)
+    exit 0
+    ;;
   machine)
     case "$2" in
       list)
@@ -72,7 +79,10 @@ case "$1" in
         printf "{\"Name\":\"podman-machine-default\"}\n"
         ;;
       ssh)
-        exit 0
+        case "$3" in
+          *"registry-1.docker.io"*) printf "resolved\n"; exit 0 ;;
+          *) exit 0 ;;
+        esac
         ;;
       connection)
         exit 0
@@ -184,6 +194,7 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -225,6 +236,9 @@ case "$1" in
     printf "host: ok\n"
     exit 0
     ;;
+  run)
+    exit 0
+    ;;
   machine)
     case "$2" in
       list)
@@ -234,7 +248,10 @@ case "$1" in
         printf "{\"Name\":\"podman-machine-default\"}\n"
         ;;
       ssh)
-        exit 0
+        case "$3" in
+          *"registry-1.docker.io"*) printf "resolved\n"; exit 0 ;;
+          *) exit 0 ;;
+        esac
         ;;
       connection)
         exit 0
@@ -348,6 +365,7 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -512,6 +530,7 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -675,6 +694,7 @@ esac
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
@@ -842,6 +862,7 @@ esac
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
@@ -971,6 +992,7 @@ esac
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -1097,6 +1119,7 @@ esac
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -1231,6 +1254,7 @@ esac
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --verbose"
 

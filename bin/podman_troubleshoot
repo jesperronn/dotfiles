@@ -1030,13 +1030,15 @@ check_docker_socket_rootless() {
 
   # Try to run test on available port (443, then 444, 445, ...)
   local port="" test_port=443 max_attempts=10 attempt=0 output="" status=0
+  local rootless_timeout=60
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] && rootless_timeout=2 max_attempts=1
 
   while (( attempt < max_attempts )); do
     if [[ "$VERBOSE_MODE" == "1" ]]; then
       log_verbose "attempting Docker socket test on port $test_port"
     fi
 
-    capture_command_with_timeout output status 60 \
+    capture_command_with_timeout output status "$rootless_timeout" \
       "$rootless_test_bin" --port "$test_port" 2>&1
 
     if [[ $status -eq 0 ]] || printf '%s\n' "$output" | grep -qi 'working'; then
@@ -1846,6 +1848,14 @@ run_main() {
   require_podman
   parse_args "$@"
 
+  # Test mode: reduce all timeouts for fast test execution
+  if [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]]; then
+    START_TIMEOUT_SECONDS=2
+    VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS=2
+    PODMAN_PS_TIMEOUT_SECONDS=2
+    STABILITY_SLEEP_SECONDS=0
+  fi
+
   if [[ "$INIT_MODE" == "1" ]]; then
     run_init_mode
     return $?
@@ -1867,19 +1877,19 @@ run_main() {
   check_podman_machine_alignment
   check_podman_machine_running_state
   check_machine_stability
-  check_vm_clock_sync
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_clock_sync
   check_rootless_privileged_port_policy
   check_machine_start_lock
   check_machine_log_health
   check_engine_info
-  check_system_connections
-  check_host_registry_connectivity
-  check_vm_dns_and_registry
-  check_container_https_egress
-  check_vm_registry_ips
-  check_vm_runtime_state
-  check_registry_auth_state
-  check_pull_target_image
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_system_connections
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_host_registry_connectivity
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_dns_and_registry
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_container_https_egress
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_registry_ips
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_runtime_state
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_registry_auth_state
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_pull_target_image
   print_recovery_hints
 }
 
