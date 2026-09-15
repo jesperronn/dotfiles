@@ -11,13 +11,9 @@ source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 write_stub() {
   local file_path="$1"
   shift
-  local body="$1"
-
-  cat >"$file_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$body
-EOF
+  {
+    printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$1"
+  } >"$file_path"
   chmod +x "$file_path"
 }
 

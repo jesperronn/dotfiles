@@ -914,28 +914,6 @@ case "$1" in
 esac
 '
 
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
-'
-
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in

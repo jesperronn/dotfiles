@@ -18,75 +18,38 @@ make_stub_npm() {
   cat >"$dir/npm" <<'NPMSTUB'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ -n "${NPM_STUB_LOG:-}" ]]; then
-  printf '%s\n' "$*" >>"$NPM_STUB_LOG"
-fi
-cmd=""
-args=("$@")
-n=$#
-i=0
-while (( i < n )); do
-  a="${args[$i]}"
-  if [[ "$a" == "--prefix" || "$a" == "--root" ]]; then
-    i=$((i + 2))
-    continue
-  fi
-  if [[ "$a" == -* ]]; then
-    i=$((i + 1))
-    continue
-  fi
+[[ -n "${NPM_STUB_LOG:-}" ]] && printf '%s\n' "$*" >>"$NPM_STUB_LOG"
+cmd="" i=1 n=$#
+while (( i <= n )); do
+  eval "a=\${$i}"
+  [[ "$a" == --prefix || "$a" == --root ]] && { ((i+=2)); continue; }
+  [[ "$a" == -* ]] && { ((i++)); continue; }
   cmd="$a"
   break
+  ((i++))
 done
 case "$cmd" in
   ls)
-    printf '%s\n' '{"dependencies":{"jumbo-cli":{"version":"3.23.0"},"svgo":{"version":"4.1.0"},"cline":{"version":"3.0.61"}}}'
+    printf '{"dependencies":{"jumbo-cli":{"version":"3.23.0"},"svgo":{"version":"4.1.0"},"cline":{"version":"3.0.61"}}}\n'
     ;;
   install)
-    if [[ -n "${NPM_STUB_SPEC_FILE:-}" && $# -gt 0 ]]; then
-      printf '%s\n' "${@: -1}" >"$NPM_STUB_SPEC_FILE"
-    fi
+    [[ -n "${NPM_STUB_SPEC_FILE:-}" && $# -gt 0 ]] && printf '%s\n' "${@: -1}" >"$NPM_STUB_SPEC_FILE"
     ;;
   audit)
     spec=""
-    if [[ -n "${NPM_STUB_SPEC_FILE:-}" && -f "$NPM_STUB_SPEC_FILE" ]]; then
-      spec="$(cat "$NPM_STUB_SPEC_FILE")"
-    fi
+    [[ -n "${NPM_STUB_SPEC_FILE:-}" && -f "$NPM_STUB_SPEC_FILE" ]] && spec="$(cat "$NPM_STUB_SPEC_FILE")"
     if [[ -z "${NPM_STUB_FIXTURES:-}" ]]; then
       case "$spec" in
-        jumbo-cli@3.23.0)
-          printf '%s\n' '{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0}}}'
-          ;;
-        svgo@4.1.0)
-          printf '%s\n' '{"metadata":{"vulnerabilities":{"total":3,"low":2,"moderate":1,"high":0,"critical":0,"info":0}}}'
-          ;;
-        cline@3.0.61)
-          printf '%s\n' '{"metadata":{"vulnerabilities":{"total":33,"low":8,"moderate":16,"high":9,"critical":0,"info":0}}}'
-          ;;
-        *)
-          printf 'registry unavailable\n' >&2
-          exit 1
-          ;;
+        jumbo-cli@3.23.0) printf '{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0}}}\n' ;;
+        svgo@4.1.0) printf '{"metadata":{"vulnerabilities":{"total":3,"low":2,"moderate":1,"high":0,"critical":0,"info":0}}}\n' ;;
+        cline@3.0.61) printf '{"metadata":{"vulnerabilities":{"total":33,"low":8,"moderate":16,"high":9,"critical":0,"info":0}}}\n' ;;
+        *) printf 'registry unavailable\n' >&2; exit 1 ;;
       esac
     else
-      NPM_STUB_FIXTURES="$NPM_STUB_FIXTURES" node -e '
-        const fs = require("fs");
-        const spec = process.argv[1];
-        let map = {};
-        try { map = JSON.parse(fs.readFileSync(process.env.NPM_STUB_FIXTURES, "utf8")); }
-        catch (e) { map = {}; }
-        let val = (spec in map) ? map[spec] : null;
-        if (val === null) { process.stderr.write("registry unavailable\n"); process.exit(1); }
-        if (typeof val === "string") { process.stderr.write(val + "\n"); process.exit(1); }
-        if (val && val.error) { process.stderr.write(String(val.error) + "\n"); process.exit(1); }
-        process.stdout.write(JSON.stringify({ metadata: { vulnerabilities: val } }) + "\n");
-      ' "$spec"
+      node -e 'const fs=require("fs");const map=JSON.parse(fs.readFileSync(process.env.NPM_STUB_FIXTURES,"utf8")||"{}");const v=map[process.argv[1]]||null;if(v===null){process.stderr.write("registry unavailable\n");process.exit(1)}if(typeof v==="string"){process.stderr.write(v+"\n");process.exit(1)}if(v&&v.error){process.stderr.write(String(v.error)+"\n");process.exit(1)}process.stdout.write(JSON.stringify({metadata:{vulnerabilities:v}})+"\n")' "$spec"
     fi
     ;;
-  *)
-    printf 'npm stub: unknown command: %s\n' "$cmd" >&2
-    exit 1
-    ;;
+  *) printf 'npm stub: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
 esac
 NPMSTUB
   chmod +x "$dir/npm"
