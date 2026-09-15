@@ -120,7 +120,6 @@ gwt_countdown_navigate() {
 # ── Tests ──────────────────────────────────────────────────────────────
 
 gwt_test_parse_opts() {
-  echo "--- parse_opts ---"
 
   # Test: no args returns 0
   gwt_reset_state
@@ -139,33 +138,27 @@ gwt_test_parse_opts() {
   gwt_parse_opts -h 2>/dev/null || h_status=$?
   test_assert_status "parse_opts -h returns 1" "1" "$h_status"
 
-  echo ""
 }
 
 gwt_test_parse_prereqs() {
-  echo "--- parse_prereqs ---"
 
   gwt_reset_state
   gwt_parse_prereqs
   test_assert_eq "GWT_COLOR_ENABLED after prereqs" "1" "$GWT_COLOR_ENABLED"
   test_assert_eq "GWT_FZF_FOUND after prereqs" "1" "$GWT_FZF_FOUND"
 
-  echo ""
 }
 
 gwt_test_find_repo_root() {
-  echo "--- find_repo_root ---"
 
   TEST_REPOSITORY_ROOT="/tmp/test-repo"
   gwt_reset_state
   gwt_find_repo_root
   test_assert_eq "GWT_REPOSITORY_ROOT set correctly" "/tmp/test-repo" "$GWT_REPOSITORY_ROOT"
 
-  echo ""
 }
 
 gwt_test_list_worktrees() {
-  echo "--- list_worktrees ---"
 
   # Test the parsing logic directly (we can't easily mock git)
   local fake_output="${TEST_TMP_DIR}/wt1	branch-a	abc1234
@@ -184,11 +177,9 @@ ${TEST_TMP_DIR}/wt2	branch-b	def5678"
   path="$(echo "${lines[0]}" | awk '{print $1}')"
   test_assert_eq "first worktree path parsed" "${TEST_TMP_DIR}/wt1" "$path"
 
-  echo ""
 }
 
 gwt_test_generate_name() {
-  echo "--- generate_worktree_name ---"
 
   gwt_reset_state
   GWT_REPOSITORY_ROOT="$TEST_TMP_DIR/myproject"
@@ -198,11 +189,9 @@ gwt_test_generate_name() {
 
   test_pass "generate_worktree_name returns expected format"
 
-  echo ""
 }
 
 gwt_test_select_worktree() {
-  echo "--- select_worktree ---"
 
   # Test: ADD signal
   gwt_test_select_output="ADD"
@@ -215,11 +204,9 @@ gwt_test_select_worktree() {
   result="$(gwt_select_worktree)"
   test_assert_eq "select returns line when set" "/tmp/wt1	branch-a	abc1234" "$result"
 
-  echo ""
 }
 
 gwt_test_add_flow() {
-  echo "--- add flow ---"
 
   gwt_test_select_output="ADD"
   TEST_REPOSITORY_ROOT="$TEST_TMP_DIR/myproject"
@@ -233,11 +220,9 @@ gwt_test_add_flow() {
 
   test_assert_eq "apply_add was called" "1" "$gwt_test_add_called"
 
-  echo ""
 }
 
 gwt_test_delete_flow() {
-  echo "--- delete flow ---"
 
   local selected_line="${TEST_TMP_DIR}/wt1	branch-a	abc1234"
   gwt_test_select_output="$selected_line"
@@ -253,11 +238,9 @@ gwt_test_delete_flow() {
   test_assert_eq "apply_delete was called" "1" "$gwt_test_delete_called"
   test_assert_eq "delete path parsed correctly" "${TEST_TMP_DIR}/wt1" "$gwt_test_delete_path"
 
-  echo ""
 }
 
 gwt_test_delete_flow_multi() {
-  echo "--- delete flow (multi-select) ---"
 
   # fzf --multi returns every selected line, newline-separated.
   local selected_lines
@@ -277,11 +260,9 @@ gwt_test_delete_flow_multi() {
   expected_paths="$(printf '%s\n%s' "${TEST_TMP_DIR}/wt1" "${TEST_TMP_DIR}/wt2")"
   test_assert_eq "both selected paths passed to delete" "$expected_paths" "$gwt_test_delete_path"
 
-  echo ""
 }
 
 gwt_test_apply_delete_real_multi() {
-  echo "--- apply_delete with real worktrees (multi) ---"
 
   local repo="$TEST_TMP_DIR/real-repo"
   mkdir -p "$repo"
@@ -310,11 +291,9 @@ gwt_test_apply_delete_real_multi() {
   remaining="$(git -C "$repo" worktree list | wc -l | tr -d ' ')"
   test_assert_eq "only main worktree remains" "1" "$remaining"
 
-  echo ""
 }
 
 gwt_test_apply_delete_real_failure() {
-  echo "--- apply_delete with a non-removable selection ---"
 
   # Selecting the main checkout cannot be removed — must report failure
   # instead of claiming success.
@@ -337,16 +316,13 @@ gwt_test_apply_delete_real_failure() {
 
   test_assert_status "deleting the main checkout exits 1" "1" "$status"
 
-  echo ""
 }
 
 gwt_test_countdown_navigate() {
-  echo "--- countdown_navigate ---"
 
   gwt_countdown_navigate "/tmp/new-wt"
   test_pass "countdown_navigate returns 0"
 
-  echo ""
 }
 
 # ── Run all tests ──────────────────────────────────────────────────────
@@ -365,7 +341,6 @@ main() {
   gwt_test_apply_delete_real_failure
   gwt_test_countdown_navigate
 
-  echo ""
   printf '%bResults: %s passed, %s failed%s\n' \
     "$TEST_C_GREEN" "$TEST_PASS" "$TEST_FAIL" "$TEST_C_RESET"
 
