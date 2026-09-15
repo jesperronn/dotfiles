@@ -7,21 +7,30 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npm-global-audit"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
-# Global cleanup: remove any temp directories left behind by interrupted tests
+# Create stub npm binary once at module level (shared across all tests)
+MODULE_TEMP_DIR=""
+MODULE_STUB_DIR=""
+MODULE_EMPTY_STUB_DIR=""
+FAST_CAPTURE_FILE=""  # Reuse a single temp file for fast captures
+
+# Global cleanup: remove temp directories
 cleanup_test_temps() {
+  [[ -n "$MODULE_TEMP_DIR" && -d "$MODULE_TEMP_DIR" ]] && rm -rf "$MODULE_TEMP_DIR" || true
+  [[ -n "$FAST_CAPTURE_FILE" && -f "$FAST_CAPTURE_FILE" ]] && rm -f "$FAST_CAPTURE_FILE" || true
   find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
 }
 trap cleanup_test_temps EXIT
 
-# Create a fake `npm` in DIR that records every invocation to $NPM_STUB_LOG,
-# returns a fixed global-list response for `ls`, records the installed spec to
-# $NPM_STUB_SPEC_FILE for `install`, and dispatches `audit` responses by spec
-# using an optional fixture file at $NPM_STUB_FIXTURES (canonical defaults when
-# unset).
-make_stub_npm() {
-  local dir="$1"
-  mkdir -p "$dir"
-  cat >"$dir/npm" <<'NPMSTUB'
+setup_module() {
+  MODULE_TEMP_DIR="$(mktemp -d)"
+  FAST_CAPTURE_FILE="${MODULE_TEMP_DIR}/capture.txt"
+  touch "$FAST_CAPTURE_FILE"
+
+  MODULE_STUB_DIR="${MODULE_TEMP_DIR}/stub"
+  mkdir -p "$MODULE_STUB_DIR"
+
+  # Write the npm stub once at module level using heredoc (fast)
+  cat >"${MODULE_STUB_DIR}/npm" <<'NPMSTUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ -n "${NPM_STUB_LOG:-}" ]] && printf '%s\n' "$*" >>"$NPM_STUB_LOG"
@@ -52,13 +61,36 @@ case "$cmd" in
         *) printf 'registry unavailable\n' >&2; exit 1 ;;
       esac
     else
-      node -e 'const fs=require("fs");const map=JSON.parse(fs.readFileSync(process.env.NPM_STUB_FIXTURES,"utf8")||"{}");const v=map[process.argv[1]]||null;if(v===null){process.stderr.write("registry unavailable\n");process.exit(1)}if(typeof v==="string"){process.stderr.write(v+"\n");process.exit(1)}if(v&&v.error){process.stderr.write(String(v.error)+"\n");process.exit(1)}process.stdout.write(JSON.stringify({metadata:{vulnerabilities:v}})+"\n")' "$spec"
+      jq -r --arg spec "$spec" '.[$spec] | if . == null then error("registry unavailable") elif type == "string" then error(.) elif .error then error(.error) else {metadata: {vulnerabilities: .}} end | @json' "$NPM_STUB_FIXTURES" 2>/dev/null || (printf 'registry unavailable\n' >&2; exit 1)
     fi
     ;;
   *) printf 'npm stub: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
 esac
 NPMSTUB
-  chmod +x "$dir/npm"
+  chmod +x "${MODULE_STUB_DIR}/npm"
+
+  # Create empty npm stub at module level for test_empty_packages
+  MODULE_EMPTY_STUB_DIR="${MODULE_TEMP_DIR}/empty"
+  mkdir -p "$MODULE_EMPTY_STUB_DIR"
+  cat >"${MODULE_EMPTY_STUB_DIR}/npm" <<'NPMEMPTY'
+#!/usr/bin/env bash
+set -euo pipefail
+cmd=""
+for a in "$@"; do
+  if [[ "$a" == -* ]]; then continue; fi
+  cmd="$a"
+  break
+done
+if [[ "$cmd" == "ls" ]]; then
+  printf '%s\n' '{"dependencies":{}}'
+fi
+NPMEMPTY
+  chmod +x "${MODULE_EMPTY_STUB_DIR}/npm"
+}
+
+# No longer needed: stub is created once at module level
+make_stub_npm() {
+  :  # Stub creation now done at module load time
 }
 
 # Write a fixture file mapping an installed spec to either a vulnerabilities
@@ -73,10 +105,11 @@ write_fixture() {
 # Prepare a scratch dir with a stub npm and an installed-spec file whose path is
 # exported so the script and its npm children share it. Resets fixtures.
 prepare() {
-  W_DIR="$(mktemp -d)"
-  W_STUB="${W_DIR}/stub"
+  W_DIR="${MODULE_TEMP_DIR}/test_$$"
+  mkdir -p "$W_DIR"
+  W_STUB="$MODULE_STUB_DIR"
   W_SPEC="${W_DIR}/spec.txt"
-  make_stub_npm "$W_STUB"
+  rm -f "$W_SPEC"  # Clear spec file from previous test
   export NPM_STUB_SPEC_FILE="$W_SPEC"
   unset NPM_STUB_FIXTURES
 }
@@ -88,10 +121,11 @@ run_script() {
   local color_mode="$2"
   shift 2
 
-  R_OUTPUT=""
   R_STATUS=0
-  capture_command R_OUTPUT R_STATUS env PATH="${stub}:${PATH}" "NO_COLOR=${color_mode}" \
-    "$SCRIPT_UNDER_TEST" "$@"
+  set +e
+  R_OUTPUT="$(env PATH="${stub}:${PATH}" "NO_COLOR=${color_mode}" "$SCRIPT_UNDER_TEST" "$@" 2>&1)"
+  R_STATUS=$?
+  set -e
 }
 
 test_output_rows_no_color() {
@@ -106,18 +140,17 @@ test_output_rows_no_color() {
   assert_contains "$R_OUTPUT" "cline@3.0.61" "output shows cline spec"
   assert_contains "$R_OUTPUT" "33 vulnerabilities (8 low, 16 moderate, 9 high)" "cline breakdown"
   assert_not_contains "$R_OUTPUT" $'\033[' "no ANSI escapes in plain mode"
-
-  rm -rf "$W_DIR"
 }
 
 test_invocation_log_safety() {
   prepare
   local log_file="${W_DIR}/log.txt"
 
-  R_OUTPUT=""
   R_STATUS=0
-  capture_command R_OUTPUT R_STATUS env PATH="${W_STUB}:${PATH}" NO_COLOR=1 \
-    NPM_STUB_LOG="$log_file" "$SCRIPT_UNDER_TEST"
+  set +e
+  R_OUTPUT="$(env PATH="${W_STUB}:${PATH}" NO_COLOR=1 NPM_STUB_LOG="$log_file" "$SCRIPT_UNDER_TEST" 2>&1)"
+  R_STATUS=$?
+  set -e
 
   assert_status "0" "$R_STATUS" "safety run exits 0"
   assert_contains "$(cat "$log_file")" "--no-audit ls -g --depth=0 --json" "discovery uses safe ls flags"
@@ -126,8 +159,6 @@ test_invocation_log_safety() {
   assert_not_contains "$(cat "$log_file")" "update -g" "never runs npm update -g"
   assert_not_contains "$(cat "$log_file")" "audit fix" "never runs audit fix"
   assert_not_contains "$(cat "$log_file")" "--global audit" "never runs global audit"
-
-  rm -rf "$W_DIR"
 }
 
 test_critical_breakdown() {
@@ -143,8 +174,6 @@ test_critical_breakdown() {
 
   assert_status "0" "$R_STATUS" "critical fixture exits 0"
   assert_contains "$R_OUTPUT" "3 vulnerabilities (0 low, 0 moderate, 1 high, 2 critical)" "critical breakdown includes critical"
-
-  rm -rf "$W_DIR"
 }
 
 test_audit_failure_continues() {
@@ -163,41 +192,17 @@ test_audit_failure_continues() {
   assert_contains "$R_OUTPUT" "33 vulnerabilities (8 low, 16 moderate, 9 high)" "successful package row intact"
   assert_contains "$R_OUTPUT" "svgo@4.1.0" "failed package spec still listed"
   assert_contains "$R_OUTPUT" "audit failed: registry unavailable" "failure renders a readable row"
-
-  rm -rf "$W_DIR"
 }
 
 test_empty_packages() {
-  local work_dir=""
-  local stub_dir=""
-
-  work_dir="$(mktemp -d)"
-  stub_dir="${work_dir}/stub"
-  mkdir -p "$stub_dir"
-  # Stub whose global list is empty; discovery must short-circuit before audits.
-  cat >"${stub_dir}/npm" <<'NPMEMPTY'
-#!/usr/bin/env bash
-set -euo pipefail
-cmd=""
-for a in "$@"; do
-  if [[ "$a" == -* ]]; then continue; fi
-  cmd="$a"
-  break
-done
-if [[ "$cmd" == "ls" ]]; then
-  printf '%s\n' '{"dependencies":{}}'
-fi
-NPMEMPTY
-  chmod +x "${stub_dir}/npm"
-
-  R_OUTPUT=""
   R_STATUS=0
-  capture_command R_OUTPUT R_STATUS env PATH="${stub_dir}:${PATH}" NO_COLOR=1 "$SCRIPT_UNDER_TEST"
+  set +e
+  R_OUTPUT="$(env PATH="${MODULE_EMPTY_STUB_DIR}:${PATH}" NO_COLOR=1 "$SCRIPT_UNDER_TEST" 2>&1)"
+  R_STATUS=$?
+  set -e
 
   assert_status "0" "$R_STATUS" "empty global list exits 0"
   assert_contains "$R_OUTPUT" "No global npm packages found." "empty list emits no-packages message"
-
-  rm -rf "$work_dir"
 }
 
 test_help() {
@@ -208,8 +213,6 @@ test_help() {
   assert_contains "$R_OUTPUT" "--color" "help mentions --color"
   assert_contains "$R_OUTPUT" "--no-color" "help mentions --no-color"
   assert_contains "$R_OUTPUT" "freshly resolved transitive dependencies" "help documents temporary resolution"
-
-  rm -rf "$W_DIR"
 }
 
 test_color_flag_emits_sgr() {
@@ -218,8 +221,6 @@ test_color_flag_emits_sgr() {
 
   assert_status "0" "$R_STATUS" "--color run exits 0"
   assert_contains "$R_OUTPUT" $'\033[' "forced color emits an ANSI SGR sequence when captured"
-
-  rm -rf "$W_DIR"
 }
 
 test_unknown_option_exits_2() {
@@ -228,8 +229,9 @@ test_unknown_option_exits_2() {
 
   assert_status "2" "$R_STATUS" "unknown option exits 2"
   assert_contains "$R_OUTPUT" "unknown option" "unknown option reports the problem"
-
-  rm -rf "$W_DIR"
 }
+
+# Setup module before running tests
+setup_module
 
 run_tests "$@"
