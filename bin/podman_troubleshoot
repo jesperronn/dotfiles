@@ -1514,28 +1514,63 @@ check_container_https_egress() {
 
   local host_result="" vm_result="" container_result=""
   local host_status=0 vm_status=0 container_status=0
+  local temp_dir=""
 
   if [[ "$VERBOSE_MODE" == "1" ]]; then
     log_verbose "testing HTTPS connectivity from host, VM, and container (probes only; not full Traefik test)"
   fi
 
-  # Host probe: silent HTTPS connection test
-  capture_command_with_timeout host_result host_status 20 \
-    curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w 'host ok' https://example.com 2>/dev/null || echo "host fail"
+  # Run all three probes in parallel for faster execution
+  temp_dir="$(mktemp -d)"
+  trap "rm -rf '$temp_dir'" RETURN
 
-  # VM probe: silent HTTPS connection from VM
-  capture_command_with_timeout vm_result vm_status 20 \
-    podman machine ssh 'curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w "vm ok" https://example.com 2>/dev/null || echo "vm fail"'
+  # Host probe: silent HTTPS connection test (background)
+  {
+    local result=""
+    local status=0
+    capture_command_with_timeout result status 20 \
+      curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w 'host ok' https://example.com 2>/dev/null || echo "host fail"
+    printf '%s' "$result" >"$temp_dir/host_result"
+    printf '%s' "$status" >"$temp_dir/host_status"
+  } &
+  local host_pid=$!
 
-  # Container probe: test from rootless container (using a cached image)
-  local container_image="docker.io/library/busybox:latest"
-  local container_output=""
-  if capture_command_with_timeout container_output container_status 30 \
-    podman run --rm "$container_image" sh -c 'timeout 20 wget -q -O /dev/null --no-check-certificate https://example.com && echo "container ok" || echo "container fail"' 2>/dev/null; then
-    container_result="$container_output"
-  else
-    container_result="container timeout"
-  fi
+  # VM probe: silent HTTPS connection from VM (background)
+  {
+    local result=""
+    local status=0
+    capture_command_with_timeout result status 20 \
+      podman machine ssh 'curl -sk --connect-timeout 8 --max-time 20 -o /dev/null -w "vm ok" https://example.com 2>/dev/null || echo "vm fail"'
+    printf '%s' "$result" >"$temp_dir/vm_result"
+    printf '%s' "$status" >"$temp_dir/vm_status"
+  } &
+  local vm_pid=$!
+
+  # Container probe: test from rootless container (background)
+  {
+    local result="container timeout"
+    local status=0
+    local container_image="docker.io/library/busybox:latest"
+    local container_output=""
+    if capture_command_with_timeout container_output status 30 \
+      podman run --rm "$container_image" sh -c 'timeout 20 wget -q -O /dev/null --no-check-certificate https://example.com && echo "container ok" || echo "container fail"' 2>/dev/null; then
+      result="$container_output"
+    fi
+    printf '%s' "$result" >"$temp_dir/container_result"
+    printf '%s' "$status" >"$temp_dir/container_status"
+  } &
+  local container_pid=$!
+
+  # Wait for all probes to complete
+  wait $host_pid $vm_pid $container_pid 2>/dev/null || true
+
+  # Collect results from temp files
+  host_result="$(cat "$temp_dir/host_result" 2>/dev/null || echo "host fail")"
+  host_status="$(cat "$temp_dir/host_status" 2>/dev/null || echo 1)"
+  vm_result="$(cat "$temp_dir/vm_result" 2>/dev/null || echo "vm fail")"
+  vm_status="$(cat "$temp_dir/vm_status" 2>/dev/null || echo 1)"
+  container_result="$(cat "$temp_dir/container_result" 2>/dev/null || echo "container fail")"
+  container_status="$(cat "$temp_dir/container_status" 2>/dev/null || echo 1)"
 
   # Summarize results
   printf 'HTTPS connectivity:\n'
@@ -1882,11 +1917,11 @@ run_main() {
   check_machine_start_lock
   check_machine_log_health
   check_engine_info
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_system_connections
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_host_registry_connectivity
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_dns_and_registry
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_container_https_egress
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_registry_ips
+  check_system_connections
+  check_host_registry_connectivity
+  check_vm_dns_and_registry
+  check_container_https_egress
+  check_vm_registry_ips
   [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_runtime_state
   [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_registry_auth_state
   [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_pull_target_image
