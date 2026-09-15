@@ -191,47 +191,53 @@ capture_command_with_timeout() {
   shift 3
 
   local output_file
-  local pid=""
+  local cmd_pid=0
+  local killer_pid=0
   local status=0
   local start_epoch=0
-  local elapsed=0
-  local last_reported=-1
 
   output_file="$(mktemp)"
 
   "$@" >"$output_file" 2>&1 &
-  pid=$!
+  cmd_pid=$!
   start_epoch="$EPOCHSECONDS"
 
-  # Poll at a fine grain so a command that finishes quickly (as every stubbed
-  # command in tests does) isn't held up by a full second of sleep latency.
-  while kill -0 "$pid" 2>/dev/null; do
-    elapsed=$((EPOCHSECONDS - start_epoch))
-    if [[ "$VERBOSE_MODE" == "1" ]] && (( elapsed != last_reported && (elapsed == 0 || elapsed % 5 == 0) )); then
-      log_verbose "still waiting (${elapsed}s/${timeout_seconds}s)"
-      last_reported=$elapsed
+  # Start background killer process that terminates the command if timeout is exceeded
+  # This eliminates polling with sleep 0.2 - wait() gives instant notification
+  {
+    sleep "$timeout_seconds"
+    if kill -0 "$cmd_pid" 2>/dev/null; then
+      kill "$cmd_pid" 2>/dev/null || true
     fi
-    if (( elapsed >= timeout_seconds )); then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-      printf -v "$output_var" '%s' "$(<"$output_file")"$'\n'"timed out after ${timeout_seconds}s"
-      rm -f "$output_file"
-      printf -v "$status_var" '%s' "124"
-      return 0
-    fi
+  } &
+  killer_pid=$!
 
-    sleep 0.2
-  done
-
-  if wait "$pid"; then
+  # Wait for command to complete; if it's still running after timeout,
+  # the killer process will terminate it
+  if wait "$cmd_pid" 2>/dev/null; then
     status=0
   else
     status=$?
   fi
 
-  printf -v "$output_var" '%s' "$(<"$output_file")"
+  # Kill the timeout killer if command finished before timeout
+  kill "$killer_pid" 2>/dev/null || true
+  wait "$killer_pid" 2>/dev/null || true
+
+  # Check if we timed out (status 143 = SIGTERM)
+  local elapsed=$((EPOCHSECONDS - start_epoch))
+  if (( status == 143 || (status == 0 && elapsed >= timeout_seconds) )); then
+    printf -v "$output_var" '%s' "$(<"$output_file")"$'\n'"timed out after ${timeout_seconds}s"
+    printf -v "$status_var" '%s' "124"
+  else
+    if [[ "$VERBOSE_MODE" == "1" ]] && (( elapsed > 0 )); then
+      log_verbose "completed in ${elapsed}s"
+    fi
+    printf -v "$output_var" '%s' "$(<"$output_file")"
+    printf -v "$status_var" '%s' "$status"
+  fi
+
   rm -f "$output_file"
-  printf -v "$status_var" '%s' "$status"
 }
 
 run_check() {
