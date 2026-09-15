@@ -8,32 +8,67 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/podman_troubleshoot"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
-make_stub_dir() {
+write_stub() {
+  local file_path="$1" body="$2"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$body" >"$file_path"
+  chmod +x "$file_path"
+}
+
+setup_common_stubs() {
   local stub_dir="$1"
 
   mkdir -p "$stub_dir"
-}
 
-write_fast_rootless_test_stub() {
-  local file_path="$1"
+  # Common docker stub
+  write_stub "$stub_dir/docker" '
+case "$1" in
+  version)
+    printf "Client 27.0.0\n"
+    ;;
+  info)
+    printf "Docker Engine: ok\n"
+    ;;
+  system|context)
+    exit 0
+    ;;
+esac
+exit 0
+'
 
-  write_stub "$file_path" '
+  # Common curl stub
+  write_stub "$stub_dir/curl" 'exit 0'
+
+  # Common strings stub
+  write_stub "$stub_dir/strings" 'cat "$1"'
+
+  # Common rootless test stub
+  write_stub "$stub_dir/docker_socket_rootless_test" '
 printf "Docker socket rootless routing is working on port 8080\n"
 exit 0
 '
-}
 
-write_stub() {
-  local file_path="$1"
-  shift
-  local body="$1"
+  # Common lsof stub for port checks
+  write_stub "$stub_dir/lsof" '
+if [[ "$*" == *"TCP:443"* ]]; then
+  printf "COMMAND   PID   USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+  printf "gvproxy 60785 jesper   16u  IPv6 0x5fc06bc4a491bdc5      0t0  TCP *:443 (LISTEN)\n"
+fi
+exit 0
+'
 
-  cat >"$file_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$body
-EOF
-  chmod +x "$file_path"
+  # Common getent stub for host lookups
+  write_stub "$stub_dir/getent" '
+exit 0
+'
+
+  # Common dig stub for DNS
+  write_stub "$stub_dir/dig" '
+printf "127.0.0.1\n"
+exit 0
+'
+
+  # Common sleep stub - do nothing immediately
+  write_stub "$stub_dir/sleep" 'exit 0'
 }
 
 test_journald_io_errors_trigger_actionable_recovery_hint() {
@@ -44,127 +79,46 @@ test_journald_io_errors_trigger_actionable_recovery_hint() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
 
   write_stub "$stub_dir/podman" '
 case "$1" in
-  ps)
-    exit 0
-    ;;
-  version)
-    printf "Client 5.6.1\n"
-    exit 0
-    ;;
-  info)
-    printf "host: ok\n"
-    exit 0
-    ;;
+  ps) exit 0 ;;
+  version) printf "Client 5.6.1\n"; exit 0 ;;
+  info) printf "host: ok\n"; exit 0 ;;
   machine)
     case "$2" in
-      list)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
-        ;;
-      inspect)
-        printf "{\"Name\":\"podman-machine-default\"}\n"
-        ;;
-      ssh)
-        exit 0
-        ;;
-      connection)
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
+      list) printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n" ;;
+      inspect) printf "{\"Name\":\"podman-machine-default\"}\n" ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".Running"*)
-    printf "true\n"
-    ;;
-  *".Starting"*)
-    printf "false\n"
-    ;;
-  *".State // \"unknown\""*)
-    printf "running\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".Running"*) printf "true\n" ;;
+  *".Starting"*) printf "false\n" ;;
+  *".State // \"unknown\""*) printf "running\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
-'
-
-  write_stub "$stub_dir/strings" '
-cat "$1"
 '
 
   write_stub "$stub_dir/rg" '
 pattern=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -n|-i|-N)
-      shift
-      ;;
-    *)
-      pattern="$1"
-      shift
-      break
-      ;;
-  esac
+  case "$1" in -n|-i|-N) shift ;; *) pattern="$1"; shift; break ;; esac
 done
-
 grep -Ein "$pattern"
 '
 
@@ -172,8 +126,6 @@ grep -Ein "$pattern"
 [435791.625125] systemd-journald[770]: Failed to open /var/log/journal/ad209d968eb84885b8fc2b9f8e277dd3: Input/output error
 [435792.875597] systemd-journald[770]: Failed to rotate /var/log/journal/ad209d968eb84885b8fc2b9f8e277dd3/system.journal: Input/output error
 EOF
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -206,127 +158,46 @@ test_emergency_mode_log_triggers_rebuild_hint() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
 
   write_stub "$stub_dir/podman" '
 case "$1" in
-  ps)
-    exit 0
-    ;;
-  version)
-    printf "Client 5.6.1\n"
-    exit 0
-    ;;
-  info)
-    printf "host: ok\n"
-    exit 0
-    ;;
+  ps) exit 0 ;;
+  version) printf "Client 5.6.1\n"; exit 0 ;;
+  info) printf "host: ok\n"; exit 0 ;;
   machine)
     case "$2" in
-      list)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
-        ;;
-      inspect)
-        printf "{\"Name\":\"podman-machine-default\"}\n"
-        ;;
-      ssh)
-        exit 0
-        ;;
-      connection)
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
+      list) printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n" ;;
+      inspect) printf "{\"Name\":\"podman-machine-default\"}\n" ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".Running"*)
-    printf "true\n"
-    ;;
-  *".Starting"*)
-    printf "false\n"
-    ;;
-  *".State // \"unknown\""*)
-    printf "running\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".Running"*) printf "true\n" ;;
+  *".Starting"*) printf "false\n" ;;
+  *".State // \"unknown\""*) printf "running\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
-'
-
-  write_stub "$stub_dir/strings" '
-cat "$1"
 '
 
   write_stub "$stub_dir/rg" '
 pattern=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -n|-i|-N)
-      shift
-      ;;
-    *)
-      pattern="$1"
-      shift
-      break
-      ;;
-  esac
+  case "$1" in -n|-i|-N) shift ;; *) pattern="$1"; shift; break ;; esac
 done
-
 grep -Ein "$pattern"
 '
 
@@ -336,8 +207,6 @@ Failed to start systemd-fsck-root.service - File System Check on /dev/disk/by-uu
 Entering emergency mode. Exit the shell to continue.
 Press Enter for system maintenance
 EOF
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -366,131 +235,47 @@ test_benign_ignition_boot_lines_do_not_mark_log_unhealthy() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
 
   write_stub "$stub_dir/podman" '
 case "$1" in
-  ps)
-    exit 0
-    ;;
-  version)
-    printf "Client 5.6.1\n"
-    exit 0
-    ;;
-  info)
-    printf "host: ok\n"
-    exit 0
-    ;;
+  ps) exit 0 ;;
+  version) printf "Client 5.6.1\n"; exit 0 ;;
+  info) printf "host: ok\n"; exit 0 ;;
   machine)
     case "$2" in
-      list)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
-        ;;
-      inspect)
-        printf "{\"Name\":\"podman-machine-default\"}\n"
-        ;;
-      ssh)
-        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
-          printf "443\n"
-        else
-          exit 0
-        fi
-        ;;
-      connection)
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
+      list) printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n" ;;
+      inspect) printf "{\"Name\":\"podman-machine-default\"}\n" ;;
+      ssh) [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]] && printf "443\n" ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".Running"*)
-    printf "true\n"
-    ;;
-  *".Starting"*)
-    printf "false\n"
-    ;;
-  *".State // \"unknown\""*)
-    printf "running\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".Running"*) printf "true\n" ;;
+  *".Starting"*) printf "false\n" ;;
+  *".State // \"unknown\""*) printf "running\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
-'
-
-  write_stub "$stub_dir/strings" '
-cat "$1"
 '
 
   write_stub "$stub_dir/rg" '
 pattern=""
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -n|-i|-N)
-      shift
-      ;;
-    *)
-      pattern="$1"
-      shift
-      break
-      ;;
-  esac
+  case "$1" in -n|-i|-N) shift ;; *) pattern="$1"; shift; break ;; esac
 done
-
 grep -Ein "$pattern"
 '
 
@@ -500,8 +285,6 @@ systemd[1]: Finished coreos-ignition-unique-boot.service - CoreOS Ignition Ensur
 [    4.102150] systemd[1]: coreos-ignition-unique-boot.service: Deactivated successfully.
 systemd[1]: Stopped coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
 EOF
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -527,31 +310,36 @@ test_fix_force_starts_machine_refreshes_socket_and_verifies() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
 
   write_stub "$stub_dir/podman" '
 state_dir="${PODMAN_TEST_STATE_DIR:?}"
 running_file="$state_dir/running"
 default_file="$state_dir/default_connection"
-
 case "$1" in
   ps)
     if [[ -f "$running_file" ]]; then
       printf "CONTAINER ID  IMAGE\n"
-      exit 0
+    else
+      printf "Cannot connect to Podman. Please verify your connection\n" >&2
+      printf "Error: unable to connect to Podman socket\n" >&2
+      exit 125
     fi
-    printf "Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM\n" >&2
-    printf "Error: unable to connect to Podman socket: failed to connect: dial tcp 127.0.0.1:58715: connect: connection refused\n" >&2
-    exit 125
+    exit 0
     ;;
-  info|version)
+  info)
     if [[ -f "$running_file" ]]; then
       printf "host: ok\n"
-      exit 0
+    else
+      printf "Error: machine is stopped\n" >&2
+      exit 125
     fi
-    printf "Error: machine is stopped\n" >&2
-    exit 125
+    exit 0
+    ;;
+  version)
+    printf "Client 5.6.1\n"
+    exit 0
     ;;
   machine)
     case "$2" in
@@ -594,9 +382,6 @@ case "$1" in
       set)
         printf "rootful updated\n"
         ;;
-      *)
-        exit 0
-        ;;
     esac
     exit 0
     ;;
@@ -605,22 +390,14 @@ case "$1" in
       connection)
         if [[ "$3" == "list" ]]; then
           current_default="podman-machine-default"
-          if [[ -f "$default_file" ]]; then
-            current_default="$(cat "$default_file")"
-          fi
+          [[ -f "$default_file" ]] && current_default="$(cat "$default_file")"
           printf "[{\"Name\":\"%s\",\"Default\":true}]\n" "$current_default"
         elif [[ "$3" == "default" ]]; then
           printf "%s\n" "$4" >"$default_file"
           printf "Default connection set to %s\n" "$4"
         fi
         ;;
-      *)
-        exit 0
-        ;;
     esac
-    exit 0
-    ;;
-  *)
     exit 0
     ;;
 esac
@@ -630,40 +407,14 @@ esac
 query="${*: -1}"
 input="$(cat)"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    if [[ "$input" == *"podman-machine-default-root"* ]]; then
-      printf "podman-machine-default-root\n"
-    else
-      printf "podman-machine-default\n"
-    fi
-    ;;
-  *"select(.Name == \$name and .Running == true) | .Name"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "podman-machine-default\n"
-      exit 0
-    fi
-    exit 1
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "true\n"
-    else
-      printf "false\n"
-    fi
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat <<<"$input"
-    ;;
+  *"select(.Default == true) | .Name"*) [[ "$input" == *"podman-machine-default-root"* ]] && printf "podman-machine-default-root\n" || printf "podman-machine-default\n" ;;
+  *"select(.Name == \$name and .Running == true) | .Name"*) [[ "$input" == *"\"Running\":true"* ]] && { printf "podman-machine-default\n"; exit 0; }; exit 1 ;;
+  *".[] | select(.Name == \$name) | .Running"*) [[ "$input" == *"\"Running\":true"* ]] && printf "true\n" || printf "false\n" ;;
+  *".[] | select(.Name == \$name) | .Starting"*) printf "false\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat <<<"$input" ;;
 esac
 '
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -695,7 +446,7 @@ test_fix_force_recreates_low_memory_machine() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
   printf '2048\n' >"$work_dir/state/memory"
 
@@ -705,13 +456,16 @@ running_file="$state_dir/running"
 default_file="$state_dir/default_connection"
 memory_file="$state_dir/memory"
 calls_file="$state_dir/calls.log"
-
 case "$1" in
   ps)
     printf "CONTAINER ID  IMAGE\n"
     exit 0
     ;;
-  info|version)
+  version)
+    printf "Client 5.6.1\n"
+    exit 0
+    ;;
+  info)
     printf "host: ok\n"
     exit 0
     ;;
@@ -732,13 +486,8 @@ case "$1" in
           printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
         fi
         ;;
-      rm)
-        exit 0
-        ;;
-      init)
-        printf "8192\n" >"$memory_file"
-        exit 0
-        ;;
+      rm|stop) exit 0 ;;
+      init) printf "8192\n" >"$memory_file"; exit 0 ;;
       ssh)
         if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
           if [[ -f "$state_dir/port443" ]]; then
@@ -751,19 +500,8 @@ case "$1" in
           printf "net.ipv4.ip_unprivileged_port_start = 443\n"
         fi
         ;;
-      start)
-        : >"$running_file"
-        printf "Machine started\n"
-        ;;
-      stop)
-        printf "Machine stopped\n"
-        ;;
-      set)
-        printf "rootful updated\n"
-        ;;
-      *)
-        exit 0
-        ;;
+      start) : >"$running_file"; printf "Machine started\n" ;;
+      set) printf "rootful updated\n" ;;
     esac
     exit 0
     ;;
@@ -772,22 +510,14 @@ case "$1" in
       connection)
         if [[ "$3" == "list" ]]; then
           current_default="podman-machine-default"
-          if [[ -f "$default_file" ]]; then
-            current_default="$(cat "$default_file")"
-          fi
+          [[ -f "$default_file" ]] && current_default="$(cat "$default_file")"
           printf "[{\"Name\":\"%s\",\"Default\":true}]\n" "$current_default"
         elif [[ "$3" == "default" ]]; then
           printf "%s\n" "$4" >"$default_file"
           printf "Default connection set to %s\n" "$4"
         fi
         ;;
-      *)
-        exit 0
-        ;;
     esac
-    exit 0
-    ;;
-  *)
     exit 0
     ;;
 esac
@@ -797,40 +527,14 @@ esac
 query="${*: -1}"
 input="$(cat)"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    if [[ "$input" == *"podman-machine-default-root"* ]]; then
-      printf "podman-machine-default-root\n"
-    else
-      printf "podman-machine-default\n"
-    fi
-    ;;
-  *"select(.Name == \$name and .Running == true) | .Name"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "podman-machine-default\n"
-      exit 0
-    fi
-    exit 1
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "true\n"
-    else
-      printf "false\n"
-    fi
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat <<<"$input"
-    ;;
+  *"select(.Default == true) | .Name"*) [[ "$input" == *"podman-machine-default-root"* ]] && printf "podman-machine-default-root\n" || printf "podman-machine-default\n" ;;
+  *"select(.Name == \$name and .Running == true) | .Name"*) [[ "$input" == *"\"Running\":true"* ]] && { printf "podman-machine-default\n"; exit 0; }; exit 1 ;;
+  *".[] | select(.Name == \$name) | .Running"*) [[ "$input" == *"\"Running\":true"* ]] && printf "true\n" || printf "false\n" ;;
+  *".[] | select(.Name == \$name) | .Starting"*) printf "false\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat <<<"$input" ;;
 esac
 '
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -855,7 +559,7 @@ test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home"
 
   write_stub "$stub_dir/podman" '
@@ -878,89 +582,34 @@ case "$1" in
         printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false}]\n"
         ;;
       inspect)
-        if [[ "$4" == "{{.Rootful}}" ]]; then
-          printf "false\n"
-        else
-          printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
-        fi
+        [[ "$4" == "{{.Rootful}}" ]] && printf "false\n" && exit 0
+        printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
         ;;
       ssh)
-        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
-          printf "1024\n"
-        else
-          exit 0
-        fi
-        ;;
-      *)
+        [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]] && printf "1024\n"
         exit 0
         ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    printf "true\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".[] | select(.Name == \$name) | .Running"*) printf "true\n" ;;
+  *".[] | select(.Name == \$name) | .Starting"*) printf "false\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
 '
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -988,105 +637,43 @@ test_starting_machine_is_not_reported_as_healthy() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home"
 
   write_stub "$stub_dir/podman" '
 case "$1" in
   ps)
-    printf "Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM\n" >&2
-    printf "Error: unable to connect to Podman socket: failed to connect: dial tcp 127.0.0.1:58715: connect: connection refused\n" >&2
+    printf "Cannot connect to Podman. Please verify your connection\n" >&2
+    printf "Error: unable to connect to Podman socket\n" >&2
     exit 125
     ;;
-  version)
-    printf "Client 5.6.1\n"
-    exit 0
-    ;;
-  info)
-    printf "host: ok\n"
-    exit 0
-    ;;
+  version) printf "Client 5.6.1\n"; exit 0 ;;
+  info) printf "host: ok\n"; exit 0 ;;
   machine)
     case "$2" in
-      list)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":true}]\n"
-        ;;
-      inspect)
-        printf "{\"Name\":\"podman-machine-default\"}\n"
-        ;;
-      ssh)
-        exit 0
-        ;;
-      *)
-        exit 0
-        ;;
+      list) printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":true}]\n" ;;
+      inspect) printf "{\"Name\":\"podman-machine-default\"}\n" ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    printf "true\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "true\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".[] | select(.Name == \$name) | .Running"*) printf "true\n" ;;
+  *".[] | select(.Name == \$name) | .Starting"*) printf "true\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
 '
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
@@ -1112,115 +699,44 @@ test_verbose_flag_prints_progress_lines() {
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
-  make_stub_dir "$stub_dir"
+  setup_common_stubs "$stub_dir"
   mkdir -p "$work_dir/home"
 
   write_stub "$stub_dir/podman" '
 case "$1" in
-  ps)
-    printf "CONTAINER ID  IMAGE\n"
-    exit 0
-    ;;
-  version)
-    printf "Client 5.6.1\n"
-    exit 0
-    ;;
-  info)
-    printf "host: ok\n"
-    exit 0
-    ;;
+  ps) printf "CONTAINER ID  IMAGE\n"; exit 0 ;;
+  version) printf "Client 5.6.1\n"; exit 0 ;;
+  info) printf "host: ok\n"; exit 0 ;;
   machine)
     case "$2" in
-      list)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n"
-        ;;
+      list) printf "[{\"Name\":\"podman-machine-default\",\"Default\":true,\"Running\":true,\"Starting\":false,\"State\":\"running\"}]\n" ;;
       inspect)
-        if [[ "$4" == "{{.Rootful}}" ]]; then
-          printf "false\n"
-        else
-          printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
-        fi
+        [[ "$4" == "{{.Rootful}}" ]] && printf "false\n" && exit 0
+        printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
         ;;
-      ssh)
-        if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
-          printf "443\n"
-        else
-          exit 0
-        fi
-        ;;
-      *)
-        exit 0
-        ;;
+      ssh) [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]] && printf "443\n" ;;
     esac
     exit 0
     ;;
   system)
-    case "$2" in
-      connection)
-        printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
-        ;;
-      *)
-        exit 0
-        ;;
-    esac
-    exit 0
-    ;;
-  *)
+    [[ "$2" == "connection" ]] && printf "[{\"Name\":\"podman-machine-default\",\"Default\":true}]\n"
     exit 0
     ;;
 esac
-'
-
-  write_stub "$stub_dir/docker" '
-case "$1" in
-  version)
-    printf "Client 27.0.0\n"
-    ;;
-  info)
-    printf "Docker Engine: ok\n"
-    ;;
-  system)
-    exit 0
-    ;;
-  context)
-    exit 0
-    ;;
-esac
-exit 0
-'
-
-  write_stub "$stub_dir/curl" '
-exit 0
 '
 
   write_stub "$stub_dir/jq" '
 query="${*: -1}"
 case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".Running"*)
-    printf "true\n"
-    ;;
-  *".Starting"*)
-    printf "false\n"
-    ;;
-  *".State // \"unknown\""*)
-    printf "running\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
+  *"select(.Default == true) | .Name"*) printf "podman-machine-default\n" ;;
+  *"[.[] | select(.Default == true)] | length"*) printf "1\n" ;;
+  *".Running"*) printf "true\n" ;;
+  *".Starting"*) printf "false\n" ;;
+  *".State // \"unknown\""*) printf "running\n" ;;
+  *"length"*) printf "1\n" ;;
+  *) cat ;;
 esac
 '
-
-  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command output status env \
     NO_COLOR=1 \
