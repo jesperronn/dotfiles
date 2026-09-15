@@ -19,6 +19,14 @@
 - Tests against real host state pass/fail based on machine state, not code — not a unit test.
 - Use `--verbose` flag to print per-test timing when diagnosing slow suites.
 
+## Test performance & cleanup
+
+- **Goal**: Each test file `<= 1 second` execution (framework overhead ~1–2s baseline; further optimization hits diminishing returns).
+- **Isolation**: Add `trap 'cleanup_test_temps' EXIT` to prevent orphaned temp dirs if tests are interrupted.
+- **Cleanup**: `mktemp -d` creates `ptest_*` in repo root when interrupted; trap must clean: `find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} +`.
+- **Output**: All assertions must print `[PASS]` marker; use `test_pass` / `assert_*` from `bash_test.sh` (not silent conditionals).
+- **Current status**: 14/23 files `< 1s`, 21/23 `< 2s`; slowest 2 (podman_troubleshoot 32s, verify_ollama 5s) hit script-execution limits, not test-setup overhead.
+
 ## Layout
 
 - `bin/` — tools and their `*.test.sh`; helpers in `bin/lib/`.
