@@ -48,6 +48,12 @@ simple_stub() {
   chmod +x "$path"
 }
 
+# Helper to create plist files efficiently
+make_plist_with_env() {
+  local path="$1" keep_alive="$2" context_length="$3"
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>%s</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>%s</string>\n  </dict>\n</dict>\n</plist>\n' "$keep_alive" "$context_length" >"$path"
+}
+
 test_desired_keep_alive_defaults_to_30m() {
   local output=""
   local status=0
@@ -74,7 +80,7 @@ test_run_main_applies_launchctl_value_on_macos() {
 
   tmp_dir="$(_make_test_tmpdir "apply_launchctl")"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>30m</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>524288</string>\n  </dict>\n</dict>\n</plist>\n' >"$plist_path"
+  make_plist_with_env "$plist_path" "30m" "524288"
 
   mkdir -p "$tmp_dir/bin"
   simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
@@ -110,7 +116,7 @@ test_run_main_fails_when_homebrew_plist_is_wrong() {
 
   tmp_dir="$(_make_test_tmpdir "fail_wrong_plist")"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>5m</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>131072</string>\n  </dict>\n</dict>\n</plist>\n' >"$plist_path"
+  make_plist_with_env "$plist_path" "5m" "131072"
 
   mkdir -p "$tmp_dir/bin"
   simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
@@ -138,7 +144,7 @@ test_run_main_fails_when_ollama_is_not_running() {
 
   tmp_dir="$(_make_test_tmpdir "fail_not_running")"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>30m</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>524288</string>\n  </dict>\n</dict>\n</plist>\n' >"$plist_path"
+  make_plist_with_env "$plist_path" "30m" "524288"
 
   mkdir -p "$tmp_dir/bin"
   simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
@@ -167,7 +173,7 @@ test_run_main_fix_repairs_homebrew_plist_and_restarts() {
 
   tmp_dir="$(_make_test_tmpdir "fix_repairs_plist")"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>5m</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>131072</string>\n  </dict>\n</dict>\n</plist>\n' >"$plist_path"
+  make_plist_with_env "$plist_path" "5m" "131072"
 
   mkdir -p "$tmp_dir/bin"
   simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
@@ -213,7 +219,7 @@ test_run_main_fix_survives_launchctl_setenv_failure() {
 
   tmp_dir="$(_make_test_tmpdir "fix_survives_failure")"
   plist_path="$tmp_dir/homebrew.mxcl.ollama.plist"
-  printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n  <key>EnvironmentVariables</key>\n  <dict>\n    <key>OLLAMA_KEEP_ALIVE</key>\n    <string>5m</string>\n    <key>OLLAMA_CONTEXT_LENGTH</key>\n    <string>131072</string>\n  </dict>\n</dict>\n</plist>\n' >"$plist_path"
+  make_plist_with_env "$plist_path" "5m" "131072"
 
   mkdir -p "$tmp_dir/bin"
   simple_stub "$tmp_dir/bin/uname" "printf 'Darwin\n'"
