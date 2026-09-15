@@ -1,4 +1,0 @@
-Ignition has failed. Please ensure your config is valid.
-Failed to start systemd-fsck-root.service - File System Check on /dev/disk/by-uuid/example.
-Entering emergency mode. Exit the shell to continue.
-Press Enter for system maintenance

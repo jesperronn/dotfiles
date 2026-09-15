@@ -1,4 +1,0 @@
-systemd[1]: Starting coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem...
-systemd[1]: Finished coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
-[    4.102150] systemd[1]: coreos-ignition-unique-boot.service: Deactivated successfully.
-systemd[1]: Stopped coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem.
