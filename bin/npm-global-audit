@@ -15,15 +15,48 @@ COLOR_MODE="auto"
 COLOR_ENABLED=0
 WORK_DIR=""
 HAD_FAILURE=0
+JOBS=""
+TTY_ENABLED=0
+TTY_COLUMNS=80
+TTY_ROWS=24
+TTY_SPEC_WIDTH=0
+TTY_FULL_TABLE=1
+AUTOWRAP_DISABLED=0
+PROGRESS_TOTAL=0
+PROGRESS_DONE=0
+POLL_INTERVAL="${NPM_GLOBAL_AUDIT_POLL_INTERVAL:-0.05}"
+OUTDATED_PID=""
+OUTDATED_READY=0
+RENDERED_LINE=""
+TRUNCATED_TEXT=""
+
+NAMES=()
+VERSIONS=()
+SPECS=()
+JOB_DIRS=()
+JOB_PIDS=()
+JOB_ACTIVE=()
+RESULT_KIND=()
+RESULT_TOTAL=()
+RESULT_LOW=()
+RESULT_MODERATE=()
+RESULT_HIGH=()
+RESULT_CRITICAL=()
+RESULT_ERROR=()
+OUTDATED_NAMES=()
+VULNERABLE_WITHOUT_UPDATE=()
+declare -A LATEST_MAP=()
+declare -A ADVISORY_TEXT=()
 
 C_RESET=$'\033[0m'
 C_GREEN=$'\033[32m'
 C_YELLOW=$'\033[33m'
 C_ORANGE=$'\033[38;5;208m'
 C_RED=$'\033[31m'
+C_DIM=$'\033[2m'
 
 usage_short() {
-  printf 'Usage: %s [--color|--no-color|--help]\n' "$PROG" >&2
+  printf 'Usage: %s [--jobs N|--color|--no-color|--help]\n' "$PROG" >&2
 }
 
 print_help() {
@@ -37,9 +70,10 @@ changed; freshly resolved transitive dependencies are reported and are NOT the
 installed globally hoisted tree.
 
 Usage:
-  $PROG [--color|--no-color|--help]
+  $PROG [--jobs N|--color|--no-color|--help]
 
 Options:
+  --jobs N        Audit up to N packages concurrently (default: max(CPUs, 8)).
   --color        Force colorized output.
   --no-color     Disable colorized output (also the default when stdout is not a TTY).
   -h, --help     Show this help.
@@ -54,6 +88,23 @@ EOF
 parse_opts() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --jobs)
+        shift
+        if [[ $# -eq 0 || ! "$1" =~ ^[1-9][0-9]*$ ]]; then
+          printf '%s: --jobs requires a positive integer\n' "$PROG" >&2
+          usage_short
+          exit 2
+        fi
+        JOBS="$1"
+        ;;
+      --jobs=*)
+        JOBS="${1#--jobs=}"
+        if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
+          printf '%s: --jobs requires a positive integer\n' "$PROG" >&2
+          usage_short
+          exit 2
+        fi
+        ;;
       --color)
         COLOR_MODE="always"
         ;;
@@ -83,6 +134,21 @@ parse_opts() {
   done
 }
 
+default_jobs() {
+  local processors=""
+  processors="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  if [[ ! "$processors" =~ ^[1-9][0-9]*$ ]]; then
+    processors="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+  fi
+  if [[ ! "$processors" =~ ^[1-9][0-9]*$ ]]; then
+    processors=8
+  fi
+  if (( processors < 8 )); then
+    processors=8
+  fi
+  printf '%s' "$processors"
+}
+
 enable_color() {
   case "$COLOR_MODE" in
     always)
@@ -103,9 +169,124 @@ enable_color() {
   esac
 }
 
+truncate_plain_text() {
+  local text="$1" max_width="$2"
+  if (( max_width <= 0 )); then
+    TRUNCATED_TEXT=""
+  elif (( ${#text} <= max_width )); then
+    TRUNCATED_TEXT="$text"
+  elif (( max_width == 1 )); then
+    TRUNCATED_TEXT="…"
+  else
+    TRUNCATED_TEXT="${text:0:max_width-1}…"
+  fi
+}
+
+detect_tty_layout() {
+  local columns="${NPM_GLOBAL_AUDIT_TTY_COLUMNS:-}"
+  local rows="${NPM_GLOBAL_AUDIT_TTY_ROWS:-}" max_spec_width result_width=24
+  if [[ ! "$columns" =~ ^[1-9][0-9]*$ ]]; then
+    columns="$(tput cols 2>/dev/null || true)"
+  fi
+  if [[ ! "$rows" =~ ^[1-9][0-9]*$ ]]; then
+    rows="$(tput lines 2>/dev/null || true)"
+  fi
+  [[ "$columns" =~ ^[1-9][0-9]*$ ]] || columns=80
+  [[ "$rows" =~ ^[1-9][0-9]*$ ]] || rows=24
+  TTY_COLUMNS="$columns"
+  TTY_ROWS="$rows"
+  TTY_FULL_TABLE=1
+  if (( PROGRESS_TOTAL + 2 > TTY_ROWS )); then
+    TTY_FULL_TABLE=0
+  fi
+  if (( TTY_COLUMNS - 2 < result_width + 1 )); then
+    result_width=7
+  fi
+  max_spec_width=$((TTY_COLUMNS - 2 - result_width))
+  (( max_spec_width > 0 )) || max_spec_width=1
+  TTY_SPEC_WIDTH="$width"
+  (( TTY_SPEC_WIDTH <= max_spec_width )) || TTY_SPEC_WIDTH="$max_spec_width"
+}
+
+compose_tty_plain_line() {
+  local spec="$1" text="$2" spec_text result_width
+  truncate_plain_text "$spec" "$TTY_SPEC_WIDTH"
+  spec_text="$TRUNCATED_TEXT"
+  result_width=$((TTY_COLUMNS - TTY_SPEC_WIDTH - 2))
+  truncate_plain_text "$text" "$result_width"
+  printf -v RENDERED_LINE '%-*s  %s' "$TTY_SPEC_WIDTH" "$spec_text" "$TRUNCATED_TEXT"
+}
+
+compose_tty_result_line() {
+  local spec="$1" total="$2" low="$3" moderate="$4" high="$5" critical="$6" text="$7"
+  local spec_text result_text colored result_width
+  truncate_plain_text "$spec" "$TTY_SPEC_WIDTH"
+  spec_text="$TRUNCATED_TEXT"
+  result_width=$((TTY_COLUMNS - TTY_SPEC_WIDTH - 2))
+  truncate_plain_text "$text" "$result_width"
+  result_text="$TRUNCATED_TEXT"
+  colored="$(colorize_result "$total" "$low" "$moderate" "$high" "$critical" "$result_text")"
+  printf -v RENDERED_LINE '%-*s  %s' "$TTY_SPEC_WIDTH" "$spec_text" "$colored"
+}
+
+render_progress_status() {
+  local status
+  status="Resolving and auditing packages: ${PROGRESS_DONE}/${PROGRESS_TOTAL} complete"
+  truncate_plain_text "$status" "$TTY_COLUMNS"
+  printf '\r\033[2K%s' "$TRUNCATED_TEXT"
+}
+
+render_tty_pending_rows() {
+  local spec spec_text pending_text result_width
+  if (( TTY_FULL_TABLE )); then
+    for spec in "${SPECS[@]}"; do
+      if (( COLOR_ENABLED )); then
+        truncate_plain_text "$spec" "$TTY_SPEC_WIDTH"
+        spec_text="$TRUNCATED_TEXT"
+        result_width=$((TTY_COLUMNS - TTY_SPEC_WIDTH - 2))
+        truncate_plain_text "pending" "$result_width"
+        pending_text="$TRUNCATED_TEXT"
+        printf '%-*s  %s%s%s\n' "$TTY_SPEC_WIDTH" "$spec_text" \
+          "$C_DIM" "$pending_text" "$C_RESET"
+      else
+        compose_tty_plain_line "$spec" "pending"
+        printf '%s\n' "$RENDERED_LINE"
+      fi
+    done
+  fi
+  render_progress_status
+  truncate_plain_text "Checking for available updates..." "$TTY_COLUMNS"
+  printf '\n\r\033[2K%s\033[1A\r' "$TRUNCATED_TEXT"
+}
+
+replace_tty_row() {
+  local index="$1" text="$2" rows_above_status
+  if (( ! TTY_FULL_TABLE )); then
+    render_progress_status
+    return 0
+  fi
+  rows_above_status=$((PROGRESS_TOTAL - index))
+  printf '\r\033[%dA\033[2K%s\033[%dB\r' \
+    "$rows_above_status" "$text" "$rows_above_status"
+  render_progress_status
+}
+
+clear_update_phase() {
+  (( TTY_ENABLED )) || return 0
+  printf '\033[1B\r\033[2K\033[1A\r'
+}
+
+finish_tty_progress() {
+  printf '\r\033[2K\033[1B\r\033[2K\033[1A\r\033[?7h\n'
+  AUTOWRAP_DISABLED=0
+}
+
 # Removed on exit via the trap; shellcheck cannot see trap-based calls.
 # shellcheck disable=SC2329
 cleanup() {
+  if (( AUTOWRAP_DISABLED )); then
+    printf '\033[?7h'
+  fi
   if [[ -n "$WORK_DIR" && -d "$WORK_DIR" ]]; then
     rm -rf "$WORK_DIR"
   fi
@@ -244,21 +425,233 @@ colorize_result() {
   printf '%s%s%s' "$color" "$text" "$C_RESET"
 }
 
-render_result_row() {
-  local spec="$1" total="$2" low="$3" moderate="$4" high="$5" critical="$6" text="$7"
-  local colored
-  colored="$(colorize_result "$total" "$low" "$moderate" "$high" "$critical" "$text")"
-  printf '%-*s  %s\n' "$width" "$spec" "$colored"
+# Run the registry-bound work for one package in an isolated directory. Results
+# are files so concurrent workers cannot interleave terminal output.
+audit_package() {
+  local spec="$1" job_dir="$2"
+  local package_dir="${job_dir}/package"
+  local install_out="" install_status=0 audit_out_file="${job_dir}/audit.json"
+  local audit_err_file="${job_dir}/audit.err" counts=""
+
+  mkdir -p "$package_dir"
+  set +e
+  install_out="$(npm --prefix "$package_dir" install --package-lock-only --ignore-scripts --no-audit "$spec" 2>&1)"
+  install_status=$?
+  set -e
+  if (( install_status != 0 )); then
+    last_nonempty "$install_out" >"${job_dir}/error"
+    printf 'install\n' >"${job_dir}/status.tmp"
+    mv "${job_dir}/status.tmp" "${job_dir}/status"
+    return 0
+  fi
+
+  set +e
+  npm --prefix "$package_dir" audit --json >"$audit_out_file" 2>"$audit_err_file" || true
+  set -e
+  counts="$(parse_vulns "$audit_out_file" 2>/dev/null)" || counts=""
+  if [[ -z "$counts" ]]; then
+    last_nonempty "$(cat "$audit_err_file" 2>/dev/null || true)" >"${job_dir}/error"
+    printf 'audit\n' >"${job_dir}/status.tmp"
+    mv "${job_dir}/status.tmp" "${job_dir}/status"
+    return 0
+  fi
+
+  printf '%s\n' "$counts" >"${job_dir}/counts"
+  printf 'ok\n' >"${job_dir}/status.tmp"
+  mv "${job_dir}/status.tmp" "${job_dir}/status"
 }
 
-render_error_row() {
-  local spec="$1" text="$2"
-  printf '%-*s  %s\n' "$width" "$spec" "$text"
+start_outdated_lookup() {
+  (
+    set +e
+    npm --no-audit outdated -g --json >"${WORK_DIR}/outdated.json.tmp" 2>/dev/null
+    mv "${WORK_DIR}/outdated.json.tmp" "${WORK_DIR}/outdated.json"
+    printf 'done\n' >"${WORK_DIR}/outdated.status.tmp"
+    mv "${WORK_DIR}/outdated.status.tmp" "${WORK_DIR}/outdated.status"
+  ) &
+  OUTDATED_PID=$!
+}
+
+compose_result_line() {
+  local index="$1" name="$2" spec="$3"
+  local kind="${RESULT_KIND[$index]}" text="" colored="" latest=""
+  if [[ "$kind" != "ok" ]]; then
+    if (( TTY_ENABLED )); then
+      compose_tty_plain_line "$spec" "${RESULT_ERROR[$index]}"
+    else
+      printf -v RENDERED_LINE '%-*s  %s' "$width" "$spec" "${RESULT_ERROR[$index]}"
+    fi
+    return 0
+  fi
+
+  text="$(format_vuln_text \
+    "${RESULT_TOTAL[$index]}" "${RESULT_LOW[$index]}" \
+    "${RESULT_MODERATE[$index]}" "${RESULT_HIGH[$index]}" \
+    "${RESULT_CRITICAL[$index]}")"
+  if (( OUTDATED_READY )); then
+    latest="${LATEST_MAP[$name]:-}"
+    if [[ -n "$latest" && "$latest" != "${VERSIONS[$index]}" ]]; then
+      text="${text} — outdated, ${latest} available"
+    fi
+  fi
+  if (( TTY_ENABLED )); then
+    compose_tty_result_line "$spec" \
+      "${RESULT_TOTAL[$index]}" "${RESULT_LOW[$index]}" \
+      "${RESULT_MODERATE[$index]}" "${RESULT_HIGH[$index]}" \
+      "${RESULT_CRITICAL[$index]}" "$text"
+    return 0
+  fi
+  colored="$(colorize_result \
+    "${RESULT_TOTAL[$index]}" "${RESULT_LOW[$index]}" \
+    "${RESULT_MODERATE[$index]}" "${RESULT_HIGH[$index]}" \
+    "${RESULT_CRITICAL[$index]}" "$text")"
+  printf -v RENDERED_LINE '%-*s  %s' "$width" "$spec" "$colored"
+}
+
+render_completed_job() {
+  local index="$1" name="$2" spec="$3" job_dir="$4"
+  local status="" counts="" err_line="" total low moderate high critical
+  if [[ -z "${RESULT_KIND[$index]:-}" ]]; then
+    status="$(<"${job_dir}/status")"
+    case "$status" in
+      install)
+        err_line="$(<"${job_dir}/error")"
+        RESULT_KIND[index]="error"
+        RESULT_ERROR[index]="install failed: ${err_line}"
+        HAD_FAILURE=1
+        ;;
+      audit)
+        err_line="$(<"${job_dir}/error")"
+        RESULT_KIND[index]="error"
+        if [[ -n "$err_line" ]]; then
+          RESULT_ERROR[index]="audit failed: ${err_line}"
+        else
+          RESULT_ERROR[index]="audit failed: invalid npm audit response"
+        fi
+        HAD_FAILURE=1
+        ;;
+      ok)
+        counts="$(<"${job_dir}/counts")"
+        RESULT_KIND[index]="ok"
+        IFS=$'\t' read -r total low moderate high critical _ <<<"$counts"
+        RESULT_TOTAL[index]="$total"
+        RESULT_LOW[index]="$low"
+        RESULT_MODERATE[index]="$moderate"
+        RESULT_HIGH[index]="$high"
+        RESULT_CRITICAL[index]="$critical"
+        ;;
+      *)
+        RESULT_KIND[index]="error"
+        RESULT_ERROR[index]="audit failed: invalid worker response"
+        HAD_FAILURE=1
+        ;;
+    esac
+  fi
+
+  compose_result_line "$index" "$name" "$spec"
+  if (( TTY_ENABLED )); then
+    replace_tty_row "$index" "$RENDERED_LINE"
+  fi
+}
+
+start_job() {
+  local index="$1"
+  audit_package "${SPECS[$index]}" "${JOB_DIRS[$index]}" &
+  JOB_PIDS[index]=$!
+  JOB_ACTIVE[index]=1
+  ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
+}
+
+start_queued_jobs() {
+  while (( ACTIVE_COUNT < JOBS && NEXT_INDEX < PROGRESS_TOTAL )); do
+    start_job "$NEXT_INDEX"
+    NEXT_INDEX=$((NEXT_INDEX + 1))
+  done
+}
+
+reap_completed_jobs() {
+  local index
+  REAPED_COUNT=0
+  for index in "${!SPECS[@]}"; do
+    if [[ "${JOB_ACTIVE[$index]:-0}" == "1" && -f "${JOB_DIRS[$index]}/status" ]]; then
+      wait "${JOB_PIDS[$index]}" || true
+      JOB_ACTIVE[index]=0
+      ACTIVE_COUNT=$((ACTIVE_COUNT - 1))
+      PROGRESS_DONE=$((PROGRESS_DONE + 1))
+      render_completed_job \
+        "$index" "${NAMES[$index]}" "${SPECS[$index]}" "${JOB_DIRS[$index]}"
+      REAPED_COUNT=$((REAPED_COUNT + 1))
+    fi
+  done
+}
+
+redraw_completed_tty_rows() {
+  local index
+  if (( ! TTY_FULL_TABLE )); then
+    render_progress_status
+    return 0
+  fi
+  for index in "${!SPECS[@]}"; do
+    [[ -n "${RESULT_KIND[$index]:-}" ]] || continue
+    compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
+    replace_tty_row "$index" "$RENDERED_LINE"
+  done
+}
+
+finish_outdated_lookup() {
+  local o_name o_latest
+  (( OUTDATED_READY == 0 )) || return 0
+  [[ -f "${WORK_DIR}/outdated.status" ]] || return 1
+
+  wait "$OUTDATED_PID" || true
+  while IFS=$'\t' read -r o_name o_latest; do
+    [[ -n "$o_name" ]] || continue
+    LATEST_MAP["$o_name"]="$o_latest"
+  done < <(parse_outdated "${WORK_DIR}/outdated.json" 2>/dev/null || true)
+  OUTDATED_READY=1
+  if (( TTY_ENABLED )); then
+    clear_update_phase
+    redraw_completed_tty_rows
+  fi
+}
+
+build_next_data() {
+  local index name spec latest total lines="" a_severity a_title a_url entry colored_severity
+  OUTDATED_NAMES=()
+  VULNERABLE_WITHOUT_UPDATE=()
+  ADVISORY_TEXT=()
+  for index in "${!SPECS[@]}"; do
+    [[ "${RESULT_KIND[$index]}" == "ok" ]] || continue
+    name="${NAMES[$index]}"
+    spec="${SPECS[$index]}"
+    latest="${LATEST_MAP[$name]:-}"
+    total="${RESULT_TOTAL[$index]}"
+    if [[ -n "$latest" && "$latest" != "${VERSIONS[$index]}" ]]; then
+      OUTDATED_NAMES+=("$name")
+      continue
+    fi
+    [[ "$total" != "0" ]] || continue
+
+    VULNERABLE_WITHOUT_UPDATE+=("$spec")
+    lines="$(parse_advisories "${JOB_DIRS[$index]}/audit.json" 2>/dev/null || true)"
+    entry=""
+    while IFS=$'\t' read -r a_severity a_title a_url; do
+      [[ -n "$a_severity" ]] || continue
+      colored_severity="$(colorize_severity "$a_severity" "$a_severity")"
+      if [[ -n "$a_url" ]]; then
+        entry="${entry}    - [${colored_severity}] ${a_title} (${a_url})"$'\n'
+      else
+        entry="${entry}    - [${colored_severity}] ${a_title}"$'\n'
+      fi
+    done <<<"$lines"
+    ADVISORY_TEXT["$spec"]="$entry"
+  done
 }
 
 main() {
   parse_opts "$@"
   enable_color
+  [[ -n "$JOBS" ]] || JOBS="$(default_jobs)"
 
   trap cleanup EXIT
 
@@ -297,116 +690,79 @@ main() {
 
   WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/npm-global-audit.XXXXXX")"
 
-  local outdated_json="" outdated_file=""
-  outdated_json="$(npm --no-audit outdated -g --json 2>/dev/null || true)"
-  outdated_file="$WORK_DIR/outdated.json"
-  printf '%s' "${outdated_json:-\{\}}" >"$outdated_file"
-  local -A latest_map=()
-  local o_name o_latest
-  while IFS=$'\t' read -r o_name o_latest; do
-    [[ -n "$o_name" ]] || continue
-    latest_map["$o_name"]="$o_latest"
-  done < <(parse_outdated "$outdated_file" 2>/dev/null || true)
-
-  local width=0 name version spec len
+  local width=0 name version spec len index
   while IFS=$'\t' read -r name version; do
     [[ -n "$name" ]] || continue
     spec="${name}@${version}"
+    index=${#SPECS[@]}
+    NAMES+=("$name")
+    VERSIONS+=("$version")
+    SPECS+=("$spec")
+    JOB_DIRS+=("${WORK_DIR}/job.${index}")
+    mkdir -p "${JOB_DIRS[$index]}"
     len=${#spec}
     (( len > width )) && width=$len
   done <<<"$records"
 
-  local outdated_names=()
-  local vulnerable_without_update=()
-  local -A advisory_text=()
+  PROGRESS_TOTAL=${#SPECS[@]}
+  start_outdated_lookup
+  if [[ -t 1 ]]; then
+    TTY_ENABLED=1
+    detect_tty_layout
+    printf '\033[?7l'
+    AUTOWRAP_DISABLED=1
+    render_tty_pending_rows
+  fi
 
-  while IFS=$'\t' read -r name version; do
-    [[ -n "$name" ]] || continue
-    spec="${name}@${version}"
-
-    local package_dir=""
-    package_dir="$(mktemp -d "$WORK_DIR/pkg.XXXXXX")"
-
-    local install_out="" install_status=0
-    set +e
-    install_out="$(npm --prefix "$package_dir" install --package-lock-only --ignore-scripts --no-audit "$spec" 2>&1)"
-    install_status=$?
-    set -e
-    if (( install_status != 0 )); then
-      render_error_row "$spec" "install failed: $(last_nonempty "$install_out")"
-      HAD_FAILURE=1
-      continue
+  ACTIVE_COUNT=0
+  NEXT_INDEX=0
+  REAPED_COUNT=0
+  start_queued_jobs
+  while (( PROGRESS_DONE < PROGRESS_TOTAL )); do
+    reap_completed_jobs
+    finish_outdated_lookup || true
+    start_queued_jobs
+    if (( REAPED_COUNT == 0 )); then
+      sleep "$POLL_INTERVAL"
     fi
-
-    local audit_out_file audit_err_file=""
-    audit_out_file="$(mktemp "$WORK_DIR/audit.out.XXXXXX")"
-    audit_err_file="$(mktemp "$WORK_DIR/audit.err.XXXXXX")"
-    set +e
-    npm --prefix "$package_dir" audit --json >"$audit_out_file" 2>"$audit_err_file" || true
-    set -e
-
-    local counts=""
-    counts="$(parse_vulns "$audit_out_file" 2>/dev/null)" || counts=""
-    if [[ -z "$counts" ]]; then
-      local err_line=""
-      err_line="$(last_nonempty "$(cat "$audit_err_file" 2>/dev/null || true)")"
-      if [[ -n "$err_line" ]]; then
-        render_error_row "$spec" "audit failed: ${err_line}"
-      else
-        render_error_row "$spec" "audit failed: invalid npm audit response"
-      fi
-      HAD_FAILURE=1
-      continue
+  done
+  while (( OUTDATED_READY == 0 )); do
+    if ! finish_outdated_lookup; then
+      sleep "$POLL_INTERVAL"
     fi
+  done
 
-    local total low moderate high critical
-    IFS=$'\t' read -r total low moderate high critical _ <<<"$counts"
-    local text
-    text="$(format_vuln_text "$total" "$low" "$moderate" "$high" "$critical")"
-
-    local latest="${latest_map[$name]:-}"
-    local is_outdated=0
-    if [[ -n "$latest" && "$latest" != "$version" ]]; then
-      is_outdated=1
-      text="${text} — outdated, ${latest} available"
-      outdated_names+=("$name")
+  if (( TTY_ENABLED )); then
+    finish_tty_progress
+    if (( ! TTY_FULL_TABLE )); then
+      for index in "${!SPECS[@]}"; do
+        compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
+        printf '%s\n' "$RENDERED_LINE"
+      done
+      printf '\n'
     fi
+  else
+    for index in "${!SPECS[@]}"; do
+      compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
+      printf '%s\n' "$RENDERED_LINE"
+    done
+    printf '\n'
+  fi
 
-    render_result_row "$spec" "$total" "$low" "$moderate" "$high" "$critical" "$text"
-
-    if [[ "$total" != "0" && "$is_outdated" == "0" ]]; then
-      vulnerable_without_update+=("$spec")
-      local lines=""
-      lines="$(parse_advisories "$audit_out_file" 2>/dev/null || true)"
-      local a_severity a_title a_url entry=""
-      while IFS=$'\t' read -r a_severity a_title a_url; do
-        [[ -n "$a_severity" ]] || continue
-        local colored_severity
-        colored_severity="$(colorize_severity "$a_severity" "$a_severity")"
-        if [[ -n "$a_url" ]]; then
-          entry="${entry}    - [${colored_severity}] ${a_title} (${a_url})"$'\n'
-        else
-          entry="${entry}    - [${colored_severity}] ${a_title}"$'\n'
-        fi
-      done <<<"$lines"
-      advisory_text["$spec"]="$entry"
-    fi
-  done <<<"$records"
-
-  printf '\n'
-  if (( ${#outdated_names[@]} == 0 && ${#vulnerable_without_update[@]} == 0 )); then
+  build_next_data
+  if (( ${#OUTDATED_NAMES[@]} == 0 && ${#VULNERABLE_WITHOUT_UPDATE[@]} == 0 )); then
     printf 'Next: nothing to do — no vulnerabilities found.\n'
   else
-    if (( ${#outdated_names[@]} > 0 )); then
+    if (( ${#OUTDATED_NAMES[@]} > 0 )); then
       printf 'Next: updates available:\n'
-      printf '  npm update -g %s\n' "${outdated_names[@]}"
+      printf '  npm update -g %s\n' "${OUTDATED_NAMES[@]}"
     fi
-    if (( ${#vulnerable_without_update[@]} > 0 )); then
+    if (( ${#VULNERABLE_WITHOUT_UPDATE[@]} > 0 )); then
       printf 'Next: already on latest, needs manual review:\n'
       local vspec
-      for vspec in "${vulnerable_without_update[@]}"; do
+      for vspec in "${VULNERABLE_WITHOUT_UPDATE[@]}"; do
         printf '  %s\n' "$vspec"
-        printf '%s' "${advisory_text[$vspec]:-}"
+        printf '%s' "${ADVISORY_TEXT[$vspec]:-}"
       done
     fi
   fi
