@@ -17,10 +17,26 @@ trap cleanup_test_temps EXIT
 write_stub() {
   local file_path="$1"
   shift
-  {
-    printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$1"
-  } >"$file_path"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$1" >"$file_path"
   chmod +x "$file_path"
+}
+
+write_common_stubs() {
+  local stub_dir="$1"
+  write_stub "$stub_dir/sleep" 'exit 0'
+  write_stub "$stub_dir/curl" '
+case "$*" in
+  *"/api/rawdata"*)
+    printf "{\"http\":{\"routers\":{\"whoami@docker\":{}}}}\n"
+    ;;
+  *"whoami.docker.localhost"*)
+    printf "Hostname: whoami-test\nHost: whoami.docker.localhost:8080\n"
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+'
 }
 
 test_tester_generates_compose_file_and_probes_routes() {
@@ -58,23 +74,7 @@ esac
 exit 0
 '
 
-  write_stub "$stub_dir/curl" '
-case "$*" in
-  *"/api/rawdata"*)
-    printf "{\"http\":{\"routers\":{\"whoami@docker\":{}}}}\n"
-    ;;
-  *"whoami.docker.localhost"*)
-    printf "Hostname: whoami-test\nHost: whoami.docker.localhost:8080\n"
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-'
-
-  write_stub "$stub_dir/sleep" '
-exit 0
-'
+  write_common_stubs "$stub_dir"
 
   capture_command output status env \
     CALL_LOG="$call_log" \
@@ -154,23 +154,7 @@ case "$query" in
 esac
 '
 
-  write_stub "$stub_dir/curl" '
-case "$*" in
-  *"/api/rawdata"*)
-    printf "{\"http\":{\"routers\":{\"whoami@docker\":{}}}}\n"
-    ;;
-  *"whoami.docker.localhost"*)
-    printf "Hostname: whoami-test\nHost: whoami.docker.localhost:8080\n"
-    ;;
-  *)
-    exit 1
-    ;;
-esac
-'
-
-  write_stub "$stub_dir/sleep" '
-exit 0
-'
+  write_common_stubs "$stub_dir"
 
   capture_command output status env \
     CALL_LOG="$call_log" \
@@ -231,13 +215,8 @@ esac
 exit 0
 '
 
-  write_stub "$stub_dir/curl" '
-exit 1
-'
-
-  write_stub "$stub_dir/sleep" '
-exit 0
-'
+  write_stub "$stub_dir/curl" 'exit 1'
+  write_stub "$stub_dir/sleep" 'exit 0'
 
   capture_command output status env \
     CALL_LOG="$call_log" \

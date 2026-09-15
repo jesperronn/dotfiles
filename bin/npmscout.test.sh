@@ -8,8 +8,20 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npmscout"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
-# Global cleanup: remove any temp directories left behind by interrupted tests
+# Global setup and cleanup
+_SHARED_STUB_DIR=""
+_SHARED_MOCK_CREATED=""
+
+setup_shared_stubs() {
+  if [[ -z "$_SHARED_STUB_DIR" ]]; then
+    _SHARED_STUB_DIR="$(mktemp -d)"
+    mock_node "$_SHARED_STUB_DIR"
+    _SHARED_MOCK_CREATED=1
+  fi
+}
+
 cleanup_test_temps() {
+  [[ -n "$_SHARED_STUB_DIR" ]] && rm -rf "$_SHARED_STUB_DIR"
   find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
 }
 trap cleanup_test_temps EXIT
@@ -24,65 +36,34 @@ write_stub() {
   shift
   local body="$1"
 
-  cat >"$file_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$body
-EOF
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n%s\n' "$body" >"$file_path"
   chmod +x "$file_path"
 }
 
 mock_node() {
   local stub_dir="$1"
-  shift
-  local body="$1"
-
   cat >"$stub_dir/node" <<'NODESCRIPT'
 #!/usr/bin/env bash
-# Mock node that simulates parsing package-lock.json
-
-if [[ "$1" != "-e" ]]; then
-  exit 0
-fi
-
+if [[ "$1" != "-e" ]]; then exit 0; fi
 SCRIPT="$2"
-
-# Use sed to extract the file path and package name
 LOCK_FILE=$(echo "$SCRIPT" | sed -n "s/.*require('\([^']*\)').*/\1/p" | head -1)
 PKG_NAME=$(echo "$SCRIPT" | sed -n "s/.*pkgName = '\([^']*\)'.*/\1/p" | head -1)
-
-# If both are found, look up the version
 if [[ -n "$LOCK_FILE" && -n "$PKG_NAME" && -f "$LOCK_FILE" ]]; then
-  # Extract version from the package-lock.json file
-  # Look for the exact package name in the node_modules section
   IN_PACKAGE=0
   while IFS= read -r line; do
-    if [[ "$line" == *"\"node_modules/$PKG_NAME\":"* ]]; then
-      IN_PACKAGE=1
-      continue
-    fi
+    if [[ "$line" == *"\"node_modules/$PKG_NAME\":"* ]]; then IN_PACKAGE=1; continue; fi
     if [[ $IN_PACKAGE -eq 1 && "$line" == *'"version"'* ]]; then
       VERSION=$(echo "$line" | sed 's/.*"version": *"\([^"]*\)".*/\1/')
       break
     fi
   done < "$LOCK_FILE"
-  
-  if [[ -n "$VERSION" ]]; then
-    echo "$VERSION"
-  fi
+  [[ -n "$VERSION" ]] && echo "$VERSION"
 fi
 NODESCRIPT
   chmod +x "$stub_dir/node"
 }
 
-make_package_lock() {
-  local lock_file="$1"
-  shift
-  local body="$1"
-
-  mkdir -p "$(dirname "$lock_file")"
-  cat >"$lock_file" <<EOF
-{
+_PACKAGE_LOCK_DATA='{
   "name": "test-project",
   "lockfileVersion": 3,
   "packages": {
@@ -102,21 +83,24 @@ make_package_lock() {
       "version": "4.17.21"
     }
   }
-}
-EOF
-}
+}'
 
-make_empty_package_lock() {
+make_package_lock() {
   local lock_file="$1"
-
   mkdir -p "$(dirname "$lock_file")"
-  cat >"$lock_file" <<EOF
-{
+  printf '%s\n' "$_PACKAGE_LOCK_DATA" >"$lock_file"
+}
+
+_EMPTY_PACKAGE_LOCK_DATA='{
   "name": "empty-project",
   "lockfileVersion": 3,
   "packages": {}
-}
-EOF
+}'
+
+make_empty_package_lock() {
+  local lock_file="$1"
+  mkdir -p "$(dirname "$lock_file")"
+  printf '%s\n' "$_EMPTY_PACKAGE_LOCK_DATA" >"$lock_file"
 }
 
 test_default_packages_finds_keyv_and_cachable() {
@@ -124,15 +108,12 @@ test_default_packages_finds_keyv_and_cachable() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
+  output=$(NO_COLOR=1 PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout completes successfully"
@@ -150,15 +131,12 @@ test_custom_packages_flag() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly instead of using capture_command
   cd "$work_dir"
-  output=$(NO_COLOR=1 PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages lodash 2>&1)
+  output=$(NO_COLOR=1 PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages lodash 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout completes with custom packages"
@@ -174,15 +152,12 @@ test_scoped_packages() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages '@types/node' 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages '@types/node' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles scoped packages"
@@ -197,15 +172,12 @@ test_multiple_packages() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'keyv,lodash' 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'keyv,lodash' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles comma-separated packages"
@@ -222,15 +194,12 @@ test_no_matching_packages() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_empty_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'nonexistent' 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages 'nonexistent' 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout exits cleanly when no matches found"
@@ -244,16 +213,13 @@ test_multiple_project_folders() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/project-a/package-lock.json" ""
   make_package_lock "$work_dir/project-b/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles multiple project folders"
@@ -268,15 +234,12 @@ test_help_flag() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
   cd "$work_dir"
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --help 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --help 2>&1)
   status=0
 
   assert_contains "$output" "Usage:" "output contains usage information"
@@ -291,14 +254,11 @@ test_specified_folder() {
   local output=""
   local status=0
 
+  setup_shared_stubs
   work_dir="$(mktemp -d)"
-  make_stub_dir "$work_dir/stub-bin"
-  mock_node "$work_dir/stub-bin" 'echo "mock node"'
-
   make_package_lock "$work_dir/test-project/package-lock.json" ""
 
-  # Run the script directly
-  output=$(PATH="$work_dir/stub-bin:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages keyv "$work_dir/test-project" 2>&1)
+  output=$(PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages keyv "$work_dir/test-project" 2>&1)
   status=0
 
   assert_status "0" "$status" "npmscout handles specified folder"

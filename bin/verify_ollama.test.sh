@@ -98,12 +98,13 @@ test_run_main_applies_launchctl_value_on_macos() {
     PATH="$tmp_dir/bin:$PATH" \
     capture_command output status run_main
 
+  local launchctl_log_contents="$(cat "$tmp_dir/launchctl.log")"
   assert_status "0" "$status" "verify_ollama succeeds on macOS"
   assert_contains "$output" "Set OLLAMA_KEEP_ALIVE=30m for this login session" "verify_ollama reports the applied value"
   assert_contains "$output" "Set OLLAMA_CONTEXT_LENGTH=524288 for this login session" "verify_ollama reports the applied context value"
   assert_contains "$output" "Restart Ollama and any VS Code windows" "verify_ollama explains restart requirement"
-  assert_contains "$(cat "$tmp_dir/launchctl.log")" "setenv OLLAMA_KEEP_ALIVE 30m" "verify_ollama writes launchctl env"
-  assert_contains "$(cat "$tmp_dir/launchctl.log")" "setenv OLLAMA_CONTEXT_LENGTH 524288" "verify_ollama writes launchctl context env"
+  assert_contains "$launchctl_log_contents" "setenv OLLAMA_KEEP_ALIVE 30m" "verify_ollama writes launchctl env"
+  assert_contains "$launchctl_log_contents" "setenv OLLAMA_CONTEXT_LENGTH 524288" "verify_ollama writes launchctl context env"
   rm -rf "$tmp_dir"
   true
 }
@@ -200,14 +201,15 @@ test_run_main_fix_repairs_homebrew_plist_and_restarts() {
     PATH="$tmp_dir/bin:$PATH" \
     capture_command output status run_main --fix
 
+  local plist_contents="$(cat "$plist_path")"
   assert_status "0" "$status" "verify_ollama --fix succeeds"
   assert_contains "$output" "Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
   assert_contains "$output" "editing: adding \"OLLAMA_KEEP_ALIVE=30m\"" "verify_ollama --fix reports the edit"
   assert_contains "$output" "editing: adding \"OLLAMA_CONTEXT_LENGTH=524288\"" "verify_ollama --fix reports the context edit"
   assert_contains "$output" "done, edit successful" "verify_ollama --fix confirms the edit"
   assert_contains "$output" "next step: brew services restart ollama" "verify_ollama --fix gives the restart next step"
-  assert_contains "$(cat "$plist_path")" "30m" "verify_ollama --fix repairs the plist"
-  assert_contains "$(cat "$plist_path")" "524288" "verify_ollama --fix repairs the context length"
+  assert_contains "$plist_contents" "30m" "verify_ollama --fix repairs the plist"
+  assert_contains "$plist_contents" "524288" "verify_ollama --fix repairs the context length"
   rm -rf "$tmp_dir"
 }
 

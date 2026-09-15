@@ -22,31 +22,13 @@ strip_ansi() {
 write_config() {
   local path="$1"
   mkdir -p "$(dirname "$path")"
-  cat > "$path" <<'TOML'
-[accounts.stil]
-label = "buvm-stil"
-api_path = "orgs/buvm-stil"
-archive_dir = "~/src/copilot-leaderboard-stil"
-token_from_1password_item = "GITHUB_COPILOT_BUVM_STIL_USAGE"
-
-[accounts.nine]
-label = "nine"
-api_path = "enterprises/nine"
-archive_dir = "~/src/copilot-leaderboard-nine"
-token_from_1password_item = "GITHUB_COPILOT_TOKEN_JRJ_NINE"
-TOML
+  printf '[accounts.stil]\nlabel = "buvm-stil"\napi_path = "orgs/buvm-stil"\narchive_dir = "~/src/copilot-leaderboard-stil"\ntoken_from_1password_item = "GITHUB_COPILOT_BUVM_STIL_USAGE"\n\n[accounts.nine]\nlabel = "nine"\napi_path = "enterprises/nine"\narchive_dir = "~/src/copilot-leaderboard-nine"\ntoken_from_1password_item = "GITHUB_COPILOT_TOKEN_JRJ_NINE"\n' > "$path"
 }
 
 write_nine_only_config() {
   local path="$1"
   mkdir -p "$(dirname "$path")"
-  cat > "$path" <<'TOML'
-[accounts.nine]
-label = "nine"
-api_path = "enterprises/nine"
-archive_dir = "~/src/copilot-leaderboard-nine"
-token_from_1password_item = "GITHUB_COPILOT_TOKEN_JRJ_NINE"
-TOML
+  printf '[accounts.nine]\nlabel = "nine"\napi_path = "enterprises/nine"\narchive_dir = "~/src/copilot-leaderboard-nine"\ntoken_from_1password_item = "GITHUB_COPILOT_TOKEN_JRJ_NINE"\n' > "$path"
 }
 
 # Fixture: 3 users over 3 days in June 2026, cells show "credits/interactions"
@@ -54,19 +36,19 @@ TOML
 # bob:     80/8   | 60/6 | 40/4 | total=180/18
 # charlie: 10/2   | 5/1  | (no day3) | total=15/3
 # Grand total credits=365, interactions=39
-write_fixture() {
-  local dir="$1"
-  mkdir -p "$dir/archive"
-  cat > "$dir/archive/2026-06-10.ndjson" <<'NDJSON'
-{"user_login":"alice","day":"2026-06-01","ai_credits_used":100.9,"user_initiated_interaction_count":10,"code_acceptance_activity_count":5,"code_generation_activity_count":20,"loc_suggested_to_add_sum":100,"loc_added_sum":50,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
+_FIXTURE_DATA='{"user_login":"alice","day":"2026-06-01","ai_credits_used":100.9,"user_initiated_interaction_count":10,"code_acceptance_activity_count":5,"code_generation_activity_count":20,"loc_suggested_to_add_sum":100,"loc_added_sum":50,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"alice","day":"2026-06-02","ai_credits_used":50.7,"user_initiated_interaction_count":5,"code_acceptance_activity_count":3,"code_generation_activity_count":12,"loc_suggested_to_add_sum":60,"loc_added_sum":30,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"alice","day":"2026-06-03","ai_credits_used":20.3,"user_initiated_interaction_count":3,"code_acceptance_activity_count":2,"code_generation_activity_count":8,"loc_suggested_to_add_sum":40,"loc_added_sum":20,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"bob","day":"2026-06-01","ai_credits_used":80.1,"user_initiated_interaction_count":8,"code_acceptance_activity_count":2,"code_generation_activity_count":15,"loc_suggested_to_add_sum":80,"loc_added_sum":20,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"bob","day":"2026-06-02","ai_credits_used":60.5,"user_initiated_interaction_count":6,"code_acceptance_activity_count":1,"code_generation_activity_count":10,"loc_suggested_to_add_sum":50,"loc_added_sum":15,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"bob","day":"2026-06-03","ai_credits_used":40.9,"user_initiated_interaction_count":4,"code_acceptance_activity_count":0,"code_generation_activity_count":6,"loc_suggested_to_add_sum":30,"loc_added_sum":10,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
 {"user_login":"charlie","day":"2026-06-01","ai_credits_used":10.2,"user_initiated_interaction_count":2,"code_acceptance_activity_count":0,"code_generation_activity_count":3,"loc_suggested_to_add_sum":10,"loc_added_sum":0,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
-{"user_login":"charlie","day":"2026-06-02","ai_credits_used":5.8,"user_initiated_interaction_count":1,"code_acceptance_activity_count":0,"code_generation_activity_count":2,"loc_suggested_to_add_sum":5,"loc_added_sum":0,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}
-NDJSON
+{"user_login":"charlie","day":"2026-06-02","ai_credits_used":5.8,"user_initiated_interaction_count":1,"code_acceptance_activity_count":0,"code_generation_activity_count":2,"loc_suggested_to_add_sum":5,"loc_added_sum":0,"report_start_day":"2026-05-14","report_end_day":"2026-06-10","organization_id":"123","enterprise_id":""}'
+
+write_fixture() {
+  local dir="$1"
+  mkdir -p "$dir/archive"
+  printf '%s\n' "$_FIXTURE_DATA" > "$dir/archive/2026-06-10.ndjson"
 }
 
 capture_with_config() {
