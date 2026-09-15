@@ -28,11 +28,8 @@ write_stub() {
   shift
   local body="$1"
 
-  cat >"$file_path" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-$body
-EOF
+  # Write shell script header
+  { echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'; echo "$body"; } >"$file_path"
   chmod +x "$file_path"
 }
 
