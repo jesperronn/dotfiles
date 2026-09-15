@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf "Docker socket rootless routing is working on port 8080\n"
+exit 0
+

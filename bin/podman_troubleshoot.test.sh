@@ -8,9 +8,34 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/podman_troubleshoot"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
+# Use a simple counter for test directories instead of mktemp -d (faster)
+_TEST_NUM=0
+_TEST_BASE_DIR="$(cd "${TEST_TMPDIR:-.}" && pwd)"
+declare -a _TEST_DIRS=()
+
+make_test_dir() {
+  local dir="$_TEST_BASE_DIR/ptest_$$_$_TEST_NUM"
+  ((++_TEST_NUM))
+  _TEST_DIRS+=("$dir")
+  mkdir -p "$dir"
+  printf '%s' "$dir"
+}
+
+cleanup_test_dirs() {
+  local dir
+  for dir in "${_TEST_DIRS[@]}"; do
+    rm -rf "$dir" 2>/dev/null || true
+  done
+}
+
+# Register cleanup trap once
+if [[ -z "${_CLEANUP_REGISTERED:-}" ]]; then
+  trap cleanup_test_dirs EXIT
+  _CLEANUP_REGISTERED=1
+fi
+
 make_stub_dir() {
   local stub_dir="$1"
-
   mkdir -p "$stub_dir"
 }
 
@@ -42,7 +67,7 @@ test_journald_io_errors_trigger_actionable_recovery_hint() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
@@ -195,7 +220,6 @@ EOF
   assert_contains "$output" "check(s) need attention" "script no longer reports all checks as passing"
   assert_not_contains "$output" "all checks passed" "script does not mark the run as clean when journald I/O errors are present"
 
-  rm -rf "$work_dir"
 }
 
 test_emergency_mode_log_triggers_rebuild_hint() {
@@ -204,7 +228,7 @@ test_emergency_mode_log_triggers_rebuild_hint() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
@@ -355,7 +379,6 @@ EOF
   assert_not_contains "$output" "/podman//podman-machine-default.log" "log path does not contain a doubled slash"
   assert_not_contains "$output" "/T//podman/podman-machine-default.log" "TMPDIR with a trailing slash is normalized in log paths"
 
-  rm -rf "$work_dir"
 }
 
 test_benign_ignition_boot_lines_do_not_mark_log_unhealthy() {
@@ -364,7 +387,7 @@ test_benign_ignition_boot_lines_do_not_mark_log_unhealthy() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home" "$work_dir/podman"
@@ -516,7 +539,6 @@ EOF
   assert_contains "$output" "[OK] vfkit log does not show obvious startup errors" "benign ignition boot lines keep the log health section green"
   assert_not_contains "$output" "suspicious log entries:" "benign ignition boot lines are not printed as suspicious"
 
-  rm -rf "$work_dir"
 }
 
 test_fix_force_starts_machine_refreshes_socket_and_verifies() {
@@ -525,7 +547,7 @@ test_fix_force_starts_machine_refreshes_socket_and_verifies() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
@@ -684,7 +706,6 @@ esac
   assert_contains "$output" "[OK] podman ps succeeded after fix" "fix mode verifies podman ps"
   assert_contains "$output" "[OK] podman info succeeded after fix" "fix mode verifies podman info"
 
-  rm -rf "$work_dir"
 }
 
 test_fix_force_recreates_low_memory_machine() {
@@ -693,7 +714,7 @@ test_fix_force_recreates_low_memory_machine() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
@@ -844,7 +865,6 @@ esac
 
   assert_status "0" "$status" "podman_troubleshoot --fix --force completes successfully with a low-memory machine"
 
-  rm -rf "$work_dir"
 }
 
 test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
@@ -853,7 +873,7 @@ test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home"
@@ -955,7 +975,6 @@ esac
   assert_contains "$output" "podman-allow-port-443" "script points to the runnable helper for port 443"
   assert_contains "$output" "net.ipv4.ip_unprivileged_port_start=1024" "script shows the current VM sysctl value"
 
-  rm -rf "$work_dir"
 }
 
 test_starting_machine_is_not_reported_as_healthy() {
@@ -964,7 +983,7 @@ test_starting_machine_is_not_reported_as_healthy() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home"
@@ -1079,7 +1098,6 @@ esac
   assert_contains "$output" "[TROUBLESHOOT] default Podman machine is still starting" "starting machines are surfaced as an issue"
   assert_not_contains "$output" "[OK] default Podman machine is running" "starting machines are not reported as healthy"
 
-  rm -rf "$work_dir"
 }
 
 test_verbose_flag_prints_progress_lines() {
@@ -1088,7 +1106,7 @@ test_verbose_flag_prints_progress_lines() {
   local output=""
   local status=0
 
-  work_dir="$(mktemp -d)"
+  work_dir="$(make_test_dir)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home"
@@ -1213,7 +1231,6 @@ esac
   assert_contains "$output" "[VERBOSE] running: podman version --format" "verbose mode shows executed commands"
   assert_contains "$output" "[VERBOSE] probing registry-1.docker.io by resolved IP inside the VM" "verbose mode shows long-running probe context"
 
-  rm -rf "$work_dir"
 }
 
 run_tests "$@"

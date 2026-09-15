@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+query="${*: -1}"
+input="$(cat)"
+case "$query" in
+  *"select(.Default == true) | .Name"*)
+    if [[ "$input" == *"podman-machine-default-root"* ]]; then
+      printf "podman-machine-default-root\n"
+    else
+      printf "podman-machine-default\n"
+    fi
+    ;;
+  *"select(.Name == \$name and .Running == true) | .Name"*)
+    if [[ "$input" == *"\"Running\":true"* ]]; then
+      printf "podman-machine-default\n"
+      exit 0
+    fi
+    exit 1
+    ;;
+  *".[] | select(.Name == \$name) | .Running"*)
+    if [[ "$input" == *"\"Running\":true"* ]]; then
+      printf "true\n"
+    else
+      printf "false\n"
+    fi
+    ;;
+  *".[] | select(.Name == \$name) | .Starting"*)
+    printf "false\n"
+    ;;
+  *"length"*)
+    printf "1\n"
+    ;;
+  *)
+    cat <<<"$input"
+    ;;
+esac
+
