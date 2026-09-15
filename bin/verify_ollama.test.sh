@@ -11,6 +11,12 @@ AI_TOOLS_FILE="$DOTFILES_ROOT/source/91_ai_tools.sh"
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 source "$VERIFY_OLLAMA_BIN" source
 
+# Global cleanup: remove test temp directories
+cleanup_test_temps() {
+  rm -rf /tmp/test_*_$$ 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 # Fast temp dir creation without mktemp overhead
 _make_test_tmpdir() {
   local name="$1"

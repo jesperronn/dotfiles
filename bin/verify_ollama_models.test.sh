@@ -9,6 +9,12 @@ VERIFY_OLLAMA_MODELS_BIN="$DOTFILES_ROOT/bin/verify_ollama_models"
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 source "$VERIFY_OLLAMA_MODELS_BIN" source
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 test_run_main_fails_when_ollama_is_not_installed() {
   local tmp_dir=""
   local output=""

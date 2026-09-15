@@ -8,6 +8,12 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/docker_socket_rootless_test"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 write_stub() {
   local file_path="$1"
   shift

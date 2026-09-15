@@ -9,6 +9,12 @@ SUPERCLEAN_BIN="$DOTFILES/bin/superclean"
 source "$DOTFILES/bin/lib/bash_test.sh"
 source "$SUPERCLEAN_BIN" source
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 reload_superclean_functions() {
   trap - EXIT INT TERM
   source "$SUPERCLEAN_BIN" source

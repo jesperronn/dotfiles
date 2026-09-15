@@ -6,6 +6,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/bash_test.sh"
 source "$SCRIPT_DIR/flakyfinder"
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 # ── parse_opts ──────────────────────────────────────────────────────────────
 
 test_defaults() {

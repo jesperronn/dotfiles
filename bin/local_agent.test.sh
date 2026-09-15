@@ -9,6 +9,12 @@ LOCAL_AGENT_BIN="$DOTFILES_ROOT/bin/local_agent"
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 source "$LOCAL_AGENT_BIN" source
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 fixture_results_file() {
   local tmp_dir="$1"
 

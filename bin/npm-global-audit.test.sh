@@ -7,6 +7,12 @@ SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npm-global-audit"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
+# Global cleanup: remove any temp directories left behind by interrupted tests
+cleanup_test_temps() {
+  find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+}
+trap cleanup_test_temps EXIT
+
 # Create a fake `npm` in DIR that records every invocation to $NPM_STUB_LOG,
 # returns a fixed global-list response for `ls`, records the installed spec to
 # $NPM_STUB_SPEC_FILE for `install`, and dispatches `audit` responses by spec
