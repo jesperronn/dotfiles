@@ -78,6 +78,40 @@ MACHINE_CPUS="${PODMAN_TROUBLESHOOT_MACHINE_CPUS:-9}"
 STABILITY_SLEEP_SECONDS="${PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS:-10}"
 DEFAULT_MACHINE_NAME="podman-machine-default"
 
+# Cache for expensive podman calls (reuse within same script invocation)
+CACHE_MACHINE_LIST_JSON=""
+CACHE_SYSTEM_CONNECTION_LIST_JSON=""
+declare -A CACHE_MACHINE_INSPECT
+
+get_cached_machine_list() {
+  if [[ -z "$CACHE_MACHINE_LIST_JSON" ]]; then
+    CACHE_MACHINE_LIST_JSON="$(podman_control machine list --format json 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$CACHE_MACHINE_LIST_JSON"
+}
+
+get_cached_system_connection_list() {
+  if [[ -z "$CACHE_SYSTEM_CONNECTION_LIST_JSON" ]]; then
+    CACHE_SYSTEM_CONNECTION_LIST_JSON="$(podman_control system connection list --format json 2>/dev/null || true)"
+  fi
+  printf '%s\n' "$CACHE_SYSTEM_CONNECTION_LIST_JSON"
+}
+
+get_cached_machine_inspect() {
+  local machine_name="$1"
+  local format="${2:-}"
+  local cache_key="${machine_name}:${format}"
+
+  if [[ -z "${CACHE_MACHINE_INSPECT[$cache_key]:-}" ]]; then
+    if [[ -n "$format" ]]; then
+      CACHE_MACHINE_INSPECT[$cache_key]="$(podman_control machine inspect "$machine_name" --format "$format" 2>/dev/null || true)"
+    else
+      CACHE_MACHINE_INSPECT[$cache_key]="$(podman_control machine inspect "$machine_name" 2>/dev/null || true)"
+    fi
+  fi
+  printf '%s\n' "${CACHE_MACHINE_INSPECT[$cache_key]}"
+}
+
 if [[ -n "${NO_COLOR:-}" ]]; then
   C_RESET=""
   C_GREEN=""
@@ -320,7 +354,7 @@ podman_current_machine_name() {
   local machine_list_json
   local machine_name
 
-  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  machine_list_json="$(get_cached_machine_list)"
   if [[ -n "$machine_list_json" ]]; then
     machine_name="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
     if [[ -n "$machine_name" ]]; then
@@ -349,7 +383,7 @@ podman_machine_connection_name() {
   local machine_name="$1"
   local rootful
 
-  rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
+  rootful="$(get_cached_machine_inspect "$machine_name" '{{.Rootful}}')"
   if [[ "$rootful" == "true" ]]; then
     printf '%s-root\n' "$machine_name"
   else
@@ -483,7 +517,7 @@ podman_machine_running() {
   local machine_name="$1"
   local machine_list_json
 
-  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  machine_list_json="$(get_cached_machine_list)"
   [[ -n "$machine_list_json" ]] || return 1
   printf '%s\n' "$machine_list_json" | jq -e -r --arg name "$machine_name" '.[] | select(.Name == $name and .Running == true) | .Name' >/dev/null 2>&1
 }
@@ -813,7 +847,7 @@ podman_default_machine_name() {
   local machine_list_json
   local machine_name
 
-  machine_list_json="$(podman_control machine list --format json 2>/dev/null || true)"
+  machine_list_json="$(get_cached_machine_list)"
   [[ -n "$machine_list_json" ]] || return 1
 
   machine_name="$(printf '%s\n' "$machine_list_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1)"
@@ -834,7 +868,7 @@ podman_default_machine_name() {
 podman_default_connection_name() {
   local connection_json
 
-  connection_json="$(podman_control system connection list --format json 2>/dev/null || true)"
+  connection_json="$(get_cached_system_connection_list)"
   [[ -n "$connection_json" ]] || return 1
   printf '%s\n' "$connection_json" | jq -r '.[] | select(.Default == true) | .Name' 2>/dev/null | head -n1
 }
@@ -850,16 +884,14 @@ podman_machine_inventory_report() {
   local default_connection_count
   local status=0
 
-  machine_list_json="$(podman_control machine list --format json 2>&1)"
-  status=$?
-  if [[ $status -ne 0 ]] || podman_error_output "$machine_list_json"; then
+  machine_list_json="$(get_cached_machine_list)"
+  if podman_error_output "$machine_list_json"; then
     printf '%s\n' "$machine_list_json"
     return 1
   fi
 
-  connection_json="$(podman_control system connection list --format json 2>&1)"
-  status=$?
-  if [[ $status -ne 0 ]] || podman_error_output "$connection_json"; then
+  connection_json="$(get_cached_system_connection_list)"
+  if podman_error_output "$connection_json"; then
     printf '%s\n' "$connection_json"
     return 1
   fi
@@ -924,16 +956,14 @@ podman_machine_running_state_report() {
   local machine_count="0"
   local default_connection=""
 
-  machine_list_json="$(podman_control machine list --format json 2>&1)"
-  status=$?
-  if [[ $status -ne 0 ]] || podman_error_output "$machine_list_json"; then
+  machine_list_json="$(get_cached_machine_list)"
+  if podman_error_output "$machine_list_json"; then
     printf '%s\n' "$machine_list_json"
     return 1
   fi
 
-  connection_json="$(podman_control system connection list --format json 2>&1)"
-  status=$?
-  if [[ $status -ne 0 ]] || podman_error_output "$connection_json"; then
+  connection_json="$(get_cached_system_connection_list)"
+  if podman_error_output "$connection_json"; then
     printf '%s\n' "$connection_json"
     return 1
   fi
