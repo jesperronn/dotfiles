@@ -29,19 +29,19 @@ Any Podman repair (via `--fix`, `--init`, or manual steps) **must maintain** the
 
 ---
 
-### 2. Lower Ports Allowed (Down to :443)
+### 2. Lower Ports Allowed (Down to :389)
 
-**Requirement:** Rootless containers must be able to bind host port 443 (and lower)
+**Requirement:** Rootless containers must be able to bind host port 389 (and lower)
 
 **Why:**
-- Traefik and other reverse proxies need port 443 for production-like local development
-- Without this, `rootlessport cannot expose privileged port 443` errors break deployments
+- Traefik and other reverse proxies need port 389 for production-like local development
+- Without this, `rootlessport cannot expose privileged port 389` errors break deployments
 - The fix is idempotent and non-destructive (just sets a sysctl inside the VM)
 
 **What the repair does:**
 - `bin/podman_troubleshoot --fix` checks `net.ipv4.ip_unprivileged_port_start` inside the VM
-- If it's higher than 443, reconfigures it to 443 via `/etc/sysctl.d/99-unprivileged-ports.conf`
-- Alternatively, `podman-allow-port-443` does this on demand
+- If it's higher than 389, reconfigures it to 389 via `/etc/sysctl.d/99-unprivileged-ports.conf`
+- Alternatively, `podman-allow-port-389` does this on demand
 
 **Safety:** This only affects the VM's kernel parameter. It doesn't open ports on the macOS host. Host firewalls remain intact. Containers still respect their own binding rules.
 
@@ -120,7 +120,7 @@ Any Podman repair (via `--fix`, `--init`, or manual steps) **must maintain** the
 - Restart stopped machines
 - Refresh stable socket symlink
 - Set default connection
-- Configure port 443 for rootless (sysctl)
+- Configure port 389 for rootless (sysctl)
 - Sync VM clock via chronyc
 - Recreate machine if memory is too low
 
@@ -142,7 +142,7 @@ Any Podman repair (via `--fix`, `--init`, or manual steps) **must maintain** the
 - Machine stability after start: Runs `podman ps` twice (10 seconds apart) to detect vfkit/gvproxy runtime lifecycle failures. Never restarts or stops the machine.
 - Container HTTPS egress: Probes registry endpoints from host, VM, and a disposable rootless container to distinguish broken container networking from broken Podman runtime. Uses only cached images with `--rm` and short timeouts; never installs packages.
 
-Both diagnostic checks maintain all safety invariants (rootless, port 443, multiarch, integration) and fail gracefully with actionable guidance if issues are detected.
+Both diagnostic checks maintain all safety invariants (rootless, port 389, multiarch, integration) and fail gracefully with actionable guidance if issues are detected.
 
 ### `bin/podman-sync-clock` (Utility)
 
@@ -239,7 +239,7 @@ podman system connection list
 bin/docker_socket_rootless_test
 
 # 4. Lower port binding (if needed)
-podman run --rm -p 443:443 nginx:latest
+podman run --rm -p 389:389 nginx:latest
 # (Ctrl+C to stop)
 ```
 

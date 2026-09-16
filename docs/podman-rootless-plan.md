@@ -21,8 +21,8 @@ Concretely, the target state is:
   - `DOCKER_HOST=unix://${HOME}/.local/share/containers/podman/machine/podman.sock`
 - containers running inside the Podman VM mount the VM-internal socket path, not the macOS host socket path:
   - `/run/user/<uid>/podman/podman.sock`
-- if rootless containers need host port `443`, the Podman VM must be configured with:
-  - `net.ipv4.ip_unprivileged_port_start=443`
+- if rootless containers need host port `389`, the Podman VM must be configured with:
+  - `net.ipv4.ip_unprivileged_port_start=389`
 
 ## Verified Constraints
 
@@ -91,16 +91,16 @@ For the smoke test and similar setups:
 - bind Traefik to `:8080` inside the container
 - publish host `8080:8080`
 
-If a real deployment needs host port `443` while staying rootless, use the VM sysctl helper after the machine starts:
+If a real deployment needs host port `389` while staying rootless, use the VM sysctl helper after the machine starts:
 
 ```sh
-podman-allow-port-443
+podman-allow-port-389
 ```
 
-Without that VM change, a compose stack that publishes `443:...` will fail with an error like:
+Without that VM change, a compose stack that publishes `389:...` will fail with an error like:
 
 ```text
-rootlessport cannot expose privileged port 443
+rootlessport cannot expose privileged port 389
 ```
 
 ### 5. Traefik probe requests must send a clean Host header
@@ -141,10 +141,10 @@ Important values:
 - `DOCKER_HOST=unix://${HOME}/.local/share/containers/podman/machine/podman.sock`
 - `PODMAN_COMPOSE_PROVIDER=/opt/homebrew/bin/docker-compose`
 
-If this machine needs rootless services on host port `443`, run once after the VM starts:
+If this machine needs rootless services on host port `389`, run once after the VM starts:
 
 ```sh
-podman-allow-port-443
+podman-allow-port-389
 ```
 
 ### Traefik-style container setup
@@ -238,10 +238,10 @@ Likely problem area:
 - privileged container port binding
 - Traefik Host-rule probe mismatch
 
-If the error mentions `rootlessport cannot expose privileged port 443`, the issue is not the socket mount. The VM still needs:
+If the error mentions `rootlessport cannot expose privileged port 389`, the issue is not the socket mount. The VM still needs:
 
 ```sh
-podman-allow-port-443
+podman-allow-port-389
 ```
 
 Use:

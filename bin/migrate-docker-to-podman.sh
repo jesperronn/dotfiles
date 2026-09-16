@@ -131,18 +131,18 @@ configure_shell() {
         echo "export PODMAN_ADVISORY_MODE=false" >> "${CONF_FILE}"
     fi
 
-    # 5. Provide a helper function for port 443
-    if ! grep -q "podman_allow_port_443" "${CONF_FILE}"; then
+    # 5. Provide a helper function for port 389
+    if ! grep -q "podman_allow_port_389" "${CONF_FILE}"; then
         cat << 'EOF' >> "${CONF_FILE}"
 
-# Allows rootless Podman containers to listen on privileged ports like 443.
-podman_allow_port_443() {
-    echo "⚠️ Running sudo inside the Podman VM to open port 443 (one-time change)."
-    podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+# Allows rootless Podman containers to listen on privileged ports like 389.
+podman_allow_port_389() {
+    echo "⚠️ Running sudo inside the Podman VM to open port 389 (one-time change)."
+    podman machine ssh "echo 389 | sudo tee /proc/sys/net/ipv4/ip_unprivileged_port_start"
 }
 
-podman-allow-port-443() {
-    podman_allow_port_443 "$@"
+podman-allow-port-389() {
+    podman_allow_port_389 "$@"
 }
 EOF
     fi
@@ -311,7 +311,7 @@ setup_links() {
 }
 
 ensure_privileged_ports() {
-    echo "🛡️ Ensuring Podman VM can bind to port 443..."
+    echo "🛡️ Ensuring Podman VM can bind to port 389..."
     local CURRENT_LIMIT
     CURRENT_LIMIT=$(podman machine ssh "sysctl -n net.ipv4.ip_unprivileged_port_start" 2>/dev/null | tr -d '\r')
 
@@ -320,16 +320,16 @@ ensure_privileged_ports() {
         return
     fi
 
-    if [ "$CURRENT_LIMIT" -le 443 ]; then
+    if [ "$CURRENT_LIMIT" -le 389 ]; then
         echo "✅ Podman VM already allows privileged ports down to $CURRENT_LIMIT."
         return
     fi
 
-    echo "⚙️ Lowering net.ipv4.ip_unprivileged_port_start to 443 inside the Podman VM..."
-    if podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system" >/dev/null; then
-        echo "🔓 Podman VM updated: containers can now bind to port 443."
+    echo "⚙️ Lowering net.ipv4.ip_unprivileged_port_start to 389 inside the Podman VM..."
+    if podman machine ssh "echo 389 | sudo tee /proc/sys/net/ipv4/ip_unprivileged_port_start" >/dev/null 2>&1; then
+        echo "🔓 Podman VM updated: containers can now bind to port 389."
     else
-        echo "❌ Failed to update the privileged port limit. Please rerun 'podman_allow_port_443' manually after starting the VM."
+        echo "❌ Failed to update the privileged port limit. Please rerun 'podman_allow_port_389' manually after starting the VM."
     fi
 }
 

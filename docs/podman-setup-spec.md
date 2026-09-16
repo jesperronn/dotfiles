@@ -44,24 +44,24 @@ podman machine inspect podman-machine-default --format '{{.Rootful}}'
 
 ---
 
-### 2. Lower Ports Allowed (Down to :443)
+### 2. Lower Ports Allowed (Down to :389)
 
-**Requirement:** Rootless containers bind host ports down to 443
+**Requirement:** Rootless containers bind host ports down to 389
 
 **Why:**
-- Traefik and production-like reverse proxies need port 443
-- Without this: `rootlessport cannot expose privileged port 443` errors
+- Traefik and production-like reverse proxies need port 389
+- Without this: `rootlessport cannot expose privileged port 389` errors
 - Fix is idempotent and non-destructive (VM sysctl only)
 
 **How it's maintained:**
-- `bin/podman_troubleshoot --fix` sets `net.ipv4.ip_unprivileged_port_start=443` inside VM
-- `podman-allow-port-443` utility does this on-demand
+- `bin/podman_troubleshoot --fix` sets `net.ipv4.ip_unprivileged_port_start=389` inside VM
+- `podman-allow-port-389` utility does this on-demand
 - Setting lives in VM `/etc/sysctl.d/99-unprivileged-ports.conf`
 
 **Verification:**
 ```bash
 podman machine ssh 'sysctl net.ipv4.ip_unprivileged_port_start'
-# Expected: net.ipv4.ip_unprivileged_port_start = 443
+# Expected: net.ipv4.ip_unprivileged_port_start = 389
 ```
 
 ---
@@ -162,9 +162,9 @@ This is required for Traefik and similar Docker-socket-reading containers.
 
 **Constraint:** Rootless containers cannot bind privileged ports (< 1024) unless VM sysctl allows it.
 
-**Default behavior:** Fails with `rootlessport cannot expose privileged port 443`
+**Default behavior:** Fails with `rootlessport cannot expose privileged port 389`
 
-**Fix:** Set `net.ipv4.ip_unprivileged_port_start=443` inside VM (automated by `--fix`)
+**Fix:** Set `net.ipv4.ip_unprivileged_port_start=389` inside VM (automated by `--fix`)
 
 **Workaround for development:** Bind to unprivileged ports internally (e.g., `:8080` inside container, publish host `8080:8080`)
 
@@ -211,7 +211,7 @@ These checks observe system state without modification:
 - **Podman Socket Connection:** Can CLI reach the VM API socket?
 - **Local Client Versions:** What versions of docker/podman are installed?
 - **Podman System Container:** What version of system container is running? Is update available?
-- **Host Loopback 443:** Is anything listening on host port 443?
+- **Host Loopback 389:** Is anything listening on host port 389?
 - **Global Docker Socket:** Does `/var/run/docker.sock` point to Podman?
 
 #### Machine State Checks
@@ -224,7 +224,7 @@ These checks observe system state without modification:
 
 #### VM Health Checks
 - **VM Clock Sync:** Is VM clock in sync with host (after hibernation)?
-- **Rootless Privileged Port Policy:** Does VM allow port 443 binding?
+- **Rootless Privileged Port Policy:** Does VM allow port 389 binding?
 - **VM DNS and Registry:** Can VM reach Docker registries by name and IP?
 - **VM Registry IP Probes:** Can VM reach registry-1.docker.io by each resolved IP?
 - **VM Runtime State:** Are VM runtime directories accessible?
@@ -250,7 +250,7 @@ These operations modify system state (all interactive unless `--force`):
 | **Rootful → Rootless** | Machine in rootful mode | Sets `--rootful=false`, restarts | Prompted; data preserved |
 | **Refresh Socket Symlink** | Symlink stale | Updates `~/.local/share/.../podman.sock` | Non-destructive |
 | **Set Default Connection** | Connection misaligned | Sets default to rootless connection | Non-destructive |
-| **Enable Port 443** | Sysctl not set to 443 | Sets `net.ipv4.ip_unprivileged_port_start=443` in VM | Idempotent; no data loss |
+| **Enable Port 389** | Sysctl not set to 389 | Sets `net.ipv4.ip_unprivileged_port_start=389` in VM | Idempotent; no data loss |
 | **Sync VM Clock** | Clock drift > 10s | Runs `sudo chronyc makestep` inside VM | Idempotent; NTP-based |
 | **Recreate Machine** | Memory ≤ 4GB | Stops, deletes, reinits with 8GB RAM | **Prompted; VM-local data lost** |
 
@@ -336,10 +336,10 @@ bin/docker_socket_rootless_test --port 8080
 # ✅ Docker socket rootless routing is working on port 8080
 ```
 
-### Port 443 for Rootless Containers
+### Port 389 for Rootless Containers
 ```bash
 # One-time configuration after machine starts
-podman-allow-port-443
+podman-allow-port-389
 
 # Verify
 podman machine ssh 'sysctl net.ipv4.ip_unprivileged_port_start'
@@ -352,7 +352,7 @@ podman machine ssh 'sysctl net.ipv4.ip_unprivileged_port_start'
 **Operational:**
 - `bin/podman_troubleshoot` – Main diagnostic & self-healing tool
 - `bin/podman-sync-clock` – One-shot clock sync utility
-- `bin/podman-allow-port-443` – Port 443 configuration helper
+- `bin/podman-allow-port-389` – Port 389 configuration helper
 - `bin/docker_socket_rootless_test` – Traefik integration smoke test
 - `bin/migrate-docker-to-podman.sh` – Docker Desktop → Podman migration
 - `source/60_podman.sh` – Shell environment setup
@@ -378,8 +378,8 @@ podman system connection list
 bin/podman_troubleshoot --init
 podman ps
 
-# 3. Port 443 (if needed)
-podman-allow-port-443
+# 3. Port 389 (if needed)
+podman-allow-port-389
 podman ps
 
 # 4. Docker-label routing (if using Traefik)
@@ -407,8 +407,8 @@ bin/docker_socket_rootless_test --port 8080
 → Check socket mount path (must be `/run/user/<uid>/podman/podman.sock`)  
 → Check compose `security_opt: [label=disable]`
 
-### Issue: Can't bind port 443
-→ Run: `podman-allow-port-443`  
+### Issue: Can't bind port 389
+→ Run: `podman-allow-port-389`  
 → Verify: `podman machine ssh 'sysctl net.ipv4.ip_unprivileged_port_start'`
 
 ### Issue: Machine won't start

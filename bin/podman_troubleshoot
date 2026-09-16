@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #
 # Purpose:
 #   Diagnose and fix Podman VM issues: start/stop machines, check health,
-#   fix socket mounts, resolve clock drift, and set port-443 sysctl.
+#   fix socket mounts, resolve clock drift, and set port-389 sysctl.
 #
 # Usage:
 #   bin/podman_troubleshoot [OPTIONS] [image_name]
@@ -332,20 +332,21 @@ stable_podman_socket_path() {
   printf '%s/.local/share/containers/podman/machine/podman.sock' "$HOME"
 }
 
-port_443_sysctl_value() {
+port_389_sysctl_value() {
   podman_control machine ssh 'sysctl -n net.ipv4.ip_unprivileged_port_start' 2>/dev/null | tr -d '\r'
 }
 
-port_443_sysctl_allows_rootless() {
+port_389_sysctl_allows_rootless() {
   local value
 
-  value="$(port_443_sysctl_value)"
+  value="$(port_389_sysctl_value)"
   [[ "$value" =~ ^[0-9]+$ ]] || return 1
-  (( value <= 443 ))
+  (( value <= 389 ))
 }
 
-configure_rootless_port_443() {
-  podman_control machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+configure_rootless_port_389() {
+  printf '    command: podman machine ssh "echo 389 | sudo tee /proc/sys/net/ipv4/ip_unprivileged_port_start"\n' >&2
+  podman_control machine ssh "echo 389 | sudo tee /proc/sys/net/ipv4/ip_unprivileged_port_start"
 }
 
 trim_trailing_slash() {
@@ -417,8 +418,8 @@ print_rootless_socket_recovery_steps() {
       podman ps
     next: if you need rootless Traefik or other Docker-compatible clients, point them at:
       export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"
-    next: if you need port 443 while staying rootless, run once after the VM starts:
-      podman-allow-port-443
+    next: if you need port 389 while staying rootless, run once after the VM starts:
+      podman-allow-port-389
 EOF
 }
 
@@ -606,19 +607,19 @@ verify_fix_result() {
 privileged_port_policy_report() {
   local value
 
-  value="$(port_443_sysctl_value)"
+  value="$(port_389_sysctl_value)"
   if [[ -z "$value" ]]; then
     printf 'vm sysctl: <unavailable>\n'
     return 1
   fi
 
   printf 'vm sysctl: net.ipv4.ip_unprivileged_port_start=%s\n' "$value"
-  if [[ "$value" =~ ^[0-9]+$ ]] && (( value <= 443 )); then
-    printf 'rootless host port 443: allowed\n'
+  if [[ "$value" =~ ^[0-9]+$ ]] && (( value <= 389 )); then
+    printf 'rootless host port 389: allowed\n'
     return 0
   fi
 
-  printf 'rootless host port 443: blocked\n'
+  printf 'rootless host port 389: blocked\n'
   return 1
 }
 
@@ -628,7 +629,7 @@ machine_memory_mb() {
 }
 
 # Creates the tracked Podman machine if missing (using MACHINE_CPUS/MACHINE_MEMORY_MB),
-# then converges it to rootless, refreshes the stable socket, and allows port 443.
+# then converges it to rootless, refreshes the stable socket, and allows port 389.
 # Inlined from the former bin/podman_machine_init so --init and the --fix low-memory
 # recreate path share one implementation.
 init_machine() {
@@ -676,8 +677,8 @@ init_machine() {
   fi
   podman_control system connection default "$connection_name" >/dev/null 2>&1 || true
 
-  if ! port_443_sysctl_allows_rootless; then
-    configure_rootless_port_443
+  if ! port_389_sysctl_allows_rootless; then
+    configure_rootless_port_389
   fi
 
   printf '🔗 Active Podman connection: %s\n' "$connection_name"
@@ -773,13 +774,13 @@ connection: $connection_name"
     "set the default Podman connection to $connection_name" \
     podman_control system connection default "$connection_name" || return 1
 
-  if ! port_443_sysctl_allows_rootless; then
+  if ! port_389_sysctl_allows_rootless; then
     run_fix_step \
-      "rootless privileged port floor updated for port 443" \
-      "allow rootless port 443 inside the Podman VM" \
-      configure_rootless_port_443 || return 1
+      "rootless privileged port floor updated for port 389" \
+      "allow rootless port 389 inside the Podman VM" \
+      configure_rootless_port_389 || return 1
   else
-    log_ok "rootless privileged port floor already allows port 443"
+    log_ok "rootless privileged port floor already allows port 389"
   fi
 
   local host_epoch vm_epoch clock_drift
@@ -1014,32 +1015,32 @@ podman_machine_running_state_report() {
   [[ "$running" == "true" && "$starting" != "true" && "$state" == "running" ]]
 }
 
-check_host_loopback_443() {
-  log_section "Host Loopback 443"
+check_host_loopback_389() {
+  log_section "Host Loopback 389"
 
   if ! have_command lsof; then
-    log_action "lsof is not installed; skipping host port 443 listener inspection"
+    log_action "lsof is not installed; skipping host port 389 listener inspection"
     printf '    next: install lsof and re-run %s\n' "$SCRIPT_NAME"
     return 0
   fi
 
   local output=""
   local status=0
-  capture_command output status lsof -nP -iTCP:443 -sTCP:LISTEN
+  capture_command output status lsof -nP -iTCP:389 -sTCP:LISTEN
 
   if [[ $status -ne 0 || -z "$output" ]]; then
-    log_action "nothing is listening on host port 443"
+    log_action "nothing is listening on host port 389"
     printf '    next: if Traefik or another local service should be reachable, start the host-side listener or the Podman machine that provides it\n'
     show_detail "$output"
     return 0
   fi
 
   if printf '%s\n' "$output" | grep -q 'gvproxy'; then
-    log_ok "host port 443 is being served by Podman gvproxy"
-    printf '    note: \`lsof -nP -iTCP:443 -sTCP:LISTEN\` shows gvproxy; host listener is separate from Podman CLI health\n'
+    log_ok "host port 389 is being served by Podman gvproxy"
+    printf '    note: \`lsof -nP -iTCP:389 -sTCP:LISTEN\` shows gvproxy; host listener is separate from Podman CLI health\n'
   else
-    log_action "host port 443 is occupied by a non-gvproxy listener"
-    printf '    next: run \`lsof -nP -iTCP:443 -sTCP:LISTEN\` to inspect the listener before assuming Traefik is coming from Podman\n'
+    log_action "host port 389 is occupied by a non-gvproxy listener"
+    printf '    next: run \`lsof -nP -iTCP:389 -sTCP:LISTEN\` to inspect the listener before assuming Traefik is coming from Podman\n'
   fi
 
   show_detail "$output"
@@ -1064,8 +1065,8 @@ check_docker_socket_rootless() {
 
   log_ok "docker_socket_rootless_test is available"
 
-  # Try to run test on available port (443, then 444, 445, ...)
-  local port="" test_port=443 max_attempts=10 attempt=0 output="" status=0
+  # Try to run test on available port (389, then 390, 391, ...)
+  local port="" test_port=389 max_attempts=10 attempt=0 output="" status=0
   local rootless_timeout=60
   [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] && rootless_timeout=2 max_attempts=1
 
@@ -1096,8 +1097,8 @@ check_docker_socket_rootless() {
     return 0
   done
 
-  log_troubleshoot "No available port found for Docker socket test (tried 443-452)"
-  printf '    next: check if ports 443-452 are in use: `lsof -nP -iTCP:443-452 -sTCP:LISTEN`\n'
+  log_troubleshoot "No available port found for Docker socket test (tried 389-398)"
+  printf '    next: check if ports 389-398 are in use: `lsof -nP -iTCP:389-398 -sTCP:LISTEN`\n'
 }
 
 podman_machine_log_health_report() {
@@ -1328,26 +1329,26 @@ check_rootless_privileged_port_policy() {
 
   rootful="$(podman_control machine inspect "$machine_name" --format '{{.Rootful}}' 2>/dev/null || true)"
   if [[ "$rootful" == "true" ]]; then
-    log_ok "machine is rootful; rootless port 443 policy is not required"
-    printf '    next: if you switch back to rootless mode, rerun %s to confirm port 443 is still allowed\n' "$SCRIPT_NAME"
+    log_ok "machine is rootful; rootless port 389 policy is not required"
+    printf '    next: if you switch back to rootless mode, rerun %s to confirm port 389 is still allowed\n' "$SCRIPT_NAME"
     return 0
   fi
 
   if ! podman_machine_running "$machine_name"; then
     log_action "machine is not running; skipping privileged-port policy inspection"
-    printf '    next: start the machine first, then rerun %s to confirm host port 443 is allowed for rootless containers\n' "$SCRIPT_NAME"
+    printf '    next: start the machine first, then rerun %s to confirm host port 389 is allowed for rootless containers\n' "$SCRIPT_NAME"
     return 0
   fi
 
   capture_command output status privileged_port_policy_report
 
-  if [[ $status -eq 0 ]] && printf '%s\n' "$output" | grep -q 'rootless host port 443: allowed'; then
-    log_ok "rootless host port 443 is allowed inside the Podman VM"
+  if [[ $status -eq 0 ]] && printf '%s\n' "$output" | grep -q 'rootless host port 389: allowed'; then
+    log_ok "rootless host port 389 is allowed inside the Podman VM"
   else
     FAILURES=$((FAILURES + 1))
-    log_troubleshoot "rootless host port 443 is still blocked inside the Podman VM"
-    printf '    next: run podman-allow-port-443, or rerun %s --fix to apply it automatically\n' "$SCRIPT_NAME"
-    printf '    next: this is the setting behind: rootlessport cannot expose privileged port 443\n'
+    log_troubleshoot "rootless host port 389 is still blocked inside the Podman VM"
+    printf '    next: run podman-allow-port-389, or rerun %s --fix to apply it automatically\n' "$SCRIPT_NAME"
+    printf '    next: this is the setting behind: rootlessport cannot expose privileged port 389\n'
   fi
 
   show_detail "$output"
@@ -1856,7 +1857,7 @@ print_recovery_hints() {
 
   printf '4. Export for Docker clients: `export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"`\n\n'
 
-  printf '5. Allow port 443: `podman-allow-port-443`\n\n'
+  printf '5. Allow port 389: `podman-allow-port-389`\n\n'
 
   printf '6. Inspect vfkit log: `tail -100 $TMPDIR/podman/podman-machine-default.log`\n\n'
 
@@ -1940,7 +1941,7 @@ run_main() {
   check_podman_socket_connection
   check_local_client_versions
   check_podman_system_container
-  check_host_loopback_443
+  check_host_loopback_389
   check_global_docker_socket
   check_docker_socket_rootless
   check_podman_machine_list

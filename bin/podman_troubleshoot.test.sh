@@ -289,8 +289,8 @@ EOF
   rm -rf "$work_dir"
 }
 
-# Fixture group 4: Port 443 policy test
-run_fixture4_port443_blocked() {
+# Fixture group 4: Port 389 policy test
+run_fixture4_port389_blocked() {
   local work_dir=""
   local stub_dir=""
 
@@ -577,14 +577,14 @@ case "$1" in
         ;;
       ssh)
         if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
-          if [[ -f "$state_dir/port443" ]]; then
-            printf "443\n"
+          if [[ -f "$state_dir/port389" ]]; then
+            printf "389\n"
           else
             printf "1024\n"
           fi
         else
-          : >"$state_dir/port443"
-          printf "net.ipv4.ip_unprivileged_port_start = 443\n"
+          : >"$state_dir/port389"
+          printf "net.ipv4.ip_unprivileged_port_start = 389\n"
         fi
         ;;
       start)
@@ -736,14 +736,14 @@ case "$1" in
         ;;
       ssh)
         if [[ "$3" == "sysctl -n net.ipv4.ip_unprivileged_port_start" ]]; then
-          if [[ -f "$state_dir/port443" ]]; then
-            printf "443\n"
+          if [[ -f "$state_dir/port389" ]]; then
+            printf "389\n"
           else
             printf "1024\n"
           fi
         else
-          : >"$state_dir/port443"
-          printf "net.ipv4.ip_unprivileged_port_start = 443\n"
+          : >"$state_dir/port389"
+          printf "net.ipv4.ip_unprivileged_port_start = 389\n"
         fi
         ;;
       start)
@@ -873,12 +873,12 @@ test_benign_ignition_boot_lines_do_not_mark_log_unhealthy() {
   assert_not_contains "$FIXTURE1_OUTPUT" "suspicious log entries:" "benign ignition boot lines are not printed as suspicious"
 }
 
-test_rootless_privileged_port_policy_surfaces_missing_443_setting() {
-  run_fixture4_port443_blocked
-  assert_status "0" "$FIXTURE4_STATUS" "podman_troubleshoot completes successfully when port 443 policy is blocked"
+test_rootless_privileged_port_policy_surfaces_missing_389_setting() {
+  run_fixture4_port389_blocked
+  assert_status "0" "$FIXTURE4_STATUS" "podman_troubleshoot completes successfully when port 389 policy is blocked"
   assert_contains "$FIXTURE4_OUTPUT" "Rootless Privileged Port Policy" "script reaches the privileged port policy section"
-  assert_contains "$FIXTURE4_OUTPUT" "[TROUBLESHOOT] rootless host port 443 is still blocked inside the Podman VM" "blocked rootless port 443 is surfaced as a troubleshooting issue"
-  assert_contains "$FIXTURE4_OUTPUT" "podman-allow-port-443" "script points to the runnable helper for port 443"
+  assert_contains "$FIXTURE4_OUTPUT" "[TROUBLESHOOT] rootless host port 389 is still blocked inside the Podman VM" "blocked rootless port 389 is surfaced as a troubleshooting issue"
+  assert_contains "$FIXTURE4_OUTPUT" "podman-allow-port-389" "script points to the runnable helper for port 389"
   assert_contains "$FIXTURE4_OUTPUT" "net.ipv4.ip_unprivileged_port_start=1024" "script shows the current VM sysctl value"
 }
 
@@ -903,7 +903,7 @@ test_fix_force_starts_machine_refreshes_socket_and_verifies() {
   assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman machine started" "fix mode starts the stopped machine"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] stable Podman socket refreshed" "fix mode refreshes the stable socket"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] default Podman connection aligned" "fix mode sets the default connection"
-  assert_contains "$FIXTURE7_OUTPUT" "[OK] rootless privileged port floor updated for port 443" "fix mode applies the rootless port 443 sysctl"
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] rootless privileged port floor updated for port 389" "fix mode applies the rootless port 389 sysctl"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] podman ps succeeded after fix" "fix mode verifies podman ps"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] podman info succeeded after fix" "fix mode verifies podman info"
 }

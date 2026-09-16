@@ -74,11 +74,11 @@ export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman
 export PODMAN_COMPOSE_PROVIDER="/opt/homebrew/bin/docker-compose"
 export PODMAN_ADVISORY_MODE=false
 
-# Allows rootless Podman containers to listen on privileged ports like 443.
+# Allows rootless Podman containers to listen on privileged ports like 389.
 # Warns that sudo will be invoked inside the Podman VM during the one-time change.
-podman_allow_port_443() {
-    echo "⚠️ Running sudo inside the Podman VM to open port 443 (one-time change)."
-    podman machine ssh "echo 'net.ipv4.ip_unprivileged_port_start=443' | sudo tee /etc/sysctl.d/99-unprivileged-ports.conf >/dev/null && sudo sysctl --system"
+podman_allow_port_389() {
+    echo "⚠️ Running sudo inside the Podman VM to open port 389 (one-time change)."
+    podman machine ssh "echo 389 | sudo tee /proc/sys/net/ipv4/ip_unprivileged_port_start"
 }
 export REGISTRY_AUTH_FILE="${HOME}/.docker/config.json"
 export PODMAN_PULL_PARALLEL=5
@@ -96,6 +96,6 @@ podman-machine-rootful-connection-name() {
     podman_machine_rootful_connection_name "$@"
 }
 
-podman-allow-port-443() {
-    podman_allow_port_443 "$@"
+podman-allow-port-389() {
+    podman_allow_port_389 "$@"
 }
