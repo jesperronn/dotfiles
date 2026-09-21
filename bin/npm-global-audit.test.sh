@@ -550,9 +550,10 @@ test_tty_renders_initial_frame_out_of_order_completion_and_cleanup() {
     wait_for_file "${barrier_dir}/started.$(spec_key "$spec")"
   done
 
-  local initial="" expected_pending=""
+  local initial="" initial_screen="" expected_pending=""
   initial="$(<"$TTY_TRANSCRIPT")"
   initial="${initial//$'\r'/}"
+  initial_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
   expected_pending="$(printf '%-16s  pending\n%-16s  pending\n%-16s  pending' \
     'cline@3.0.61' 'jumbo-cli@3.23.0' 'svgo@4.1.0')"
 
@@ -568,17 +569,20 @@ test_tty_renders_initial_frame_out_of_order_completion_and_cleanup() {
   finish_tty_run
   local final="${R_OUTPUT//$'\r'/}"
 
+  local final_screen=""
+  final_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
+
   assert_status "0" "$R_STATUS" "TTY progress run exits 0"
-  assert_contains "$initial" "$expected_pending" "TTY initial frame lists every sorted package as pending"
-  assert_eq "1" "$(count_occurrences "$initial" 'Resolving and auditing packages: 0/3 complete')" "TTY initial frame has one primary status row"
+  assert_contains "$initial_screen" "$expected_pending" "TTY initial frame lists every sorted package as pending"
+  assert_eq "1" "$(count_occurrences "$initial_screen" 'Resolving and auditing packages: 0/3 complete')" "TTY initial frame has one primary status row"
   assert_status "1" "$third_rendered" "third worker replaces its row before earlier workers are released"
   assert_contains "$mid" "cline@3.0.61      pending" "first row remains pending after third worker finishes"
   assert_contains "$mid" "jumbo-cli@3.23.0  pending" "second row remains pending after third worker finishes"
   assert_contains "$mid" "Resolving and auditing packages: 1/3 complete" "out-of-order completion increments progress"
-  assert_contains "$final" $'\033[3A\033[2Kcline@3.0.61      33 vulnerabilities (8 low, 16 moderate, 9 high)' "first result replaces the first sorted row"
-  assert_contains "$final" $'\033[2A\033[2Kjumbo-cli@3.23.0  0 vulnerabilities — outdated, 3.24.0 available' "second result replaces the second sorted row"
-  assert_contains "$final" $'\033[1A\033[2Ksvgo@4.1.0        3 vulnerabilities (2 low, 1 moderate, 0 high)' "third result replaces the third sorted row"
-  assert_contains "$final" $'\033[2K\033[1B\033[2K\033[1A\033[?7h\nNext:' "transient rows are erased and autowrap restored before Next"
+  assert_contains "$final_screen" "cline@3.0.61      33 vulnerabilities (8 low, 16 moderate, 9 high)" "first result replaces the first sorted row"
+  assert_contains "$final_screen" "jumbo-cli@3.23.0  0 vulnerabilities — outdated, 3.24.0 available" "second result replaces the second sorted row"
+  assert_contains "$final_screen" "svgo@4.1.0        3 vulnerabilities (2 low, 1 moderate, 0 high)" "third result replaces the third sorted row"
+  assert_contains "$final" $'\033[1A\033[2KNext:' "the transient status row is erased before Next"
   assert_not_contains "$final" $'Resolving and auditing packages: 3/3 complete\n\nNext:' "visible progress status is cleared before Next"
 }
 
@@ -591,7 +595,7 @@ test_tty_does_not_block_workers_on_update_lookup() {
 
   local outdated_started=0 pending_rendered=0 install_started=0
   wait_for_file "${outdated_barrier}/outdated.started" && outdated_started=1
-  wait_for_transcript "Checking for available updates..." && pending_rendered=1
+  wait_for_transcript "checking for updates..." && pending_rendered=1
   wait_for_file "${package_barrier}/started.$(spec_key 'cline@3.0.61')" && install_started=1
 
   : >"${outdated_barrier}/outdated.release"
@@ -606,7 +610,7 @@ test_tty_does_not_block_workers_on_update_lookup() {
   assert_status "1" "$outdated_started" "update lookup reaches its test-controlled barrier"
   assert_status "1" "$pending_rendered" "pending rows and update phase render while lookup is held"
   assert_status "1" "$install_started" "package work starts before update lookup is released"
-  assert_contains "${R_OUTPUT//$'\r'/}" "Checking for available updates..." "TTY identifies the held update phase"
+  assert_contains "${R_OUTPUT//$'\r'/}" "checking for updates..." "TTY identifies the held update phase"
 }
 
 test_tty_completed_row_gains_delayed_update_annotation() {
@@ -662,11 +666,11 @@ test_tty_twenty_packages_uses_responsive_full_table_on_24_rows() {
   done
   finish_tty_run
 
-  assert_eq "22" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "20-package progress fits as a full table on a 24-row terminal"
+  assert_eq "21" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "20-package progress fits as a full table on a 24-row terminal"
   assert_contains "$screen" "package-01@1.0.0" "first package remains visible"
   assert_contains "$screen" "package-03@1.0.0" "out-of-order completed package remains visible"
   assert_contains "$screen" "Resolving and auditing packages: 1/20 complete" "20-package run advances responsively"
-  assert_contains "$screen" "Checking for available updates..." "20-package run retains its update phase row"
+  assert_contains "$screen" "checking for updates..." "20-package run retains its update phase status"
 }
 
 test_tty_uses_compact_progress_when_full_table_exceeds_height() {
@@ -693,10 +697,10 @@ test_tty_uses_compact_progress_when_full_table_exceeds_height() {
   finish_tty_run
   final="${R_OUTPUT//$'\r'/}"
 
-  assert_eq "2" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "23-package run uses only two bounded progress rows on a 24-row terminal"
+  assert_eq "1" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "23-package run uses only one bounded progress row on a 24-row terminal"
   assert_not_contains "$screen" "pending" "compact progress does not render off-screen package rows"
   assert_contains "$screen" "Resolving and auditing packages: 1/23 complete" "compact status advances after the first completion"
-  assert_contains "$screen" "Checking for available updates..." "compact mode retains the update phase"
+  assert_contains "$screen" "checking for updates..." "compact mode retains the update phase"
   assert_contains "$final" "package-01@1.0.0" "compact mode prints sorted final package rows after progress"
   assert_contains "$final" "package-23@1.0.0" "compact mode prints every final package row"
 }
@@ -733,13 +737,12 @@ test_tty_long_result_keeps_one_physical_row_per_package() {
   release_package "$barrier_dir" "$second"
   finish_tty_run
 
-  assert_eq "5" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "narrow TTY keeps package and transient rows physically separate"
+  assert_eq "4" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "narrow TTY keeps package and status rows physically separate"
   assert_contains "$screen" "alpha-short@1.0.0" "first pending package remains on its row"
   assert_contains "$screen" "beta-short@1.0.0" "second pending package remains on its row"
   assert_contains "$screen" "zeta-package-with-an-extremely" "long completed package remains on the third row"
   assert_contains "$screen" "333 vulnerabilities" "long completed result stays visible after truncation"
-  assert_contains "$screen" "Resolving and auditing packages: 1/3 complete" "status remains on its own physical row"
-  assert_contains "$screen" "Checking for available updates..." "update phase remains on its own physical row"
+  assert_contains "$screen" "Resolving and auditing packages: 1/3 complete" "status remains on its own physical row, unbroken even though it's too narrow to also fit the update-checking suffix"
 }
 
 test_zz_test_harness_stubs_cpu_and_uses_only_zero_polling() {

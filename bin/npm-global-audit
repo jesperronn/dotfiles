@@ -21,6 +21,8 @@ TTY_COLUMNS=80
 TTY_ROWS=24
 TTY_SPEC_WIDTH=0
 TTY_FULL_TABLE=1
+TTY_DRAWN=0
+TTY_BLOCK_LINES=0
 AUTOWRAP_DISABLED=0
 PROGRESS_TOTAL=0
 PROGRESS_DONE=0
@@ -182,16 +184,42 @@ truncate_plain_text() {
   fi
 }
 
+# Terminal width/height detection. When neither the env overrides nor a real
+# terminal query can tell us the actual size (e.g. $TERM unset), fall back to
+# 110 columns instead of the historical 80 — most terminals today are wider
+# than 80, and 110 gives long npm messages more room without depending on
+# exact detection.
+#
+# `tput cols`/`tput lines` query the window size via an ioctl on their own
+# stdout. Called from `$(...)` (as this script does, to capture the value),
+# that stdout is a pipe, not the terminal, so the ioctl fails and (at least
+# on macOS's /usr/bin/tput) it silently falls back to a terminfo default of
+# 80 — even though $COLUMNS in the interactive shell is correct. `stty size`
+# instead queries via its *stdin*, which we can point at /dev/tty explicitly
+# regardless of where stdout is going, so it stays reliable inside a command
+# substitution. Try that first; fall back to `tput` (useful when /dev/tty
+# isn't available but stdout genuinely is the terminal) only if it fails.
 detect_tty_layout() {
-  local columns="${NPM_GLOBAL_AUDIT_TTY_COLUMNS:-}"
-  local rows="${NPM_GLOBAL_AUDIT_TTY_ROWS:-}" max_spec_width result_width=24
+  local spec_width="$1"
+  local env_columns="${NPM_GLOBAL_AUDIT_TTY_COLUMNS:-}"
+  local env_rows="${NPM_GLOBAL_AUDIT_TTY_ROWS:-}"
+  local columns="$env_columns" rows="$env_rows" max_spec_width result_width=24
+  local stty_out=""
+  if [[ ! "$columns" =~ ^[1-9][0-9]*$ || ! "$rows" =~ ^[1-9][0-9]*$ ]]; then
+    stty_out="$(stty size </dev/tty 2>/dev/null)" || true
+    if [[ "$stty_out" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+      local stty_rows="${BASH_REMATCH[1]}" stty_columns="${BASH_REMATCH[2]}"
+      [[ "$rows" =~ ^[1-9][0-9]*$ ]] || rows="$stty_rows"
+      [[ "$columns" =~ ^[1-9][0-9]*$ ]] || columns="$stty_columns"
+    fi
+  fi
   if [[ ! "$columns" =~ ^[1-9][0-9]*$ ]]; then
     columns="$(tput cols 2>/dev/null || true)"
   fi
   if [[ ! "$rows" =~ ^[1-9][0-9]*$ ]]; then
     rows="$(tput lines 2>/dev/null || true)"
   fi
-  [[ "$columns" =~ ^[1-9][0-9]*$ ]] || columns=80
+  [[ "$columns" =~ ^[1-9][0-9]*$ ]] || columns=110
   [[ "$rows" =~ ^[1-9][0-9]*$ ]] || rows=24
   TTY_COLUMNS="$columns"
   TTY_ROWS="$rows"
@@ -204,7 +232,7 @@ detect_tty_layout() {
   fi
   max_spec_width=$((TTY_COLUMNS - 2 - result_width))
   (( max_spec_width > 0 )) || max_spec_width=1
-  TTY_SPEC_WIDTH="$width"
+  TTY_SPEC_WIDTH="$spec_width"
   (( TTY_SPEC_WIDTH <= max_spec_width )) || TTY_SPEC_WIDTH="$max_spec_width"
 }
 
@@ -229,55 +257,72 @@ compose_tty_result_line() {
   printf -v RENDERED_LINE '%-*s  %s' "$TTY_SPEC_WIDTH" "$spec_text" "$colored"
 }
 
-render_progress_status() {
-  local status
-  status="Resolving and auditing packages: ${PROGRESS_DONE}/${PROGRESS_TOTAL} complete"
+# Compose the single status line shown below the table (or alone, when the
+# table doesn't fit the terminal height).
+compose_progress_status() {
+  local base status
+  base="Resolving and auditing packages: ${PROGRESS_DONE}/${PROGRESS_TOTAL} complete"
+  status="$base"
+  if (( ! OUTDATED_READY )); then
+    status="${status} — checking for updates..."
+  fi
+  # Only show the "checking for updates" suffix when it fits whole; on a
+  # narrow terminal, drop it rather than truncate it into unreadable noise
+  # and lose room for the primary progress count.
+  if (( ${#status} > TTY_COLUMNS )); then
+    status="$base"
+  fi
   truncate_plain_text "$status" "$TTY_COLUMNS"
-  printf '\r\033[2K%s' "$TRUNCATED_TEXT"
+  RENDERED_LINE="$TRUNCATED_TEXT"
 }
 
-render_tty_pending_rows() {
-  local spec spec_text pending_text result_width
+# Compose one pending-row line (dim "pending" placeholder) for spec at $1.
+compose_tty_pending_line() {
+  local spec="$1"
+  if (( COLOR_ENABLED )); then
+    local spec_text pending_text result_width
+    truncate_plain_text "$spec" "$TTY_SPEC_WIDTH"
+    spec_text="$TRUNCATED_TEXT"
+    result_width=$((TTY_COLUMNS - TTY_SPEC_WIDTH - 2))
+    truncate_plain_text "pending" "$result_width"
+    pending_text="$TRUNCATED_TEXT"
+    printf -v RENDERED_LINE '%-*s  %s%s%s' "$TTY_SPEC_WIDTH" "$spec_text" \
+      "$C_DIM" "$pending_text" "$C_RESET"
+  else
+    compose_tty_plain_line "$spec" "pending"
+  fi
+}
+
+# Redraw the whole progress block (table rows + status line) in place.
+#
+# Rather than tracking each row's printed width to move the cursor to an
+# exact prior position (the old approach, which broke whenever truncation
+# was changed or width detection failed), this always redraws every line of
+# a block of known, fixed height: move up exactly that many lines, then
+# clear-and-reprint each one top to bottom. Line count is independent of
+# terminal width, so this is robust regardless of how wide any given row is.
+render_tty_frame() {
+  local index
+  if (( TTY_DRAWN )); then
+    printf '\033[%dA' "$TTY_BLOCK_LINES"
+  fi
   if (( TTY_FULL_TABLE )); then
-    for spec in "${SPECS[@]}"; do
-      if (( COLOR_ENABLED )); then
-        truncate_plain_text "$spec" "$TTY_SPEC_WIDTH"
-        spec_text="$TRUNCATED_TEXT"
-        result_width=$((TTY_COLUMNS - TTY_SPEC_WIDTH - 2))
-        truncate_plain_text "pending" "$result_width"
-        pending_text="$TRUNCATED_TEXT"
-        printf '%-*s  %s%s%s\n' "$TTY_SPEC_WIDTH" "$spec_text" \
-          "$C_DIM" "$pending_text" "$C_RESET"
+    for index in "${!SPECS[@]}"; do
+      if [[ -n "${RESULT_KIND[$index]:-}" ]]; then
+        compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
       else
-        compose_tty_plain_line "$spec" "pending"
-        printf '%s\n' "$RENDERED_LINE"
+        compose_tty_pending_line "${SPECS[$index]}"
       fi
+      printf '\033[2K%s\n' "$RENDERED_LINE"
     done
   fi
-  render_progress_status
-  truncate_plain_text "Checking for available updates..." "$TTY_COLUMNS"
-  printf '\n\r\033[2K%s\033[1A\r' "$TRUNCATED_TEXT"
-}
-
-replace_tty_row() {
-  local index="$1" text="$2" rows_above_status
-  if (( ! TTY_FULL_TABLE )); then
-    render_progress_status
-    return 0
-  fi
-  rows_above_status=$((PROGRESS_TOTAL - index))
-  printf '\r\033[%dA\033[2K%s\033[%dB\r' \
-    "$rows_above_status" "$text" "$rows_above_status"
-  render_progress_status
-}
-
-clear_update_phase() {
-  (( TTY_ENABLED )) || return 0
-  printf '\033[1B\r\033[2K\033[1A\r'
+  compose_progress_status
+  printf '\033[2K%s\n' "$RENDERED_LINE"
+  TTY_DRAWN=1
 }
 
 finish_tty_progress() {
-  printf '\r\033[2K\033[1B\r\033[2K\033[1A\r\033[?7h\n'
+  printf '\033[?7h'
   AUTOWRAP_DISABLED=0
 }
 
@@ -509,7 +554,7 @@ compose_result_line() {
 }
 
 render_completed_job() {
-  local index="$1" name="$2" spec="$3" job_dir="$4"
+  local index="$1" job_dir="$2"
   local status="" counts="" err_line="" total low moderate high critical
   if [[ -z "${RESULT_KIND[$index]:-}" ]]; then
     status="$(<"${job_dir}/status")"
@@ -547,11 +592,6 @@ render_completed_job() {
         ;;
     esac
   fi
-
-  compose_result_line "$index" "$name" "$spec"
-  if (( TTY_ENABLED )); then
-    replace_tty_row "$index" "$RENDERED_LINE"
-  fi
 }
 
 start_job() {
@@ -578,23 +618,9 @@ reap_completed_jobs() {
       JOB_ACTIVE[index]=0
       ACTIVE_COUNT=$((ACTIVE_COUNT - 1))
       PROGRESS_DONE=$((PROGRESS_DONE + 1))
-      render_completed_job \
-        "$index" "${NAMES[$index]}" "${SPECS[$index]}" "${JOB_DIRS[$index]}"
+      render_completed_job "$index" "${JOB_DIRS[$index]}"
       REAPED_COUNT=$((REAPED_COUNT + 1))
     fi
-  done
-}
-
-redraw_completed_tty_rows() {
-  local index
-  if (( ! TTY_FULL_TABLE )); then
-    render_progress_status
-    return 0
-  fi
-  for index in "${!SPECS[@]}"; do
-    [[ -n "${RESULT_KIND[$index]:-}" ]] || continue
-    compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
-    replace_tty_row "$index" "$RENDERED_LINE"
   done
 }
 
@@ -609,10 +635,6 @@ finish_outdated_lookup() {
     LATEST_MAP["$o_name"]="$o_latest"
   done < <(parse_outdated "${WORK_DIR}/outdated.json" 2>/dev/null || true)
   OUTDATED_READY=1
-  if (( TTY_ENABLED )); then
-    clear_update_phase
-    redraw_completed_tty_rows
-  fi
 }
 
 build_next_data() {
@@ -706,12 +728,21 @@ main() {
 
   PROGRESS_TOTAL=${#SPECS[@]}
   start_outdated_lookup
+
+  # Redraw the whole TTY progress block on a ~700ms cadence rather than on
+  # every job completion: buffering updates this way still reads as
+  # real-time to a person watching, and it means the display never needs to
+  # move the cursor to a row whose exact printed width it doesn't know.
+  local redraw_ticks redraw_countdown=0
+  redraw_ticks="$(awk -v p="$POLL_INTERVAL" 'BEGIN { n = (p > 0) ? int(0.7 / p) : 1; if (n < 1) n = 1; print n }')"
+
   if [[ -t 1 ]]; then
     TTY_ENABLED=1
-    detect_tty_layout
+    detect_tty_layout "$width"
+    TTY_BLOCK_LINES=$(( TTY_FULL_TABLE ? PROGRESS_TOTAL + 1 : 1 ))
     printf '\033[?7l'
     AUTOWRAP_DISABLED=1
-    render_tty_pending_rows
+    render_tty_frame
   fi
 
   ACTIVE_COUNT=0
@@ -724,6 +755,13 @@ main() {
     start_queued_jobs
     if (( REAPED_COUNT == 0 )); then
       sleep "$POLL_INTERVAL"
+      if (( TTY_ENABLED )); then
+        redraw_countdown=$((redraw_countdown + 1))
+        if (( redraw_countdown >= redraw_ticks )); then
+          render_tty_frame
+          redraw_countdown=0
+        fi
+      fi
     fi
   done
   while (( OUTDATED_READY == 0 )); do
@@ -733,8 +771,13 @@ main() {
   done
 
   if (( TTY_ENABLED )); then
+    render_tty_frame
     finish_tty_progress
-    if (( ! TTY_FULL_TABLE )); then
+    if (( TTY_FULL_TABLE )); then
+      # The package rows are the final output; only the transient status
+      # line above "Next:" needs to go.
+      printf '\r\033[1A\033[2K'
+    else
       for index in "${!SPECS[@]}"; do
         compose_result_line "$index" "${NAMES[$index]}" "${SPECS[$index]}"
         printf '%s\n' "$RENDERED_LINE"
