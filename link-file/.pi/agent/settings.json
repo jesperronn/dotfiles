@@ -1,9 +1,0 @@
-{
-  "lastChangelogVersion": "0.85.1",
-  "theme": "dark",
-  "defaultProvider": "omlx",
-  "defaultModel": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MLX-4bit",
-  "skills": [
-    "+skills/bash-shell-testing/SKILL.md"
-  ]
-}

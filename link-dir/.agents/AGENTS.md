@@ -3,6 +3,10 @@
 Read this first. Keep this file short - it's loaded every session. Detail
 lives in linked files; open them only when the situation actually applies.
 
+## Git & commits
+
+- Do not add `Co-authored-by:` trailers to commits
+
 ## Memory Bank
 
 -> `~/.agents/notes/memory-bank.md`
