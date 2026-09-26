@@ -1,20 +1,19 @@
 # Agent Instructions (Always-On)
 
-Read this first. Keep this file short - it's loaded every session. Detail
-lives in linked files; open them only when the situation actually applies.
+Detail lives in `~/.agents/notes/` — open a linked note only when it applies.
 
 ## Git & commits
 
-- Do not add `Co-authored-by:` trailers to commits
+- Conventional commits: `type(scope): subject`.
+- Do not add `Co-authored-by:` trailers.
+- `git diff`/`log`/`show` → always `git --no-pager …` or `GIT_PAGER= git …` to avoid hanging output → `~/.agents/notes/git-pager.md`
+
 
 ## Memory Bank
 
--> `~/.agents/notes/memory-bank.md`
+- Per-project memory lives in `./memory-bank/` (per-project, never global). Read `activeContext.md` + `progress.md` at task start and update them at milestones. Template: `~/.agents/templates/memory-bank/`; details: `~/.agents/notes/memory-bank.md`.
 
-## Gotchas index
+## Gotchas
 
-- Terminal background jobs die unexpectedly across tool calls ->
-  `~/.agents/notes/terminal-background-jobs.md`
-- `git diff`/`log`/`show` can hang or garble output via the pager -> always
-  use `GIT_PAGER=cat git ...` or `git --no-pager ...` ->
-  `~/.agents/notes/git-pager.md`
+- Background jobs started in one tool call die before the next → `~/.agents/notes/terminal-background-jobs.md`
+
