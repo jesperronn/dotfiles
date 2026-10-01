@@ -27,8 +27,8 @@ selection-foreground = #ffffff
 shell-integration-features = cursor,no-sudo,no-title,no-ssh-env,no-ssh-terminfo,path
 
 #### scrollback #####
-# Unit is BYTES (default 10000000), not lines. Allocated lazily, per surface; applies to new tabs only.
-scrollback-limit = 1000000000
+# Unit is BYTES (default 10000000), not lines. 50MB; allocated lazily, per surface; applies to new tabs only.
+scrollback-limit = 50000000
 
 #### keyboard bindings #####
 
