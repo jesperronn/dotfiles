@@ -7,6 +7,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const INTERACTION_CREDIT_MULTIPLIER = 1;
 const DATE_COLUMN_MIN_WIDTH = 3;
@@ -36,7 +37,7 @@ Options:
   --config PATH       Config path (default: ${DEFAULT_CONFIG_PATH})
   --archive-dir DIR   Override archive directory for one selected account
   --dry-run           Show fetch/report targets without network calls
-  --debug             Show diagnostic details on stderr (credentials redacted)
+  --debug, --verbose  Show diagnostic details on stderr (credentials redacted)
   --full              Include interaction-count details in terminal output
   --help, -h          Show help
 
@@ -201,7 +202,7 @@ function fetchToken(account) {
   return token;
 }
 
-function fetchMeta(token, apiPath) {
+function fetchMeta(token, apiPath, metadataFile) {
   const url = `https://api.github.com/${apiPath}/copilot/metrics/reports/users-28-day/latest`;
   debug(`GET ${url} (authorization header redacted)`);
   const response = execSync(
@@ -217,10 +218,12 @@ function fetchMeta(token, apiPath) {
   if (!/^2\d\d$/.test(statusLine)) {
     throw new Error(`GitHub returned HTTP ${statusLine} for ${url}: ${raw}`);
   }
+  writeFileSync(metadataFile, raw);
+  debug(`Fetched metrics metadata: ${pathToFileURL(metadataFile).href}`);
   const json = JSON.parse(raw);
   debug(`Received metrics metadata (${raw.length} bytes, ${json.download_links?.length ?? 0} download link(s))`);
-  if (!json.download_links?.length) throw new Error(`No download_links in response: ${raw}`);
-  return { raw, json };
+  if (!json.download_links?.length) throw new Error(`No download_links in response: ${pathToFileURL(metadataFile).href}`);
+  return json;
 }
 
 function fetchAuthenticatedUser(token) {
@@ -488,7 +491,7 @@ for (let i = 0; i < argv.length; i++) {
   else if (a === '--update')       skipFetch = false;
   else if (a === '--report-only')  skipFetch = true;
   else if (a === '--dry-run')      dryRun = true;
-  else if (a === '--debug')        debugEnabled = true;
+  else if (a === '--debug' || a === '--verbose') debugEnabled = true;
   else if (a === '--full')         fullOutput = true;
   else if (a === '--month')        month = readOptionValue(a, i++);
   else if (a === '--archive-dir')  archiveDirOverride = readOptionValue(a, i++);
@@ -649,8 +652,7 @@ async function runForAccount(account) {
       await pMap(missing, fetchDay, 1);
     } else {
       process.stderr.write(`GET ${apiUrl}\n`);
-      const { raw: metaRaw, json: meta } = fetchMeta(token, cfg.api_path);
-      writeFileSync(join(archivePath, `${today}-meta.json`), metaRaw);
+      const meta = fetchMeta(token, cfg.api_path, join(archivePath, `${today}-meta.json`));
       const linkCount = meta.download_links.length;
       process.stderr.write(`Downloading ${linkCount} NDJSON shard(s)...\n`);
       const ndjson = downloadAllNdjson(meta.download_links);

@@ -10,9 +10,13 @@ source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
 TEST_TMP_DIR=""
 
+cleanup_test_tmp() {
+  [[ -z "$TEST_TMP_DIR" ]] || rm -rf "$TEST_TMP_DIR"
+}
+
 setup_tmpdir() {
   TEST_TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+  trap 'cleanup_test_tmp' EXIT
 }
 
 strip_ansi() {
@@ -85,6 +89,7 @@ test_help_exits_zero() {
   assert_contains "$output" "copilot-leaderboard --only nine,stil --month" "--help shows multi-account month example"
   assert_contains "$output" "Config format:" "--help shows config hint"
   assert_contains "$output" "--debug" "--help mentions --debug"
+  assert_contains "$output" "--verbose" "--help mentions --verbose"
   assert_contains "$output" "--full" "--help mentions --full"
   if echo "$output" | grep -q -- "copilot-leaderboard --only nine --update"; then
     test_fail "--help should not include redundant single-account update example" "$output"
@@ -139,6 +144,76 @@ test_debug_reports_diagnostics_without_credentials() {
   else
     test_pass "--debug does not expose credentials in report-only mode"
   fi
+}
+
+test_verbose_and_debug_link_to_fetched_metadata() {
+  local fake_bin="$TEST_TMP_DIR/metadata-bin"
+  local config="$TEST_TMP_DIR/metadata-config.toml"
+  local archive_dir="$TEST_TMP_DIR/metadata-archive"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200\n'
+elif [[ "$*" == *"users-28-day/latest"* ]]; then
+  printf '{"report_start_day":"2026-06-01","download_links":["https://example.test/shard?signature=secret-value"]}\n200\n'
+else
+  printf '{"user_login":"alice","day":"2026-06-01","ai_credits_used":1,"user_initiated_interaction_count":1}\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local flag output status meta_file
+  meta_file="$archive_dir/archive/$(date -u +%F)-meta.json"
+  for flag in --debug --verbose; do
+    output="" status=0
+    capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+      "$BIN" --only stil --update --archive-dir "$archive_dir" --month 2026-06 "$flag"
+    assert_status "0" "$status" "$flag update exits 0"
+    assert_contains "$output" "file://$meta_file" "$flag links to exact saved metadata"
+    assert_not_contains "$output" '"report_start_day":"2026-06-01"' "$flag does not dump metadata"
+    assert_not_contains "$output" "secret-value" "$flag hides signed URL secret"
+    assert_contains "$output" "1 download link(s)" "$flag shows parsed link count"
+    assert_contains "$(cat "$meta_file")" "secret-value" "$flag preserves exact fetched metadata on disk"
+  done
+}
+
+test_verbose_links_to_metadata_when_json_is_invalid() {
+  local fake_bin="$TEST_TMP_DIR/invalid-metadata-bin"
+  local config="$TEST_TMP_DIR/invalid-metadata-config.toml"
+  local archive_dir="$TEST_TMP_DIR/invalid-metadata-archive"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200\n'
+else
+  printf '{invalid json\n200\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0 meta_file
+  meta_file="$archive_dir/archive/$(date -u +%F)-meta.json"
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only stil --update --archive-dir "$archive_dir" --verbose
+  assert_status "1" "$status" "invalid metadata exits 1"
+  assert_contains "$output" "file://$meta_file" "invalid metadata still has saved response link"
+  assert_contains "$(cat "$meta_file")" '{invalid json' "invalid metadata preserves exact response"
 }
 
 test_401_reports_authenticated_user_endpoint() {
