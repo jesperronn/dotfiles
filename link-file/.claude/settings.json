@@ -6,15 +6,10 @@
   "permissions": {
     "allow": [
       "Bash"
-    ]
+    ],
+    "defaultMode": "auto"
   },
   "model": "sonnet",
-  "alwaysThinkingEnabled": true,
-  "effortLevel": "low",
-  "skipWorkflowUsageWarning": true,
-  "theme": "auto",
-  "verbose": true,
-  "switchModelsOnFlag": false,
   "hooks": {
     "PostToolUse": [
       {
@@ -22,10 +17,16 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=\"$(cat | python3 -c 'import json,sys;print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))' 2>/dev/null)\"; [ -z \"$f\" ] && exit 0; d=\"$(dirname \"$f\")\"; while [ \"$d\" != \"/\" ] && [ ! -d \"$d/.git\" ]; do d=\"$(dirname \"$d\")\"; done; [ -x \"$d/bin/lint\" ] && \"$d/bin/lint\" --autofix \"$f\" || exit 0"
+            "command": "f=\"$(cat | python3 -c 'import json,sys;print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))' 2>/dev/null)\"; [ -z \"$f\" ] && exit 0; d=\"$(dirname \"$f\")\"; while [ \"$d\" != \"/\" ] && [ ! -e \"$d/.git\" ]; do d=\"$(dirname \"$d\")\"; done; [ -x \"$d/bin/lint\" ] && \"$d/bin/lint\" --autofix \"$f\" || exit 0"
           }
         ]
       }
     ]
-  }
+  },
+  "alwaysThinkingEnabled": true,
+  "effortLevel": "low",
+  "skipWorkflowUsageWarning": true,
+  "theme": "auto",
+  "verbose": true,
+  "switchModelsOnFlag": false
 }
