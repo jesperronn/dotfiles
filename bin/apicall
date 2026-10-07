@@ -1,0 +1,313 @@
+#!/usr/bin/env node
+// Configuration-driven curl requests. Node.js 22+; no package dependencies.
+import { spawn, spawnSync } from 'node:child_process';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const configPath = process.env.APICALL_CONFIG || join(homedir(), '.config', 'apicall.toml');
+const fail = message => { throw new Error(message); };
+const object = () => Object.create(null);
+const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+const help = `Usage:
+  apicall setup
+  apicall list
+  apicall environments <service>
+  apicall describe <service> <environment>
+  apicall validate
+  apicall preview <service> <environment> <path> [-- <curl arguments>]
+  apicall call <service> <environment> <path> [-- <curl arguments>]
+
+Config: ${configPath}
+Create with: apicall setup
+Credential policy is set only in config. Curl options go after --.
+Example: apicall call uniapi prod job/check-certificates/info -- -k --connect-timeout 5
+Pretty output: apicall call awx staging projects/ | jq .
+`;
+
+// A deliberately small TOML subset: tables, basic strings, integers and comments.
+function parseToml(text) {
+  const root = object();
+  let table = root;
+  const declared = new Set();
+  function stringValue(raw) {
+    if (!/^"(?:[^"\\\x00-\x1f]|\\(?:[btnfr"\\]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}))*"$/.test(raw)) fail('Expected a TOML basic string');
+    return raw.slice(1, -1).replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[btnfr"\\])/g, (_, escape) => {
+      if (/^[uU]/.test(escape)) {
+        const cp = parseInt(escape.slice(1), 16);
+        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) fail('Invalid Unicode escape');
+        return String.fromCodePoint(cp);
+      }
+      return { b:'\b', t:'\t', n:'\n', f:'\f', r:'\r', '"':'"', '\\':'\\' }[escape];
+    });
+  }
+  function keys(raw) {
+    const parts = raw.match(/"(?:[^"\\]|\\.)*"|[A-Za-z0-9_-]+|\.|\S/g) || [];
+    const result = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 1) { if (parts[i] !== '.') fail('Invalid table/key'); }
+      else {
+        if (!/^(?:".*"|[A-Za-z0-9_-]+)$/.test(parts[i])) fail('Invalid table/key');
+        result.push(parts[i].startsWith('"') ? stringValue(parts[i]) : parts[i]);
+      }
+    }
+    if (!result.length || parts.length % 2 === 0) fail('Invalid table/key');
+    return result;
+  }
+  for (const [index, rawLine] of text.split(/\r?\n/).entries()) {
+    try {
+      let quoted = false, escaped = false, end = rawLine.length;
+      for (let i = 0; i < rawLine.length; i++) {
+        const char = rawLine[i];
+        if (escaped) { escaped = false; continue; }
+        if (quoted && char === '\\') { escaped = true; continue; }
+        if (char === '"') quoted = !quoted;
+        if (!quoted && char === '#') { end = i; break; }
+      }
+      const line = rawLine.slice(0, end).trim();
+      if (!line) continue;
+      if (line.startsWith('[')) {
+        if (!line.endsWith(']') || line.startsWith('[[')) fail('Unsupported table syntax');
+        const path = keys(line.slice(1, -1));
+        const id = JSON.stringify(path);
+        if (declared.has(id)) fail('Duplicate table');
+        declared.add(id); table = root;
+        for (const key of path) {
+          if (Object.hasOwn(table, key) && !isObject(table[key])) fail('Table conflicts with value');
+          table = table[key] ??= object();
+        }
+      } else {
+        const match = line.match(/^((?:"(?:[^"\\]|\\.)*"|[A-Za-z0-9_-]+))\s*=\s*(.+)$/);
+        if (!match) fail('Unsupported config syntax');
+        const key = keys(match[1])[0];
+        if (Object.hasOwn(table, key)) fail(`Duplicate key '${key}'`);
+        const value = match[2].trim();
+        table[key] = value.startsWith('"') ? stringValue(value) : /^-?(?:0|[1-9][0-9]*)$/.test(value) ? Number(value) : fail('Unsupported value; use quoted strings');
+      }
+    } catch (error) { fail(`TOML line ${index + 1}: ${error.message}`); }
+  }
+  return root;
+}
+function fields(value, allowed, context) {
+  if (!isObject(value)) fail(`${context} must be a table`);
+  for (const key of Object.keys(value)) if (!allowed.includes(key)) fail(`Unknown field '${key}' in ${context}`);
+}
+function text(value, context, empty = false) {
+  if (typeof value !== 'string' || (!empty && !value) || /[\r\n\x00]/.test(value)) fail(`${context} must be a ${empty ? '' : 'nonempty '}single-line string`);
+  return value;
+}
+function expand(value, environment) {
+  return value.replace(/\{env\}/g, environment.toLowerCase()).replace(/\{ENV\}/g, environment.toUpperCase());
+}
+function template(value, environment, context, empty = false) {
+  text(value, context, empty);
+  if (/[{}]/.test(value.replace(/\{env\}|\{ENV\}/g, ''))) fail(`Unknown or malformed placeholder in ${context}`);
+  return expand(value, environment);
+}
+function mergeAuth(base = {}, override = {}) {
+  if (override.type && override.type !== (base.type || 'none')) return { ...override };
+  const merged = { ...base, ...override };
+  for (const key of ['username', 'password', 'token']) if (base[key] || override[key]) merged[key] = { ...base[key], ...override[key] };
+  return merged;
+}
+function effective(service, environment) {
+  const env = service.environments[environment];
+  const headers = object();
+  for (const [name, value] of Object.entries({ ...service.headers, ...env.headers })) {
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name)) fail(`Invalid header name '${name}'`);
+    text(value, `Header ${name}`, true);
+    for (const old of Object.keys(headers)) if (old.toLowerCase() === name.toLowerCase()) delete headers[old];
+    headers[name] = value;
+  }
+  const origin = template(env.origin, environment, 'origin');
+  let url;
+  try { url = new URL(origin); } catch { fail(`Invalid origin '${origin}'`); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash || /[?#]/.test(origin)) fail('origin must be an HTTP(S) origin without credentials, path, query or fragment');
+  const apiPath = template(env.api_path ?? service.api_path ?? '', environment, 'api_path', true);
+  if (/[?#]/.test(apiPath) || apiPath.split('/').some(p => p === '.' || p === '..')) fail('api_path must be a path prefix without query, fragment or dot segments');
+  const auth = mergeAuth(service.auth, env.auth);
+  auth.type ??= 'none';
+  const allowed = { none:['type'], basic:['type','credential_policy','username','password'], bearer:['type','credential_policy','token'], header:['type','credential_policy','token','name','prefix'] };
+  if (!allowed[auth.type]) fail(`Unknown auth type '${auth.type}'`);
+  fields(auth, allowed[auth.type], 'auth');
+  if (auth.type !== 'none') {
+    auth.credential_policy ??= 'env';
+    if (!['env','op','env-or-op'].includes(auth.credential_policy)) fail('Unknown credential_policy');
+    for (const key of auth.type === 'basic' ? ['username','password'] : ['token']) {
+      const source = auth[key]; fields(source, ['env','op'], `auth.${key}`);
+      for (const provider of Object.keys(source)) source[provider] = template(source[provider], environment, `${key}.${provider}`);
+      if (source.env && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(source.env)) fail(`Invalid environment variable name '${source.env}'`);
+      if (source.op && !source.op.startsWith('op://')) fail('1Password reference must start with op://');
+      for (const provider of auth.credential_policy === 'env-or-op' ? ['env','op'] : [auth.credential_policy]) if (!source[provider]) fail(`auth.${key} requires ${provider} source`);
+    }
+    if (auth.type === 'header') {
+      text(auth.name, 'auth.name');
+      if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(auth.name)) fail('Invalid auth header name');
+      text(auth.prefix ?? '', 'auth.prefix', true);
+    }
+    const generated = auth.type === 'header' ? auth.name : 'Authorization';
+    if (Object.keys(headers).some(h => h.toLowerCase() === generated.toLowerCase())) fail(`Configured header conflicts with auth header '${generated}'`);
+  }
+  return { origin:origin.replace(/\/$/, ''), api_path:apiPath, headers, auth };
+}
+function loadConfig() {
+  let raw;
+  try { raw = readFileSync(configPath, 'utf8'); } catch (e) { fail(`Cannot read config ${configPath}: ${e.code}. Create with: apicall setup`); }
+  const config = parseToml(raw);
+  fields(config, ['version','services'], 'config');
+  if (config.version !== 1) fail('Config version must be 1');
+  fields(config.services, Object.keys(config.services || {}), 'services');
+  for (const [name, service] of Object.entries(config.services)) {
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) fail('Invalid service identifier');
+    fields(service, ['api_path','headers','auth','environments'], name);
+    if (service.headers) fields(service.headers, Object.keys(service.headers), 'headers');
+    if (service.auth) fields(service.auth, ['type','credential_policy','username','password','token','name','prefix'], 'auth');
+    fields(service.environments, Object.keys(service.environments || {}), 'environments');
+    if (!Object.keys(service.environments).length) fail(`${name} needs an environment`);
+    for (const [environment, env] of Object.entries(service.environments)) {
+      if (!/^[A-Za-z0-9_-]+$/.test(environment)) fail('Invalid environment identifier');
+      fields(env, ['origin','api_path','headers','auth'], `${name}.${environment}`);
+      if (env.headers) fields(env.headers, Object.keys(env.headers), 'headers');
+      if (env.auth) fields(env.auth, ['type','credential_policy','username','password','token','name','prefix'], 'auth');
+      effective(service, environment);
+    }
+  }
+  return config.services;
+}
+function setup() {
+  const contents = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'apicall.toml.template'), 'utf8');
+  mkdirSync(dirname(configPath), { recursive:true });
+  try { writeFileSync(configPath, contents, { flag:'wx', mode:0o600 }); }
+  catch(e) { if (e.code === 'EEXIST') fail(`Config already exists: ${configPath}`); throw e; }
+  console.log(`Wrote ${configPath}\nEdit the example services and credential references, then run: apicall validate`);
+}
+// Explicit option arity prevents operands from becoming additional curl targets.
+const curlValues = new Set(['--connect-timeout','--max-time','--request','--header','--data','--data-raw','--data-binary','--data-urlencode','--json','--output','--output-dir','--dump-header','--user','--proxy-user','--proxy','--noproxy','--cacert','--capath','--cert','--key','--cert-type','--key-type','--pass','--resolve','--connect-to','--interface','--url-query','--upload-file','--form','--form-string','--cookie','--cookie-jar','--referer','--user-agent','--range','--limit-rate','--retry','--retry-delay','--retry-max-time','--write-out','--max-redirs','--request-target','--unix-socket','--proto','--proto-redir','--tls-max']);
+const curlFlags = new Set(['--insecure','--silent','--show-error','--verbose','--trace','--trace-ascii','--location','--location-trusted','--head','--include','--compressed','--get','--fail','--fail-with-body','--no-fail','--no-fail-with-body','--http1.0','--http1.1','--http2','--http2-prior-knowledge','--ipv4','--ipv6','--no-progress-meter','--progress-bar','--globoff','--retry-all-errors','--retry-connrefused','--tcp-nodelay','--no-keepalive','--tlsv1.2','--tlsv1.3','--basic','--digest','--anyauth','--netrc','--netrc-optional']);
+// Trace options take a filename despite their output being diagnostic.
+curlFlags.delete('--trace'); curlFlags.delete('--trace-ascii');
+curlValues.add('--trace'); curlValues.add('--trace-ascii');
+const shortValues = {X:'--request',H:'--header',d:'--data',o:'--output',D:'--dump-header',u:'--user',U:'--proxy-user',x:'--proxy',T:'--upload-file',F:'--form',b:'--cookie',c:'--cookie-jar',e:'--referer',A:'--user-agent',r:'--range',w:'--write-out'};
+const shortFlags = {k:'--insecure',s:'--silent',S:'--show-error',v:'--verbose',L:'--location',I:'--head',i:'--include',G:'--get',f:'--fail',g:'--globoff','4':'--ipv4','6':'--ipv6','#':'--progress-bar'};
+function curlOptions(args) {
+  const preview = [];
+  let method = 'GET';
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    let option, value, hasValue = false;
+    if (arg.startsWith('--')) {
+      const equal = arg.indexOf('=');
+      option = equal < 0 ? arg : arg.slice(0, equal);
+      if (curlValues.has(option)) {
+        hasValue = true;
+        value = equal < 0 ? args[++i] : arg.slice(equal + 1);
+      } else if (!curlFlags.has(option) || equal >= 0) fail(`Unsupported curl option '${option}'; use a documented option after --`);
+    } else if (/^-[^-]/.test(arg)) {
+      const short = arg[1];
+      if (shortValues[short]) { option = shortValues[short]; hasValue = true; value = arg.length > 2 ? arg.slice(2) : args[++i]; }
+      else if (shortFlags[short] && arg.length === 2) option = shortFlags[short];
+      else fail(`Unsupported curl option '${arg}'; use separate short flags`);
+    } else fail('Additional URL operands are not allowed after --');
+    if (hasValue && value === undefined) fail(`Curl option '${option}' requires a value`);
+    if (option === '--request') method = '[explicit curl method]';
+    else if (option === '--head') method = 'HEAD';
+    else if (['--data','--data-raw','--data-binary','--data-urlencode','--json','--form','--form-string'].includes(option) && method === 'GET') method = 'POST';
+    else if (option === '--upload-file' && method === 'GET') method = 'PUT';
+    else if (option === '--get') method = 'GET';
+    preview.push(option + (hasValue ? ' [value omitted]' : ''));
+  }
+  return { preview, method };
+}
+function requestUrl(config, path) {
+  text(path, 'Request path', true);
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(path) || path.startsWith('//') || path.includes('#') || path.split('?')[0].split('/').some(p => p === '.' || p === '..')) fail('Request path must be relative, without fragment or dot segments');
+  const prefix = config.api_path.replace(/^\/+|\/+$/g, '');
+  return config.origin + (prefix ? '/' + prefix : '') + '/' + path.replace(/^\/+/, '');
+}
+function credentials(auth) {
+  if (auth.type === 'none') return {};
+  const keys = auth.type === 'basic' ? ['username','password'] : ['token'];
+  const complete = keys.every(key => process.env[auth[key].env]);
+  const provider = auth.credential_policy === 'env-or-op' ? (complete ? 'env' : 'op') : auth.credential_policy;
+  const resolved = {};
+  for (const key of keys) {
+    if (provider === 'env') {
+      resolved[key] = process.env[auth[key].env];
+      if (!resolved[key]) fail(`Environment variable '${auth[key].env}' is missing or empty`);
+    } else {
+      const result = spawnSync('op', ['read', '--no-newline', auth[key].op], { encoding:'utf8', stdio:['ignore','pipe','pipe'] });
+      if (result.error || result.status !== 0) fail(`Cannot read 1Password reference for ${key}; check op installation and access`);
+      resolved[key] = result.stdout;
+      if (!resolved[key]) fail(`1Password returned an empty ${key}`);
+    }
+    text(resolved[key], `Resolved ${key}`);
+  }
+  if (auth.type === 'basic' && resolved.username.includes(':')) fail('Basic username cannot contain a colon');
+  return resolved;
+}
+function authConfig(auth, resolved) {
+  const quote = value => '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\t/g, '\\t') + '"';
+  if (auth.type === 'none') return '';
+  if (auth.type === 'basic') return 'user = ' + quote(resolved.username + ':' + resolved.password) + '\n';
+  const name = auth.type === 'bearer' ? 'Authorization' : auth.name;
+  const prefix = auth.type === 'bearer' ? 'Bearer ' : auth.prefix || '';
+  return 'header = ' + quote(name + ': ' + prefix + resolved.token) + '\n';
+}
+async function execute(config, url, passthrough) {
+  const resolved = credentials(config.auth);
+  let privateDir;
+  const args = ['--disable','--globoff','--silent','--show-error','--fail-with-body'];
+  const handlers = [];
+  try {
+    const contents = authConfig(config.auth, resolved);
+    if (contents) {
+      privateDir = mkdtempSync(join(tmpdir(), 'apicall-'));
+      const path = join(privateDir, 'auth');
+      writeFileSync(path, contents, { flag:'wx', mode:0o600 });
+      args.push('--config', path);
+    }
+    for (const [name, value] of Object.entries(config.headers)) args.push('--header', `${name}: ${value}`);
+    args.push(...passthrough, '--url', url);
+    process.exitCode = await new Promise((resolve, reject) => {
+      const child = spawn('curl', args, { stdio:'inherit' });
+      for (const signal of ['SIGINT','SIGTERM','SIGHUP']) {
+        const handler = () => child.kill(signal);
+        handlers.push([signal, handler]); process.on(signal, handler);
+      }
+      child.once('error', () => reject(new Error('Cannot execute curl; ensure curl is installed')));
+      child.once('close', (code, signal) => resolve(code ?? ({SIGINT:130,SIGTERM:143,SIGHUP:129}[signal] || 1)));
+    });
+  } finally {
+    for (const [signal, handler] of handlers) process.off(signal, handler);
+    if (privateDir) rmSync(privateDir, { recursive:true, force:true });
+  }
+}
+async function main() {
+  const args = process.argv.slice(2);
+  const separator = args.indexOf('--');
+  const own = separator < 0 ? args : args.slice(0, separator);
+  if (own.includes('--help') || own.includes('-h')) { process.stdout.write(help); return; }
+  const command = own[0];
+  const arity = {setup:0,list:0,environments:1,describe:2,validate:0,preview:3,call:3};
+  if (!(command in arity) || own.length !== arity[command] + 1 || (separator >= 0 && !['call','preview'].includes(command))) fail(help);
+  if (command === 'setup') { setup(); return; }
+  const services = loadConfig();
+  if (command === 'list') { console.log(Object.keys(services).sort().join('\n')); return; }
+  if (command === 'validate') { console.log(`Valid config: ${configPath}`); return; }
+  const service = services[own[1]];
+  if (!service) fail(`Unknown service '${own[1]}'. Available: ${Object.keys(services).sort().join(', ')}`);
+  if (command === 'environments') { console.log(Object.keys(service.environments).sort().join('\n')); return; }
+  if (!service.environments[own[2]]) fail(`Unknown environment '${own[2]}'. Available: ${Object.keys(service.environments).sort().join(', ')}`);
+  const config = effective(service, own[2]);
+  if (command === 'describe') { console.log(JSON.stringify(config, null, 2)); return; }
+  const passthrough = separator < 0 ? [] : args.slice(separator + 1);
+  const options = curlOptions(passthrough);
+  const url = requestUrl(config, own[3]);
+  if (command === 'preview') {
+    console.log(JSON.stringify({method:options.method,url,headers:config.headers,auth:config.auth,curl_options:options.preview},null,2));
+    return;
+  }
+  await execute(config, url, passthrough);
+}
+try { await main(); } catch(error) { console.error(`apicall: ${error.message}`); process.exitCode = 1; }

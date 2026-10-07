@@ -1,0 +1,69 @@
+# apicall configuration: edit these fictional examples before making calls.
+# Location: ~/.config/apicall.toml; APICALL_CONFIG selects another file.
+# Supported TOML: tables, basic double-quoted strings, integer version, comments.
+# No arrays, inline tables, multiline strings or literal secret values.
+version = 1
+
+# Service defaults: api_path (empty by default), headers (empty), auth (none).
+# Service/environment identifiers contain letters, digits, underscore or hyphen.
+[services.uniapi]
+api_path = "/api"
+[services.uniapi.headers]
+Accept = "application/json"
+
+# Auth types: none, basic (username/password), bearer (token), header (token/name).
+# credential_policy: env (default, strict), op (strict), env-or-op (fallback).
+# Basic fallback resolves both username and password together; never mixes sources.
+[services.uniapi.auth]
+type = "basic"
+credential_policy = "env-or-op"
+[services.uniapi.auth.username]
+# {env} is lowercase; {ENV} uppercase. Only these two placeholders are supported.
+# Expand in origin, api_path, env names and op references; no shell evaluation.
+env = "API_SERVER_{ENV}_USERNAME"
+op = "op://Work/uniapi-{env}/username"
+[services.uniapi.auth.password]
+env = "API_SERVER_{ENV}_PASSWORD"
+op = "op://Work/uniapi-{env}/password"
+
+# Every environment needs an HTTP(S) origin, without path/query/credentials.
+[services.uniapi.environments.dev]
+origin = "https://dev.example.test"
+[services.uniapi.environments.staging]
+origin = "https://staging.example.test"
+[services.uniapi.environments.prod]
+origin = "https://prod.example.test"
+# Environment overrides: api_path, individual headers (case-insensitive), auth fields.
+# Credential source env/op fields merge; a changed auth type replaces all auth fields.
+[services.uniapi.environments.prod.auth]
+credential_policy = "op"
+
+[services.awx]
+api_path = "/api/v2"
+[services.awx.auth]
+type = "bearer"
+credential_policy = "op"
+[services.awx.auth.token]
+op = "op://Work/awx-{env}/token"
+[services.awx.environments.dev]
+origin = "https://awx-dev.example.test"
+
+[services.custom.auth]
+type = "header"
+name = "X-API-Key"
+# prefix is optional, default empty; include a trailing space when required.
+prefix = ""
+credential_policy = "env"
+[services.custom.auth.token]
+env = "CUSTOM_{ENV}_API_KEY"
+[services.custom.environments.dev]
+origin = "https://custom-dev.example.test"
+
+[services.public.auth]
+type = "none"
+[services.public.environments.dev]
+origin = "https://public.example.test"
+# Optional API-prefix/header overrides can be written on an environment:
+api_path = "/v1"
+[services.public.environments.dev.headers]
+Accept = "application/json"
