@@ -53,7 +53,7 @@ test_usage() {
   printf 'Run executable shell test files.\n'
   printf "With no arguments, all \`*.test.sh\` files under \`bin/\` are run.\n"
   printf "Use \`--verbose\` to show per-test \`RUN\` lines from the shared test helper.\n\n"
-  printf '%sUsage:%s %sbin/test%s [%s--verbose%s] [%s--color%s|%s--no-color%s] [%stest-file ...%s]\n\n' \
+  printf '%sUsage:%s %sbin/runtests%s [%s--verbose%s] [%s--color%s|%s--no-color%s] [%stest-file ...%s]\n\n' \
     "$section_style" "$reset_style" \
     "$tool_style" "$reset_style" \
     "$flag_style" "$reset_style" \

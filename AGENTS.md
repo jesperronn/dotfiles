@@ -2,8 +2,8 @@
 
 ## Verify before done
 
-- Run `bin/lint` then `bin/test`; both default to all of `bin/`, pass paths to narrow. Nothing runs them automatically — `.githooks/pre-commit` only regenerates the skills README.
-- Single test file: `bin/test bin/<name>.test.sh`; `--verbose` prints per-test `[RUN]`/`[TIME]` lines.
+- Run `bin/lint` then `bin/runtests`; both default to all of `bin/`, pass paths to narrow. Nothing runs them automatically — `.githooks/pre-commit` only regenerates the skills README.
+- Single test file: `bin/runtests bin/<name>.test.sh`; `--verbose` prints per-test `[RUN]`/`[TIME]` lines.
 
 ## Commits
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for bin/saml-decode
-# Run: bin/test (discovers automatically)
+# Run: bin/runtests (discovers automatically)
 
 set -euo pipefail
 
