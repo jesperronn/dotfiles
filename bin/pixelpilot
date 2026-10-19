@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// Review screenshot diffs against a git baseline and write an HTML review page. See docs/pixelpilot.md.
 
 const path = require('node:path');
 
