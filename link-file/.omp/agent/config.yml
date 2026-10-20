@@ -79,8 +79,7 @@ github:
 dev:
   autoqa: true
 retry:
-  fallbackChains:
-    {}
+  fallbackChains: {}
 prewalk:
   enabled: true
 startup:

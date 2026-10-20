@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "0.87.1",
+  "lastChangelogVersion": "1.0.3",
   "theme": "dark",
   "defaultProvider": "omlx",
   "defaultModel": "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-MLX-4bit",
