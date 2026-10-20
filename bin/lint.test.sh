@@ -356,5 +356,32 @@ test_autocorrect_requires_shellcheck() {
   assert_contains "$output" "shellcheck not installed; skipping." "autocorrect explains the missing shellcheck dependency"
 }
 
+test_explicit_non_shell_file_is_skipped() {
+  local work_dir="$TEST_TMP_DIR/non-shell"
+  local stub_dir=""
+  local node_file="$work_dir/tool"
+  local shell_file="$work_dir/sample.sh"
+  local output=""
+  local status=0
+
+  mkdir -p "$work_dir"
+  stub_dir="$(make_stub_bin_dir)"
+  printf '#!/usr/bin/env node\nconsole.log(1);\n' >"$node_file"
+  make_shell_file "$shell_file" 'printf "ok\n"'
+  write_shellcheck_stub "$stub_dir" 'exit 0'
+
+  capture_command output status env PATH="$stub_dir:$PATH" "$LINT_BIN" "$node_file" "$shell_file"
+  assert_status "0" "$status" "explicit node script alongside a shell file does not fail lint"
+  assert_contains "$output" "syntax  $shell_file" "shell file is still syntax-checked"
+  assert_not_contains "$output" "syntax  $node_file" "explicit node script is not run through bash -n"
+
+  capture_command output status env PATH="$stub_dir:$PATH" "$LINT_BIN" "$node_file"
+  assert_status "0" "$status" "lint succeeds when only a node script is given"
+  assert_contains "$output" "nothing to lint" "lint explains that the node script was skipped"
+
+  capture_command output status env PATH="$stub_dir:$PATH" "$LINT_BIN" "$work_dir/missing.sh"
+  assert_not_status "0" "$status" "lint still fails for a missing explicit file"
+}
+
 setup_tmpdir
 run_tests "$@"

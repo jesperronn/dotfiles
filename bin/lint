@@ -156,6 +156,8 @@ collect_shell_files() {
     for path in "$@"; do
       if [[ -d "$path" ]]; then
         collect_shell_files_under "$path"
+      elif [[ -f "$path" ]] && ! is_shell_file "$path"; then
+        lint_debug "skip non-shell file: $path"
       else
         printf '%s\n' "$path"
       fi
@@ -417,6 +419,16 @@ lint_parse_opts() {
   return 0
 }
 
+all_requested_are_non_shell() {
+  local path=""
+
+  [[ ${#LINT_REQUESTED_FILES[@]} -gt 0 ]] || return 1
+
+  for path in "${LINT_REQUESTED_FILES[@]}"; do
+    [[ -f "$path" ]] && ! is_shell_file "$path" || return 1
+  done
+}
+
 run_main() {
   lint_reset_state
   lint_parse_opts "$@" || return $?
@@ -425,6 +437,10 @@ run_main() {
   mapfile -t LINT_FILES < <(collect_shell_files "${LINT_REQUESTED_FILES[@]}")
 
   if [[ ${#LINT_FILES[@]} -eq 0 ]]; then
+    if all_requested_are_non_shell; then
+      printf 'Skipped non-shell file(s); nothing to lint.\n'
+      return 0
+    fi
     printf 'No shell files found.\n' >&2
     return 1
   fi
