@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016 # single-quoted strings are intentional literal payloads (printf/heredoc text with $ kept as-is)
 
 set -u
 # shellcheck shell=bash
@@ -1066,7 +1067,7 @@ check_docker_socket_rootless() {
   log_ok "docker_socket_rootless_test is available"
 
   # Try to run test on available port (389, then 390, 391, ...)
-  local port="" test_port=389 max_attempts=10 attempt=0 output="" status=0
+  local test_port=389 max_attempts=10 attempt=0 output="" status=0
   local rootless_timeout=60
   [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] && rootless_timeout=2 max_attempts=1
 
@@ -1550,7 +1551,6 @@ check_container_https_egress() {
   fi
 
   local host_result="" vm_result="" container_result=""
-  local host_status=0 vm_status=0 container_status=0
   local temp_dir=""
 
   if [[ "$VERBOSE_MODE" == "1" ]]; then
@@ -1603,11 +1603,8 @@ check_container_https_egress() {
 
   # Collect results from temp files
   host_result="$(cat "$temp_dir/host_result" 2>/dev/null || echo "host fail")"
-  host_status="$(cat "$temp_dir/host_status" 2>/dev/null || echo 1)"
   vm_result="$(cat "$temp_dir/vm_result" 2>/dev/null || echo "vm fail")"
-  vm_status="$(cat "$temp_dir/vm_status" 2>/dev/null || echo 1)"
   container_result="$(cat "$temp_dir/container_result" 2>/dev/null || echo "container fail")"
-  container_status="$(cat "$temp_dir/container_status" 2>/dev/null || echo 1)"
 
   # Summarize results
   printf 'HTTPS connectivity:\n'
@@ -1664,7 +1661,9 @@ check_machine_stability() {
     log_verbose "checking machine stability: probing podman ps at T+0s and T+${STABILITY_SLEEP_SECONDS}s"
   fi
 
+  # shellcheck disable=SC2034 # probe outputs and statuses are assigned by name via capture_command*
   local ps_probe_1="" ps_probe_2="" machine_list_probe=""
+  # shellcheck disable=SC2034 # statuses are assigned by name via capture_command*
   local status_1=0 status_2=0 status_list=0
 
   # First ps probe
