@@ -267,4 +267,22 @@ test_specified_folder() {
   rm -rf "$work_dir"
 }
 
+test_project_prefix_stripped() {
+  local work_dir=""
+  local output=""
+
+  setup_shared_stubs
+  work_dir="$(mktemp -d)"
+  make_package_lock "$work_dir/test-project/package-lock.json" ""
+
+  cd "$work_dir"
+  output=$(NO_COLOR=1 PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages keyv 2>/dev/null)
+  assert_contains "$output" "test-project  |  keyv  |  4.5.0  |  ./test-project/package-lock.json" "default folder: ./ prefix stripped from project"
+
+  output=$(NO_COLOR=1 PATH="$_SHARED_STUB_DIR:$PATH" /Users/jesper/src/dotfiles/bin/npmscout --packages keyv "$work_dir" 2>/dev/null)
+  assert_contains "$output" "test-project  |  keyv  |  4.5.0  |  $work_dir/test-project/package-lock.json" "explicit folder: folder prefix stripped from project"
+
+  rm -rf "$work_dir"
+}
+
 run_tests "$@"
