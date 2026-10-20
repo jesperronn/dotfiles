@@ -3,6 +3,6 @@
 
 const path = require('node:path');
 
-const reviewCli = require(path.join(__dirname, 'lib', 'pixelpilot', 'review-cli'));
+const reviewCli = require(path.join(__dirname, 'lib', 'pixelpilot', 'cli'));
 
 reviewCli.main();
