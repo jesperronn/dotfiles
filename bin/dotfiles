@@ -377,6 +377,7 @@ function init_files() {
 }
 function init_do() {
   e_header "Sourcing $(basename "$2")"
+  # shellcheck disable=SC1090 # the script path is passed in at runtime by design
   source "$2"
 }
 
