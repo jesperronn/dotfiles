@@ -76,7 +76,7 @@ RESULT=()
 while IFS= read -r lock; do
   echo "DEBUG: Found lock file: $lock" >&2
   lockDir=$(dirname "$lock")
-  project=${lockDir#$FOLDER/}
+  project=${lockDir#"$FOLDER"/}
 
   for pkg in $SPACE_PACKAGES; do
     echo "DEBUG: Looking for package: $pkg" >&2
