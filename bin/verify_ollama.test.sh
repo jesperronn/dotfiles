@@ -98,7 +98,8 @@ test_run_main_applies_launchctl_value_on_macos() {
     PATH="$tmp_dir/bin:$PATH" \
     capture_command output status run_main
 
-  local launchctl_log_contents="$(cat "$tmp_dir/launchctl.log")"
+  local launchctl_log_contents
+  launchctl_log_contents="$(cat "$tmp_dir/launchctl.log")"
   assert_status "0" "$status" "verify_ollama succeeds on macOS"
   assert_contains "$output" "Set OLLAMA_KEEP_ALIVE=30m for this login session" "verify_ollama reports the applied value"
   assert_contains "$output" "Set OLLAMA_CONTEXT_LENGTH=524288 for this login session" "verify_ollama reports the applied context value"
@@ -201,7 +202,8 @@ test_run_main_fix_repairs_homebrew_plist_and_restarts() {
     PATH="$tmp_dir/bin:$PATH" \
     capture_command output status run_main --fix
 
-  local plist_contents="$(cat "$plist_path")"
+  local plist_contents
+  plist_contents="$(cat "$plist_path")"
   assert_status "0" "$status" "verify_ollama --fix succeeds"
   assert_contains "$output" "Homebrew Ollama plist" "verify_ollama --fix warns about the bad plist"
   assert_contains "$output" "editing: adding \"OLLAMA_KEEP_ALIVE=30m\"" "verify_ollama --fix reports the edit"
