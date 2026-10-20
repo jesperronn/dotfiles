@@ -446,7 +446,7 @@ skills_check_inconsistencies() {
         # Real directory in skills-enabled (these should typically be via symlinks)
         inconsistent+=("REAL_FILE_ENABLED:$item")
       fi
-    done < <(find "$SKILLS_ENABLED_ROOT" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | xargs -I {} basename {} | sort)
+    done < <(find "$SKILLS_ENABLED_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
   fi
 
   # Check .agents/skills/ for real files (should be symlinks)
@@ -465,7 +465,7 @@ skills_check_inconsistencies() {
           inconsistent+=("BROKEN_SYMLINK:$item")
         fi
       fi
-    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) 2>/dev/null | xargs -I {} basename {} | sort)
+    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -exec basename {} \; 2>/dev/null | sort)
   fi
 
   printf '%s\n' "${inconsistent[@]}"
@@ -887,7 +887,7 @@ skills_sync() {
           orphaned_count=$((orphaned_count + 1))
         fi
       fi
-    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 -type l 2>/dev/null | xargs -I {} basename {} | sort)
+    done < <(find "$SKILLS_SYMLINK_ROOT" -mindepth 1 -maxdepth 1 -type l -exec basename {} \; 2>/dev/null | sort)
   fi
 
   if (( orphaned_count > 0 )); then

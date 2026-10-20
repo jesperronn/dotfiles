@@ -6,10 +6,10 @@
 
 SRC=https://raw.githubusercontent.com/git/git/master/contrib/completion/git-completion.bash
 DST=$HOME/bin/.git-completion.bash
-if [ ! -f $DST ]; then
-  mkdir -p $HOME/bin/
-  curl $SRC -o $DST
+if [ ! -f "$DST" ]; then
+  mkdir -p "$HOME/bin/"
+  curl "$SRC" -o "$DST"
 fi
 
 unset $SRC
-unset $DST
+unset "$DST"

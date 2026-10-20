@@ -225,7 +225,7 @@ run_main() {
     "$n_managed" "$n_cand" "$n_other"
 
   if [[ ${#managed[@]} -gt 0 ]]; then
-    printf "${C_GREEN}MANAGED (already in repo):${C_RESET}\n"
+    printf '%bMANAGED (already in repo):%b\n' "$C_GREEN" "$C_RESET"
     for item in "${managed[@]}"; do
       local name label
       name="$(basename "$item")"
@@ -242,7 +242,7 @@ run_main() {
   fi
 
   if [[ ${#candidates[@]} -gt 0 ]]; then
-    printf "${C_YELLOW}CANDIDATES (not yet managed):${C_RESET}\n"
+    printf '%bCANDIDATES (not yet managed):%b\n' "$C_YELLOW" "$C_RESET"
     for item in "${candidates[@]}"; do
       local kind size
       [[ -d "$item" ]] && kind="dir" || kind="file"
@@ -253,7 +253,7 @@ run_main() {
   fi
 
   if [[ ${#others[@]} -gt 0 ]]; then
-    printf "${C_CYAN}OTHER SYMLINKS (not repo-managed):${C_RESET}\n"
+    printf '%bOTHER SYMLINKS (not repo-managed):%b\n' "$C_CYAN" "$C_RESET"
     for item in "${others[@]}"; do
       local label
       label="$(format_symlink_target "$item" "$repo_root" "$home_root")"
@@ -263,7 +263,7 @@ run_main() {
   fi
 
   if [[ "$SHOW_ALL" == 1 && ${#skipped[@]} -gt 0 ]]; then
-    printf "${C_DIM}SKIPPED:${C_RESET}\n"
+    printf '%bSKIPPED:%b\n' "$C_DIM" "$C_RESET"
     for item in "${skipped[@]}"; do
       printf "  ${C_DIM}-  %s${C_RESET}\n" "$(basename "$item")"
     done

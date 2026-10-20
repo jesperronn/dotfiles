@@ -5,9 +5,9 @@
 #modified by Jesper Rønn-Jensen to take interactive input
 
 echo "Your name: "
-read NAME
+read -r NAME
 echo "Your email: "
-read EMAIL
+read -r EMAIL
 
 # personalize these with your own name and email address
 git config --global user.name "$NAME"

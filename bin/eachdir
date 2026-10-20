@@ -42,8 +42,9 @@ if [ ! "$1" ]; then
 fi
 
 # For underlining headers.
-local h1="$(tput setaf 5; tput smul; tput bold)"
-local h2="$(tput sgr0)"
+local h1 h2
+h1="$(tput setaf 5; tput smul; tput bold)"
+h2="$(tput sgr0)"
 
 # Store any dirs passed before -- in an array.
 local dashes d

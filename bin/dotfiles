@@ -98,10 +98,10 @@ done
 export DOTFILES=~/src/dotfiles
 
 # Logging stuff.
-function e_header()   { echo -e "\n\033[1m$@\033[0m"; }
-function e_success()  { echo -e " \033[1;32m✔\033[0m  $@"; }
-function e_error()    { echo -e " \033[1;31m✖\033[0m  $@"; }
-function e_arrow()    { echo -e " \033[1;34m➜\033[0m  $@"; }
+function e_header()   { echo -e "\n\033[1m$*\033[0m"; }
+function e_success()  { echo -e " \033[1;32m✔\033[0m  $*"; }
+function e_error()    { echo -e " \033[1;31m✖\033[0m  $*"; }
+function e_arrow()    { echo -e " \033[1;34m➜\033[0m  $*"; }
 
 # For testing some of these functions.
 function assert() {
@@ -145,7 +145,7 @@ function is_ubuntu_desktop() {
 }
 function get_os() {
   for os in osx ubuntu ubuntu_desktop; do
-    is_"$os"; [[ $? == ${1:-0} ]] && echo "$os"
+    is_"$os"; [[ $? == "${1:-0}" ]] && echo "$os"
   done
 }
 
@@ -163,11 +163,11 @@ function path_remove() {
 # Display a fancy multi-select menu.
 # Inspired by http://serverfault.com/a/298312
 function prompt_menu() {
-  local exitcode prompt choices nums i n
+  local exitcode prompt nums i n
   exitcode=0
   if [[ "$2" ]]; then
     _prompt_menu_draws "$1"
-    read -t "$2" -n 1 -sp "Press ENTER or wait $2 seconds to continue, or press any other key to edit."
+    read -r -t "$2" -n 1 -sp "Press ENTER or wait $2 seconds to continue, or press any other key to edit."
     exitcode=$?
     echo ""
   fi 1>&2
@@ -231,8 +231,8 @@ function _prompt_menu_add() {
 # Usage: array_map array_name [map_fn]
 function array_map() {
   local __i__ __val__ __arr__=$1; shift
-  for __i__ in $(eval echo "\${!$__arr__[@]}"); do
-    __val__="$(eval echo "\"\${$__arr__[__i__]}\"")"
+  for __i__ in $(eval echo "\${!$__arr__"'[@]'"}"); do
+    __val__="$(eval echo "\"\${$__arr__"'[__i__]'"}\"")"
     if [[ "$1" ]]; then
       "$@" "$__val__" "$__i__"
     else
@@ -258,8 +258,8 @@ function array_filter_i() { __array_filter 0 "$@"; }
 function __array_filter() {
   local __i__ __val__ __mode__ __arr__
   __mode__=$1; shift; __arr__=$1; shift
-  for __i__ in $(eval echo "\${!$__arr__[@]}"); do
-    __val__="$(eval echo "\${$__arr__[__i__]}")"
+  for __i__ in $(eval echo "\${!$__arr__"'[@]'"}"); do
+    __val__="$(eval echo "\${$__arr__"'[__i__]'"}")"
     if [[ "$1" ]]; then
       "$@" "$__val__" "$__i__" >/dev/null
     else
@@ -267,7 +267,7 @@ function __array_filter() {
     fi
     if [[ "$?" == 0 ]]; then
       if [[ $__mode__ == 1 ]]; then
-        eval echo "\"\${$__arr__[__i__]}\""
+        eval echo "\"\${$__arr__"'[__i__]'"}\""
       else
         echo "$__i__"
       fi
@@ -283,10 +283,10 @@ function array_join_filter() { __array_join 0 "$@"; }
 function __array_join() {
   local __i__ __val__ __out__ __init__ __mode__ __arr__
   __mode__=$1; shift; __arr__=$1; shift
-  for __i__ in $(eval echo "\${!$__arr__[@]}"); do
-    __val__="$(eval echo "\"\${$__arr__[__i__]}\"")"
+  for __i__ in $(eval echo "\${!$__arr__"'[@]'"}"); do
+    __val__="$(eval echo "\"\${$__arr__"'[__i__]'"}\"")"
     if [[ $__mode__ == 1 || "$__val__" ]]; then
-      [[ "$__init__" ]] && __out__="$__out__$@"
+      [[ "$__init__" ]] && __out__="$__out__$*"
       __out__="$__out__$__val__"
       __init__=1
     fi
@@ -326,7 +326,7 @@ function setdiff() {
     [[ "$skip" ]] || setdiff_out=("${setdiff_out[@]}" "$a")
   done
   [[ "$debug" ]] && for a in setdiff_new setdiff_cur setdiff_out; do
-    echo "$a ($(eval echo "\${#$a[*]}")) $(eval echo "\${$a[*]}")" 1>&2
+    echo "$a ($(eval echo "\${#$a"'[*]'"}")) $(eval echo "\${$a"'[*]'"}")" 1>&2
   done
   [[ "$1" ]] && echo "${setdiff_out[@]}"
 }
@@ -520,7 +520,7 @@ function link_file_do() {
 
 # Copy, link, init, etc.
 function do_stuff() {
-  local stage=$1 source_dir=${2:-$1}
+  local source_dir=${2:-$1}
   local base dest skip backup_dest
   local files=($DOTFILES/$source_dir/*)
   [[ $(declare -f "$1_files") ]] && files=($("$1"_files "${files[@]}"))
@@ -628,7 +628,7 @@ THIS SHOULD ONLY BE ATTEMPTED IF YOU ARE LOGGED IN AS ROOT IN ANOTHER SHELL.
 
 This will be skipped if "Y" isn't pressed within the next $prompt_delay seconds.
 EOF
-  read -N 1 -t $prompt_delay -p "Update sudoers file? [y/N] " update_sudoers; echo
+  read -r -N 1 -t $prompt_delay -p "Update sudoers file? [y/N] " update_sudoers; echo
   if [[ "$update_sudoers" =~ [Yy] ]]; then
     e_header "Creating sudoers file"
     sudo bash -c "$(sudoers_code)"

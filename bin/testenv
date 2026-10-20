@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-readonly SCRIPT_NAME="$(basename "$0")"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
 readonly BASHRC_PATH="${HOME}/.bashrc"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -95,7 +96,6 @@ run_case() {
   fi
 
   CASE_OUTPUT="$output"
-  CASE_STATUS="$status"
 }
 
 assert_recommended_case() {
