@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# bash_test — helper library for bin/*.test.sh: colored output, test_pass/test_fail and assert_* functions.
 
 set -euo pipefail
 

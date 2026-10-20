@@ -1,4 +1,5 @@
 #!/bin/bash
+# osx_lock_computer — lock the Mac: screensaver when plugged in, else lock screen on battery.
 
 sleep 0.5
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# verify_ollama — check Ollama keep-alive and context length settings; --fix repairs them.
 
 set -euo pipefail
 

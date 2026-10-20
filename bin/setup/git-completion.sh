@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# will provide git completion for bash
+# git-completion.sh — download git's bash completion to ~/bin/.git-completion.bash if missing.
 #
 # suggestions from
 # http://apple.stackexchange.com/questions/55875/have-git-autocomplete-branches-at-the-command-line

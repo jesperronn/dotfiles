@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# video-ocr-extract — OCR on-screen text from a video: sharpest frame per scene, then dedup.
 set -euo pipefail
 
 # video-ocr-extract

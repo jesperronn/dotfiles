@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# rehome — move a file or folder into a managed repo, leaving a symlink; --revert moves it back.
 
 set -euo pipefail
 

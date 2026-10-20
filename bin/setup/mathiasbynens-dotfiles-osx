@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# mathiasbynens-dotfiles-osx — apply macOS system defaults via defaults, pmset and nvram.
 
 # ~/.osx — https://mths.be/osx
 

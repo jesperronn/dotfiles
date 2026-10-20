@@ -1,4 +1,5 @@
 #!/bin/bash
+# git-setup.sh — prompts for your name and email and sets them as global git user config.
 #git-setup
 #from http://rails.wincent.com/wiki/Git_quickstart
 #modified by Jesper Rønn-Jensen to take interactive input

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# pid — print PIDs of processes matching the given names; with no args, list all processes.
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then cat <<HELP
 Get PIDs

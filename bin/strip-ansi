@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# strip-ansi — remove ANSI color escape codes from stdin or the given files.
 
 set -euo pipefail
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# lint — runs ShellCheck over shell files (default: bin/); supports --autofix, --format and file/dir args.
 
 set -euo pipefail
 

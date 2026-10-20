@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# skill-ponytail-sync — symlink the ponytail repo's skills into ~/.agents/skills.
 
 set -euo pipefail
 

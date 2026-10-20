@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash disable=SC2034
+# skill — manage agent skills: list, status, enable, disable, cleanup.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"

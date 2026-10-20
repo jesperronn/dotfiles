@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# runtests — run the bin/*.test.sh files: all by default, or only the paths passed in.
 
 set -euo pipefail
 

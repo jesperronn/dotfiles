@@ -1,3 +1,4 @@
+// image-diff — compares PNG screenshots pixel by pixel and decodes PNG files to RGBA.
 const fs = require('node:fs');
 const zlib = require('node:zlib');
 

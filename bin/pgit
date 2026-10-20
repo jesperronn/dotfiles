@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# pgit — run one git command across multiple repositories.
 
 set -euo pipefail
 

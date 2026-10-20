@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# eachdir — runs one or more commands in each subdirectory (or a given list of directories).
 
 function _eachdir() {
 

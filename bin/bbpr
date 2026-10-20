@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# bbpr — CLI for the Atlassian Bitbucket Server REST API (pull requests), with colored output.
 
 set -euo pipefail
 

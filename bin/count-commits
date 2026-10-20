@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# count-commits — counts git commits across multiple projects.
 
 if ARGV.include? '-h' or ARGV.include? '--help' then puts <<-HELP
 Count git commits across multiple projects.

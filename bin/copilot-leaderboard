@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// copilot-leaderboard — per-account GitHub Copilot interaction-credit leaderboard for a month, from cached archives.
 // One-shot setup from the public dotfiles repo:
 //   curl -fsSL https://raw.githubusercontent.com/jesperronn/dotfiles/refs/heads/main/bin/copilot-leaderboard | node - --init
 // replace --init with --help/--update/ etc.

@@ -1,3 +1,4 @@
+// diff-artifacts — builds a PNG diff-mask artifact highlighting pixels that differ between current and baseline screenshots.
 const fs = require('node:fs');
 const path = require('node:path');
 const zlib = require('node:zlib');

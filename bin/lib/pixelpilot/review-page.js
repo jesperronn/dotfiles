@@ -1,4 +1,4 @@
-// Screenshot Review - Interactive Client Code
+// review-page — browser-side script for the screenshot review page: scenario list, baseline/current/diff view.
 
 (function () {
   const state = {

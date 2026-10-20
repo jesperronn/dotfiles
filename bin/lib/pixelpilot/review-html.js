@@ -1,3 +1,4 @@
+// review-html — renders the static screenshot review HTML page from a manifest of scenarios.
 function renderReviewHtml({ manifest, scriptSource }) {
   const escapeHtml = (str) => {
     const map = {

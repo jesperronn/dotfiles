@@ -1,3 +1,4 @@
+# bin_manifest — lists every executable on $PATH with the first line of its --version output.
 for dir in $(echo "$PATH" | tr ':' ' '); do
     # Ensure it's a valid directory and skip relative dot paths
     if [ -d "$dir" ] && [ "$dir" != "." ] && [ "$dir" != ".." ]; then

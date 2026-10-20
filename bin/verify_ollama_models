@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
+# verify_ollama_models — check repo-managed Ollama model aliases; --fix creates or refreshes them.
 
 set -euo pipefail
 

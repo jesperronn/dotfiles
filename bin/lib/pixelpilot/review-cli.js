@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// review-cli — pixelpilot CLI: compares current and baseline builds and writes a screenshot review HTML page.
 
 const fs = require('node:fs');
 const path = require('node:path');

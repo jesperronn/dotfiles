@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# repo-to-bare.sh — make ./<repo>.git bare copies of ./<repo>/.git, then drop the originals.
 
 usage() {
   echo "Usage: $0 [OPTIONS]"

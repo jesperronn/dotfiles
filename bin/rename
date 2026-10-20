@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# rename — batch-rename files via a Perl substitution expression or a simple -s from/to.
 use strict;
 use warnings;
 

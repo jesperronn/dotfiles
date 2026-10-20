@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# local-model-testrun-loop — runs a local Ollama model on an edit task in a fresh clone of the fixture repo, with timeout.
 set -euo pipefail
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
