@@ -16,6 +16,7 @@ test_help_flag() {
 test_bare_conversion() {
   local testdir
   testdir=$(mktemp -d)
+  # shellcheck disable=SC2064
   trap "rm -rf '$testdir'" RETURN
 
   cd "$testdir"
@@ -73,7 +74,7 @@ test_no_repos_is_noop() {
   assert_eq "" "$out" "no output when nothing to convert"
 }
 
-test_path_with_spaces_current_behaviour() {
+test_path_with_spaces() {
   local testdir
   testdir=$(mktemp -d)
   # shellcheck disable=SC2064
@@ -82,21 +83,20 @@ test_path_with_spaces_current_behaviour() {
   make_git_repo "my repo"
   make_git_repo normal
 
-  "$REPO_TO_BARE" >/dev/null 2>&1 || true
+  "$REPO_TO_BARE" >/dev/null 2>&1
 
   [[ -d normal.git && ! -e normal/.git ]] || test_fail "normal repo converted"
   test_pass "normal repo converted alongside spaced one"
-  # Characterization: word splitting breaks the spaced path, nothing happens to it.
-  [[ -d "my repo/.git" ]] || test_fail "spaced original kept"
-  test_pass "spaced repo original .git is left in place (word-splitting)"
-  [[ ! -e "my repo.git" ]] || test_fail "no spaced bare copy"
-  test_pass "no bare copy created for spaced repo"
+  # Newly works with NUL-safe iteration (previously word-splitting skipped it).
+  [[ -d "my repo.git" && ! -e "my repo/.git" ]] || test_fail "spaced repo converted"
+  test_pass "spaced repo converted to bare"
+  assert_eq "true" "$(git -C "my repo.git" config core.bare)" "spaced bare copy is core.bare"
 }
 
 test_help_flag
 test_bare_conversion
 test_multiple_repos_normal_paths
 test_no_repos_is_noop
-test_path_with_spaces_current_behaviour
+test_path_with_spaces
 
 echo "All tests passed"

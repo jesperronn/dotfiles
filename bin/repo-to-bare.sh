@@ -25,16 +25,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for dirname in $(find . -depth 2 -type d -name .git); do
+while IFS= read -r -d '' dirname; do
   echo converting "$dirname":
   
   newname=$(dirname "$dirname").git
   
   cp -r "$dirname" "$newname"
   git -C "$newname" config core.bare true
-done
+done < <(find . -depth 2 -type d -name .git -print0)
 
 
-for dirname in $(find . -depth 2 -type d -name .git); do
+while IFS= read -r -d '' dirname; do
   rm -rf "$dirname"
-done
+done < <(find . -depth 2 -type d -name .git -print0)
