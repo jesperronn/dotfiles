@@ -250,6 +250,140 @@ TOML
   fi
 }
 
+test_update_reports_token_permissions() {
+  local fake_bin="$TEST_TMP_DIR/scopes-bin"
+  local config="$TEST_TMP_DIR/scopes-config.toml"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200 repo, read:org, manage_billing:copilot\n'
+else
+  printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only stil --update --archive-dir "$TEST_TMP_DIR/scopes-archive" --month 2026-06
+  assert_contains "$output" "Token permissions: repo, read:org, manage_billing:copilot" "token scopes are listed by name"
+
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200\n'
+else
+  printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
+fi
+CURL
+  output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only stil --update --archive-dir "$TEST_TMP_DIR/scopes-archive" --month 2026-06
+  assert_contains "$output" "Token permissions: (none reported; fine-grained tokens do not expose scopes)" "missing scopes header is reported explicitly"
+}
+
+test_403_explains_missing_org_permission() {
+  local fake_bin="$TEST_TMP_DIR/403-bin"
+  local config="$TEST_TMP_DIR/403-config.toml"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200 repo\n'
+else
+  printf '{"message":"Resource not accessible by personal access token"}\n403\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only stil --update --archive-dir "$TEST_TMP_DIR/403-archive" --month 2026-06
+  assert_status "1" "$status" "403 metrics response exits 1"
+  assert_contains "$output" "Permission needed for GET /orgs/{org}/copilot/metrics/reports/users-28-day/latest" "403 names the endpoint"
+  assert_contains "$output" '"View Organization Copilot Metrics"' "403 names the fine-grained permission"
+  assert_contains "$output" "https://docs.github.com/en/rest/copilot/copilot-usage-metrics?apiVersion=2026-03-10#get-copilot-organization-users-usage-metrics" "403 links the org section of the docs"
+  assert_not_contains "$output" "read:org" "403 does not list classic scopes"
+  assert_contains "$output" "https://github.com/settings/personal-access-tokens" "403 links where to fix the token"
+  assert_not_contains "$output" "fake-token" "403 diagnostics do not expose the token"
+}
+
+test_enterprise_unconfirmed_permissions_lists_requirements() {
+  local fake_bin="$TEST_TMP_DIR/enterprise-bin"
+  local config="$TEST_TMP_DIR/enterprise-config.toml"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200\n'
+else
+  printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.nine]
+label = "nine"
+api_path = "enterprises/nine"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only nine --update --archive-dir "$TEST_TMP_DIR/enterprise-archive" --month 2026-06
+  assert_contains "$output" "Unable to confirm permissions from scopes" "fine-grained token gets an explicit requirements block"
+  assert_contains "$output" '"View Enterprise Copilot Metrics"' "enterprise fine-grained permission is named"
+  assert_not_contains "$output" "manage_billing:copilot" "enterprise does not list classic scopes"
+  assert_contains "$output" 'Enabled everywhere' "enterprise policy prerequisite is listed"
+}
+
+test_backfill_permission_error_shows_help_without_token() {
+  local fake_bin="$TEST_TMP_DIR/backfill-403-bin"
+  local config="$TEST_TMP_DIR/backfill-403-config.toml"
+  local archive_dir="$TEST_TMP_DIR/backfill-403-archive"
+  mkdir -p "$fake_bin"
+  cat > "$fake_bin/curl" <<'CURL'
+#!/usr/bin/env bash
+if [[ "$*" == *"https://api.github.com/user"* ]]; then
+  printf '{"login":"debug-user"}\n200 read:org\n'
+else
+  echo "curl: (22) The requested URL returned error: 403" >&2
+  exit 22
+fi
+CURL
+  chmod +x "$fake_bin/curl"
+  cat > "$config" <<'TOML'
+[accounts.stil]
+label = "buvm-stil"
+api_path = "orgs/buvm-stil"
+archive_dir = "/unused"
+token_from_env = "TEST_COPILOT_TOKEN"
+TOML
+
+  local output="" status=0
+  capture_command output status env "PATH=$fake_bin:$PATH" "COPILOT_LEADERBOARD_CONFIG=$config" TEST_COPILOT_TOKEN="fake-token" \
+    "$BIN" --only stil --backfill --archive-dir "$archive_dir" --month 2026-06
+  assert_contains "$output" "2026-06-01 (curl: (22) The requested URL returned error: 403)" "backfill reports the HTTP status per day"
+  assert_contains "$output" '"View Organization Copilot Metrics"' "backfill 403 names the permission once"
+  assert_not_contains "$output" "fake-token" "backfill diagnostics do not expose the token"
+}
+
 test_no_args_exits_nonzero() {
   local output="" status=0
   local config="$TEST_TMP_DIR/no-args-config.toml"

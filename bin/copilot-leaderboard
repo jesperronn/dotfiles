@@ -187,6 +187,58 @@ function formatAvailableAccounts(accounts) {
   return names.length > 0 ? names.join(', ') : '(none)';
 }
 
+const COPILOT_METRICS_DOCS = 'https://docs.github.com/en/rest/copilot/copilot-usage-metrics';
+const TOKEN_SETTINGS_URLS = {
+  fineGrained: 'https://github.com/settings/personal-access-tokens',
+};
+const PERMISSION_STATUS_CODES = ['401', '403', '404'];
+
+const DOCS_API_VERSION = '2026-03-10';
+const docsUrl = anchor => `https://docs.github.com/en/rest/copilot/copilot-usage-metrics?apiVersion=${DOCS_API_VERSION}${anchor ? `#${anchor}` : ''}`;
+
+// Fine-grained permissions per api_path kind, from the users-28-day/latest sections of the Copilot usage metrics docs.
+const COPILOT_METRICS_PERMISSIONS = {
+  enterprises: {
+    endpoint: 'GET /enterprises/{enterprise}/copilot/metrics/reports/users-28-day/latest',
+    fineGrainedPermission: 'View Enterprise Copilot Metrics',
+    docs: docsUrl(),
+    extraRequirement: 'the enterprise "Copilot usage metrics" policy must be "Enabled everywhere"',
+  },
+  orgs: {
+    endpoint: 'GET /orgs/{org}/copilot/metrics/reports/users-28-day/latest',
+    fineGrainedPermission: 'View Organization Copilot Metrics',
+    docs: docsUrl('get-copilot-organization-users-usage-metrics'),
+  },
+};
+
+function metricsPermissionsFor(apiPath) {
+  return COPILOT_METRICS_PERMISSIONS[apiPath.split('/')[0]] ?? null;
+}
+
+// execSync errors begin with the full curl command, which carries the bearer token; prefer curl's own stderr.
+function errorDetail(error) {
+  const stderrLine = error.stderr?.toString().trim().split('\n').find(Boolean);
+  const line = stderrLine ?? error.message.split('\n')[0];
+  return line.replace(/Bearer\s+\S+/g, 'Bearer <redacted>');
+}
+
+function permissionHelp(apiPath, statusCode) {
+  const info = metricsPermissionsFor(apiPath);
+  if (!info) return '';
+  if (statusCode !== undefined && !PERMISSION_STATUS_CODES.includes(statusCode)) return '';
+  const lines = [
+    `Permission needed for ${info.endpoint}:`,
+    `  Fine-grained permission: "${info.fineGrainedPermission}"`,
+  ];
+  if (info.extraRequirement) lines.push(`  Also required: ${info.extraRequirement}`);
+  lines.push(
+    `  Docs: ${info.docs}`,
+    `  Fix: add the permission to your fine-grained token at ${TOKEN_SETTINGS_URLS.fineGrained}, then rerun with --update.`,
+  );
+  if (statusCode === '404') lines.push('  A 404 can also mean the org or enterprise name in the config is wrong.');
+  return lines.join('\n');
+}
+
 function fetchToken(account) {
   debug(`Fetching token for ${account.name} from ${account.token_from_env ? `environment variable ${account.token_from_env}` : `1Password item ${account.token_from_1password_item}`}`);
   if (account.token_from_env) {
@@ -214,10 +266,11 @@ function fetchMeta(token, apiPath, metadataFile) {
   const statusLine = responseLines.pop();
   const raw = responseLines.join('\n');
   if (statusLine === '401') {
-    throw new Error(`GitHub returned 401 for ${url}`);
+    throw new Error(`GitHub returned 401 for ${url}\n${permissionHelp(apiPath, statusLine)}`);
   }
   if (!/^2\d\d$/.test(statusLine)) {
-    throw new Error(`GitHub returned HTTP ${statusLine} for ${url}: ${raw}`);
+    const help = permissionHelp(apiPath, statusLine);
+    throw new Error(`GitHub returned HTTP ${statusLine} for ${url}: ${raw}${help ? `\n${help}` : ''}`);
   }
   writeFileSync(metadataFile, raw);
   debug(`Fetched metrics metadata: ${pathToFileURL(metadataFile).href}`);
@@ -231,20 +284,32 @@ function fetchAuthenticatedUser(token) {
   const url = 'https://api.github.com/user';
   debug(`401 diagnostic: GET ${url} (authorization header redacted)`);
   try {
+    // Last line is "<http_code> <x-oauth-scopes header>"; classic tokens list their scopes there.
     const response = execSync(
-      `curl -sSL -w "\\n%{http_code}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
+      `curl -sSL -w "\\n%{http_code} %header{x-oauth-scopes}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${token}" -H "X-GitHub-Api-Version: 2026-03-10" "${url}"`,
       { encoding: 'utf8', maxBuffer: 1024 * 1024 }
     );
     const responseLines = response.trimEnd().split('\n');
-    const statusLine = responseLines.pop();
+    const statusAndScopes = responseLines.pop();
+    const statusLine = statusAndScopes.slice(0, 3);
+    const scopes = statusAndScopes.slice(3).split(',').map(s => s.trim()).filter(Boolean);
     const raw = responseLines.join('\n');
-    if (statusLine === '401') return `${url} also returned 401 (token is invalid or expired)`;
-    if (!/^2\d\d$/.test(statusLine)) return `${url} returned HTTP ${statusLine}`;
+    if (statusLine === '401') return { summary: `${url} also returned 401 (token is invalid or expired)`, scopes: [] };
+    if (!/^2\d\d$/.test(statusLine)) return { summary: `${url} returned HTTP ${statusLine}`, scopes: [] };
     const json = JSON.parse(raw);
-    return `${url} returned login=${json.login ?? '(no login)'}`;
+    return { summary: `${url} returned login=${json.login ?? '(no login)'}`, scopes };
   } catch (error) {
-    return `${url} could not be checked (${error.message.split('\n')[0]})`;
+    return { summary: `${url} could not be checked (${errorDetail(error)})`, scopes: [] };
   }
+}
+
+function formatScopes(scopes) {
+  return scopes.length > 0 ? scopes.join(', ') : '(none reported; fine-grained tokens do not expose scopes)';
+}
+
+function requirementsFor(apiPath, scopes) {
+  if (scopes.length > 0) return null;
+  return `Unable to confirm permissions from scopes. Needed for this report:\n${permissionHelp(apiPath)}`;
 }
 
 function downloadAllNdjson(links) {
@@ -608,10 +673,13 @@ async function runForAccount(account) {
     const token = fetchToken(cfg);
     debug('Token acquired (value redacted)');
     const authenticatedUser = fetchAuthenticatedUser(token);
-    process.stderr.write(`GitHub authentication preflight: ${authenticatedUser}\n`);
-    if (!authenticatedUser.includes(' returned login=')) {
-      throw new Error(`GitHub authentication preflight failed: ${authenticatedUser}`);
+    process.stderr.write(`GitHub authentication preflight: ${authenticatedUser.summary}\n`);
+    if (!authenticatedUser.summary.includes(' returned login=')) {
+      throw new Error(`GitHub authentication preflight failed: ${authenticatedUser.summary}`);
     }
+    process.stderr.write(`Token permissions: ${formatScopes(authenticatedUser.scopes)}\n`);
+    const requirements = requirementsFor(cfg.api_path, authenticatedUser.scopes);
+    if (requirements) process.stderr.write(`${requirements}\n`);
     mkdirSync(archivePath, { recursive: true });
 
     if (doBackfill) {
@@ -626,6 +694,7 @@ async function runForAccount(account) {
       debug(`Backfill plan: ${dates.length} day(s), ${missing.length} missing, ${cached} cached`);
       process.stderr.write(`Backfilling ${missing.length}/${dates.length} day(s) in ${month}${cached > 0 ? ` (${cached} already cached, skipping)` : ''}...\n`);
 
+      let sawPermissionError = false;
       const fetchDay = async (day) => {
         let raw;
         try {
@@ -645,12 +714,14 @@ async function runForAccount(account) {
           process.stderr.write(`  ✓ ${day}\n`);
         } catch (error) {
           if (raw !== undefined) writeFileSync(join(archivePath, `${day}-1day-meta.json`), raw);
-          const detail = raw === '' ? 'empty response' : error.message.split('\n')[0];
+          const detail = raw === '' ? 'empty response' : errorDetail(error);
           process.stderr.write(`  - ${day} (${detail})\n`);
+          if (/\b(401|403|404)\b/.test(detail)) sawPermissionError = true;
         }
       };
 
       await pMap(missing, fetchDay, 1);
+      if (sawPermissionError) process.stderr.write(`${permissionHelp(cfg.api_path)}\n`);
     } else {
       process.stderr.write(`GET ${apiUrl}\n`);
       const meta = fetchMeta(token, cfg.api_path, join(archivePath, `${today}-meta.json`));
@@ -696,5 +767,10 @@ async function runForAccount(account) {
 }
 
 for (const account of selectedAccounts) {
-  await runForAccount(account);
+  try {
+    await runForAccount(account);
+  } catch (error) {
+    process.stderr.write(`Error: ${error.cmd ? errorDetail(error) : error.message}\n`);
+    process.exit(1);
+  }
 }
