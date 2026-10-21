@@ -515,6 +515,28 @@ function buildFallbackResult({
 	};
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// Single-line spinner on stderr, TTY only. The work is synchronous, so the
+// frame advances on each update() rather than on a timer.
+function createProgress(label, total, stream = process.stderr) {
+	const enabled = Boolean(stream.isTTY) && total > 0;
+	let frame = 0;
+	const render = (done) => {
+		if (!enabled) return;
+		const glyph = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+		frame += 1;
+		stream.write(`\r\x1b[2K${glyph} ${label} ${done}/${total}`);
+	};
+	render(0);
+	return {
+		update: render,
+		done() {
+			if (enabled) stream.write("\r\x1b[2K");
+		},
+	};
+}
+
 function buildManifest(inputOptions) {
 	let options = inputOptions;
 	const currentRef = options.currentRef;
@@ -570,7 +592,22 @@ function buildManifest(inputOptions) {
 		new Set([...currentFiles, ...baselineFiles])
 	).sort();
 
+	const progress = createProgress(
+		"building comparison overlays",
+		allFiles.length
+	);
+	let processed = 0;
 	const scenarios = allFiles.map((file) => {
+		try {
+			return buildScenario(file);
+		} finally {
+			processed += 1;
+			progress.update(processed);
+		}
+	});
+	progress.done();
+
+	function buildScenario(file) {
 		const inBaseline = baselineFiles.includes(file);
 		const inCurrent = currentFiles.includes(file);
 		const trackedPath = trackedScreenshotPath(file, options.screenshotsDir);
@@ -723,7 +760,7 @@ function buildManifest(inputOptions) {
 			fallback_baseline_width: fallback ? fallback.baselineWidth : null,
 			fallback_baseline_height: fallback ? fallback.baselineHeight : null,
 		};
-	});
+	}
 
 	return {
 		// Single baseline version line, per the task: describes the ref itself.
