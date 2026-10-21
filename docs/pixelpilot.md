@@ -21,10 +21,36 @@ Run it from the root of the project being reviewed. See `pixelpilot --help` for 
 | `--screenshots-dir` | `doc/screenshots` | Git-tracked folder the baseline PNGs are read from. |
 | `--output-html` | `tmp/screenshot-review/index.html` | Where the page is written; diff images go beside it. |
 | `--title` | `Screenshot Review` | Page title and heading. |
+| `--baseline-folder` | none | Compare against a plain folder of PNGs instead of a git ref. No git extraction, `git describe`, dirty badge or tag needed; headings default to the folder paths. |
+| `--baseline-label` | git describe | Heading text for the baseline side. |
+| `--current-label` | git describe | Heading text for the current side. |
+| `--report` | off | Print a text table instead of writing the HTML page (see below). |
+| `--band-height` | `100` | Band height in px for the report's per-band summary. |
+| `--only` | all | Report only: comma-separated file-name prefixes (`01` also matches `1-…`). |
+| `--fail-above` | none | Report only: exit 1 if any pair differs by more than this percent. |
+| `--report-dir` | `tmp/pixelpilot-report` | Report only: where diff PNGs are written. |
 
 Settings can also come from `screenshot-review.config.json` or a `screenshotReview` key in `package.json`; CLI flags win.
 
 When stderr is a terminal, a braille spinner with an `n/total` count shows while overlays are built (the frame advances every second; `PIXELPILOT_SPINNER_INTERVAL_MS` overrides it), and the line is removed when done. `--help`, `-h` prints the usage.
+
+## Compare two folders
+
+```bash
+pixelpilot --baseline-folder screenshots/orig --current-dir screenshots/dev \
+  --baseline-label 'WordPress (original)' --current-label 'Hugo (new)' \
+  --output-html /tmp/pp/index.html --title 'Site comparison'
+```
+
+`--baseline-folder` is read in place and never written to. Config keys: `baselineFolder`, `baselineLabel`, `currentLabel`.
+
+## Text report
+
+```bash
+pixelpilot --report --baseline-folder screenshots/orig --current-dir screenshots/dev --fail-above 5
+```
+
+Prints one row per same-named PNG pair: baseline size, current size, height delta (current minus baseline), % differing pixels over the larger canvas (the missing rows of a shorter image count as differing), and the first differing row. A `bands(%)` line under each row gives the differing % per `--band-height` rows, so a layout shift shows as everything differing below one row. Diff PNGs go to `--report-dir`. Differences use the review page's pixelmatch comparison (anti-aliasing ignored), not a per-channel tolerance.
 
 ## Gotchas
 
@@ -40,4 +66,4 @@ When stderr is a terminal, a braille spinner with an `n/total` count shows while
 - `review-html.js` / `review-page.js` — the HTML page and its embedded browser-side script.
 - `pixel-diff.js`, `pixelmatch.js`, `heatmap.js`, `regions.js`, `png.js`, `changed-percent-color.js` — dependency-free diffing and PNG handling.
 
-To resync, copy these files from `plus-reporter/tools/screenshot/` and re-apply the `Usage: pixelpilot` rename in `cli.js`.
+To resync, copy these files from `plus-reporter/tools/screenshot/` and re-apply the local changes in `cli.js`: the `Usage: pixelpilot` rename, the spinner, and the folder mode, label and `--report` options. Upstream has none of these.

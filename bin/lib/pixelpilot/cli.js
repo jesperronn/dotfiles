@@ -5,6 +5,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { Worker } = require("node:worker_threads");
 
+const { PNG } = require("./png");
 const { computeDiff } = require("./pixel-diff");
 const { buildHeatmapPng } = require("./heatmap");
 const { buildRegions } = require("./regions");
@@ -25,6 +26,9 @@ const CONFIG_KEYS = {
 	outputHtml: "outputHtml",
 	title: "title",
 	screenshotsDir: "screenshotsDir",
+	baselineFolder: "baselineFolder",
+	baselineLabel: "baselineLabel",
+	currentLabel: "currentLabel",
 };
 
 function printUsage() {
@@ -49,6 +53,25 @@ Options:
                                 (config: screenshotsDir, default: doc/screenshots)
   --title <text>                page <title> and on-page heading
                                 (config: title, default: Screenshot Review)
+  --baseline-folder <path>      compare against a plain folder of PNGs instead of
+                                a git ref: no git extraction, git describe or
+                                dirty badge; headings default to the folder paths
+                                (config: baselineFolder)
+  --baseline-label <text>       heading text for the baseline side, replaces the
+                                git describe label (config: baselineLabel)
+  --current-label <text>        heading text for the current side
+                                (config: currentLabel)
+
+Text report (prints a table instead of writing the HTML page):
+  --report                      per same-named PNG pair: baseline/current size,
+                                height delta, % differing pixels, first
+                                differing row, and per-band differing %
+  --band-height <px>            band height for the per-band summary (default 100)
+  --only <a,b>                  only files whose name starts with one of these
+                                (a leading-zero-insensitive number also matches)
+  --fail-above <pct>            exit 1 if any pair differs by more than <pct>%
+  --report-dir <path>           where diff PNGs are written
+                                (default: tmp/pixelpilot-report)
   --help, -h                    show this help message
 
 Configuration file layering (highest precedence first):
@@ -144,6 +167,37 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 				options.screenshotsDir = next;
 				index += 1;
 				break;
+			case "--baseline-folder":
+				options.baselineFolder = next;
+				index += 1;
+				break;
+			case "--baseline-label":
+				options.baselineLabel = next;
+				index += 1;
+				break;
+			case "--current-label":
+				options.currentLabel = next;
+				index += 1;
+				break;
+			case "--report":
+				options.report = true;
+				break;
+			case "--band-height":
+				options.bandHeight = Number(next);
+				index += 1;
+				break;
+			case "--only":
+				options.only = String(next).split(",").filter(Boolean);
+				index += 1;
+				break;
+			case "--fail-above":
+				options.failAbove = Number(next);
+				index += 1;
+				break;
+			case "--report-dir":
+				options.reportDir = next;
+				index += 1;
+				break;
 			default:
 				throw new Error(
 					`Unknown option: ${arg}. Use --help for usage information.`
@@ -179,8 +233,17 @@ function applyDefaults(options) {
 	if (!resolved.screenshotsDir) {
 		resolved.screenshotsDir = DEFAULT_SCREENSHOTS_DIR;
 	}
-	if (!resolved.baselineDir) {
+	if (resolved.baselineFolder) {
+		// Folder mode reads the folder directly; there is nothing to extract.
+		resolved.baselineDir = resolved.baselineFolder;
+	} else if (!resolved.baselineDir) {
 		resolved.baselineDir = baselineScratchDir(resolved.baseline);
+	}
+	if (!resolved.reportDir) {
+		resolved.reportDir = path.join("tmp", "pixelpilot-report");
+	}
+	if (!resolved.bandHeight) {
+		resolved.bandHeight = 100;
 	}
 	if (!resolved.outputHtml) {
 		resolved.outputHtml = path.join("tmp", "screenshot-review", "index.html");
@@ -606,10 +669,12 @@ function buildManifest(inputOptions) {
 		);
 		options = { ...options, currentDir: currentExtractDir };
 	}
+	const folderMode = Boolean(options.baselineFolder);
 	const baselineRef = options.baseline;
-	validateGitRef(baselineRef);
+	if (!folderMode) validateGitRef(baselineRef);
 
 	if (
+		!folderMode &&
 		path.resolve(options.baselineDir) === path.resolve(options.screenshotsDir)
 	) {
 		throw new Error(
@@ -620,15 +685,25 @@ function buildManifest(inputOptions) {
 	}
 
 	const baselineExtractDir = options.baselineDir;
-	const baselineFiles = extractBaselineFromGit(
-		baselineRef,
-		baselineExtractDir,
-		options.screenshotsDir
-	);
+	const baselineFiles = folderMode
+		? pngFiles(baselineExtractDir)
+		: extractBaselineFromGit(
+				baselineRef,
+				baselineExtractDir,
+				options.screenshotsDir
+			);
 
-	const baselineDescribe = gitDescribe(baselineRef);
-	const currentDescribe = gitDescribe(currentRef || "HEAD");
-	const currentDirty = currentRef ? false : workingTreeDirty();
+	// A label override replaces the git-derived heading and skips the git
+	// call; folder mode never touches git, so headings default to the paths.
+	const baselineDescribe =
+		options.baselineLabel ||
+		(folderMode ? options.baselineFolder : gitDescribe(baselineRef));
+	const currentDescribe =
+		options.currentLabel ||
+		(folderMode && !currentRef
+			? options.currentDir
+			: gitDescribe(currentRef || "HEAD"));
+	const currentDirty = folderMode || currentRef ? false : workingTreeDirty();
 	const generatedAt = isoTimestamp();
 	const diffOutputDir = path.join(path.dirname(options.outputHtml), "diffs");
 	const fallbackOutputDir = path.join(
@@ -661,7 +736,7 @@ function buildManifest(inputOptions) {
 		const inCurrent = currentFiles.includes(file);
 		const trackedPath = trackedScreenshotPath(file, options.screenshotsDir);
 
-		const baselineCommit = inBaseline
+		const baselineCommit = inBaseline && !folderMode
 			? lastCommitTouching(baselineRef, trackedPath)
 			: null;
 		const diffResult =
@@ -685,7 +760,7 @@ function buildManifest(inputOptions) {
 					: "changed";
 
 		const firstSeenCommit =
-			status === "new" ? firstAddCommit(trackedPath) : null;
+			status === "new" && !folderMode ? firstAddCommit(trackedPath) : null;
 
 		// A committed fallback only exists for a "new" scenario whose file has
 		// real git history (firstSeenCommit is null when the capture only
@@ -1022,9 +1097,114 @@ function promptForOpen(filePath) {
 	});
 }
 
+function matchesOnly(file, only) {
+	if (!only || only.length === 0) return true;
+	return only.some(
+		(token) =>
+			file.startsWith(token) ||
+			(/^\d+$/.test(token) && parseInt(file, 10) === parseInt(token, 10))
+	);
+}
+
+// Per-row/band numbers come from the same diff mask the review page uses
+// (alpha != 0 means changed, padding counts as changed).
+function reportPair(diff, bandHeight) {
+	const mask = PNG.sync.read(diff.diffBuffer);
+	const { width, height } = mask;
+	const bands = [];
+	let firstRow = -1;
+	for (let y = 0; y < height; y += 1) {
+		let rowChanged = 0;
+		const rowStart = y * width * 4;
+		for (let x = 0; x < width; x += 1) {
+			if (mask.data[rowStart + x * 4 + 3] !== 0) rowChanged += 1;
+		}
+		if (rowChanged > 0 && firstRow < 0) firstRow = y;
+		const band = Math.floor(y / bandHeight);
+		bands[band] = (bands[band] || 0) + rowChanged;
+	}
+	const bandPercents = Array.from(bands, (count, index) => {
+		const rows = Math.min(bandHeight, height - index * bandHeight);
+		return (100 * (count || 0)) / (width * rows);
+	});
+	return { firstRow, bandPercents };
+}
+
+function runReport(options) {
+	const folderMode = Boolean(options.baselineFolder);
+	let currentDir = options.currentDir;
+	if (options.currentRef) {
+		validateGitRef(options.currentRef);
+		currentDir = currentScratchDir(options.currentRef);
+		extractBaselineFromGit(options.currentRef, currentDir, options.screenshotsDir);
+	}
+	let baselineFiles;
+	if (folderMode) {
+		baselineFiles = pngFiles(options.baselineFolder);
+	} else {
+		validateGitRef(options.baseline);
+		baselineFiles = extractBaselineFromGit(
+			options.baseline,
+			options.baselineDir,
+			options.screenshotsDir
+		);
+	}
+	const currentFiles = new Set(pngFiles(currentDir));
+	const files = baselineFiles.filter(
+		(file) => currentFiles.has(file) && matchesOnly(file, options.only)
+	);
+	fs.mkdirSync(options.reportDir, { recursive: true });
+
+	const pad = (value, width) => String(value).padEnd(width);
+	const nameWidth = Math.max(4, ...files.map((file) => file.length - 4)) + 2;
+	const lines = [
+		pad("file", nameWidth) +
+			pad("baseline", 11) +
+			pad("current", 11) +
+			pad("dH", 7) +
+			pad("diff%", 8) +
+			"first-diff-row",
+	];
+	let worst = 0;
+	for (const file of files) {
+		const diff = computeDiff(
+			fs.readFileSync(path.join(currentDir, file)),
+			fs.readFileSync(path.join(options.baselineDir, file))
+		);
+		const { firstRow, bandPercents } = reportPair(diff, options.bandHeight);
+		fs.writeFileSync(path.join(options.reportDir, file), diff.diffBuffer);
+		worst = Math.max(worst, diff.changedPercent);
+		lines.push(
+			pad(file.slice(0, -4), nameWidth) +
+				pad(`${diff.baselineWidth}x${diff.baselineHeight}`, 11) +
+				pad(`${diff.currentWidth}x${diff.currentHeight}`, 11) +
+				pad(diff.currentHeight - diff.baselineHeight, 7) +
+				pad(diff.changedPercent.toFixed(2), 8) +
+				(firstRow < 0 ? "-" : firstRow)
+		);
+		lines.push(
+			`   bands(%): ${bandPercents
+				.map((pct, i) => `${i * options.bandHeight}:${pct.toFixed(0)}`)
+				.join(" ")}`
+		);
+	}
+	process.stdout.write(`${lines.join("\n")}\n`);
+	process.stdout.write(`Diff images written to ${options.reportDir}\n`);
+	if (options.failAbove !== undefined && worst > options.failAbove) {
+		process.stderr.write(
+			`Worst difference ${worst.toFixed(2)}% exceeds --fail-above ${options.failAbove}%\n`
+		);
+		return 1;
+	}
+	return 0;
+}
+
 function main() {
 	try {
 		const options = parseArgs(process.argv.slice(2));
+		if (options.report) {
+			process.exit(runReport(options));
+		}
 		const htmlPath = writeReview(options);
 
 		if (!process.stdin.isTTY) {
@@ -1051,6 +1231,7 @@ if (require.main === module) {
 
 module.exports = {
 	createProgress,
+	runReport,
 	applyDefaults,
 	baselineScratchDir,
 	currentScratchDir,
