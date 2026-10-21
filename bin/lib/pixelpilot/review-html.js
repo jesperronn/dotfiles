@@ -1439,7 +1439,7 @@ ${scenariosList}
         <div class="info-block">
           <h3>Current</h3>
           <p>${escapeHtml(manifest.current.describe)}${manifest.current.dirty ? ' <span class="dirty-badge">dirty</span>' : ""}</p>
-          <p>${renderTime(manifest.current.generated_at)}</p>
+          <p id="currentMeta">${renderTime(manifest.current.generated_at)}</p>
         </div>
       </div>
       <div class="viewer-content" id="viewerContent">

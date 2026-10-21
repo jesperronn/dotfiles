@@ -306,18 +306,38 @@
 		return `<time datetime="${escapeAttr(iso)}" title="${escapeAttr(iso)}">${escapeHtml(formatDateOnly(iso))}</time>`;
 	}
 
-	function baselineMetaHtml(scenario) {
-		if (!scenario.baseline_commit && !scenario.baseline_date) return "";
+	// Source path (folder/file, or <ref>:<path> for git `show`), then the date
+	// (full timestamp on hover) and, for git baselines, the short commit.
+	function sourceMetaHtml(source, date, commit) {
 		const parts = [
-			scenario.baseline_date ? renderTimeHtml(scenario.baseline_date) : null,
-			escapeHtml(scenario.baseline_commit),
+			source ? `<code>${escapeHtml(source)}</code>` : null,
+			date ? renderTimeHtml(date) : null,
+			commit ? escapeHtml(commit) : null,
 		].filter(Boolean);
 		return parts.join(" · ");
+	}
+
+	function baselineMetaHtml(scenario) {
+		return sourceMetaHtml(
+			scenario.baseline_source,
+			scenario.baseline_date,
+			scenario.baseline_commit
+		);
+	}
+
+	function currentMetaHtml(scenario) {
+		return sourceMetaHtml(
+			scenario.current_source,
+			scenario.current_date || MANIFEST.current.generated_at,
+			null
+		);
 	}
 
 	function updateBaselineMeta(scenario) {
 		const el = document.getElementById("baselineMeta");
 		if (el) el.innerHTML = baselineMetaHtml(scenario);
+		const cur = document.getElementById("currentMeta");
+		if (cur) cur.innerHTML = currentMetaHtml(scenario);
 	}
 
 	// Disguises a "new" scenario as a "changed" one, pointed at its fallback

@@ -414,6 +414,10 @@ function commitDate(commitSha) {
 	}).trim();
 }
 
+function fileMtimeIso(filePath) {
+	return fs.statSync(filePath).mtime.toISOString();
+}
+
 function pngFiles(dir) {
 	return fs
 		.readdirSync(dir)
@@ -849,7 +853,27 @@ function buildManifest(inputOptions) {
 					: diffResult.baselineHeight
 				: null,
 			baseline_commit: baselineCommit ? shortSha(baselineCommit) : null,
-			baseline_date: baselineCommit ? commitDate(baselineCommit) : null,
+			baseline_date: baselineCommit
+				? commitDate(baselineCommit)
+				: folderMode && inBaseline
+					? fileMtimeIso(path.join(baselineExtractDir, file))
+					: null,
+			// What to show above each image: folder/file for local files,
+			// <ref>:<path> (usable with `git show`) for files read from git.
+			baseline_source: inBaseline
+				? folderMode
+					? path.join(options.baselineFolder, file)
+					: `${baselineRef}:${trackedPath}`
+				: null,
+			current_source: inCurrent
+				? currentRef
+					? `${currentRef}:${trackedPath}`
+					: path.join(options.currentDir, file)
+				: null,
+			current_date:
+				inCurrent && !currentRef
+					? fileMtimeIso(path.join(options.currentDir, file))
+					: null,
 			first_seen: firstSeenCommit
 				? {
 						describe: describeFirstSeen(firstSeenCommit),
