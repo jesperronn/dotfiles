@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { Worker } = require("node:worker_threads");
 
 const { computeDiff } = require("./pixel-diff");
 const { buildHeatmapPng } = require("./heatmap");
@@ -517,22 +518,70 @@ function buildFallbackResult({
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-// Single-line spinner on stderr, TTY only. The work is synchronous, so the
-// frame advances on each update() rather than on a timer.
-function createProgress(label, total, stream = process.stderr) {
-	const enabled = Boolean(stream.isTTY) && total > 0;
-	let frame = 0;
-	const render = (done) => {
-		if (!enabled) return;
-		const glyph = SPINNER_FRAMES[frame % SPINNER_FRAMES.length];
+// Single-line spinner on stderr, TTY only. The diffing is synchronous and
+// blocks the main thread, so a worker thread owns the animation: the frame
+// advances once per second, and the main thread only publishes the count via
+// shared memory. The worker writes with fs.writeSync because worker stdio is
+// piped through the (blocked) main thread.
+const SPINNER_INTERVAL_MS = Number(process.env.PIXELPILOT_SPINNER_INTERVAL_MS) || 1000;
+
+const SPINNER_WORKER_SOURCE = `
+const fs = require("node:fs");
+const { workerData } = require("node:worker_threads");
+const { state, frames, label, total, intervalMs } = workerData;
+const view = new Int32Array(state);
+// view[0] = done count, view[1] = stop flag, view[2] = ack
+let frame = 0;
+let lastDone = -1;
+let lastTick = Date.now();
+const render = (done) => {
+	fs.writeSync(2, "\\r\\x1b[2K" + frames[frame % frames.length] + " " + label + " " + done + "/" + total);
+};
+for (;;) {
+	const done = Atomics.load(view, 0);
+	if (Atomics.load(view, 1) === 1) break;
+	const now = Date.now();
+	if (now - lastTick >= intervalMs) {
 		frame += 1;
-		stream.write(`\r\x1b[2K${glyph} ${label} ${done}/${total}`);
-	};
-	render(0);
+		lastTick = now;
+		lastDone = -1;
+	}
+	if (done !== lastDone) {
+		render(done);
+		lastDone = done;
+	}
+	Atomics.wait(view, 0, done, Math.max(1, intervalMs - (Date.now() - lastTick)));
+}
+fs.writeSync(2, "\\r\\x1b[2K");
+Atomics.store(view, 2, 1);
+Atomics.notify(view, 2);
+`;
+
+function createProgress(label, total, stream = process.stderr) {
+	if (!stream.isTTY || total <= 0 || stream !== process.stderr) {
+		return { update() {}, done() {} };
+	}
+	const view = new Int32Array(new SharedArrayBuffer(12));
+	const worker = new Worker(SPINNER_WORKER_SOURCE, {
+		eval: true,
+		workerData: {
+			state: view.buffer,
+			frames: SPINNER_FRAMES,
+			label,
+			total,
+			intervalMs: SPINNER_INTERVAL_MS,
+		},
+	});
+	worker.unref();
 	return {
-		update: render,
+		update(done) {
+			Atomics.store(view, 0, done);
+			Atomics.notify(view, 0);
+		},
 		done() {
-			if (enabled) stream.write("\r\x1b[2K");
+			Atomics.store(view, 1, 1);
+			Atomics.notify(view, 0);
+			Atomics.wait(view, 2, 0, 2000);
 		},
 	};
 }
@@ -1001,6 +1050,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+	createProgress,
 	applyDefaults,
 	baselineScratchDir,
 	currentScratchDir,
