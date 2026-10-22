@@ -1490,8 +1490,8 @@ ${scenariosList}
           </div>
           <span class="zoom-badge" id="zoomBadge" hidden></span>
           <div class="nav-buttons">
-            <button class="nav-btn" id="prevBtn" aria-label="Previous screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">← Prev</span><span class="nav-label-shift" aria-hidden="true">⇧ ← Prev 10</span></span> <span class="shortcut">[k]</span></button>
-            <button class="nav-btn" id="nextBtn" aria-label="Next screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">Next →</span><span class="nav-label-shift" aria-hidden="true">Next 10 → ⇧</span></span> <span class="shortcut">[j]</span></button>
+            <button class="nav-btn" id="prevBtn" aria-label="Previous screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">← Prev</span><span class="nav-label-shift" aria-hidden="true">← Prev 10</span></span> <span class="shortcut">[k]</span></button>
+            <button class="nav-btn" id="nextBtn" aria-label="Next screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">Next →</span><span class="nav-label-shift" aria-hidden="true">Next 10 →</span></span> <span class="shortcut">[j]</span></button>
           </div>
         </div>
       </div>
