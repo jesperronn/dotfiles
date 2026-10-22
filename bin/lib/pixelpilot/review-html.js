@@ -37,11 +37,26 @@ function renderReviewHtml({
 		return `<time datetime="${escapeHtml(iso)}" title="${escapeHtml(iso)}">${escapeHtml(formatDateOnly(iso))}</time>`;
 	};
 
+	// Local time of the machine that generated the page, with its UTC offset
+	// (e.g. "2026-10-22 00:35 +02:00"); the tooltip keeps the exact ISO value.
+	const formatLocalMinutes = (iso) => {
+		const date = new Date(iso);
+		if (Number.isNaN(date.getTime())) return String(iso);
+		const pad = (n) => String(n).padStart(2, "0");
+		const offsetMinutes = -date.getTimezoneOffset();
+		const sign = offsetMinutes < 0 ? "-" : "+";
+		const abs = Math.abs(offsetMinutes);
+		return (
+			`${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+			`${pad(date.getHours())}:${pad(date.getMinutes())} ` +
+			`${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+		);
+	};
 	const generatedIso = manifest.current && manifest.current.generated_at;
 	const generatedAtHtml = generatedIso
 		? `<span class="generated-at" title="${escapeHtml(generatedIso)}">generated: ${escapeHtml(
-				String(generatedIso).slice(0, 16).replace("T", " ")
-			)} UTC</span>`
+				formatLocalMinutes(generatedIso)
+			)}</span>`
 		: "";
 
 	const statusBadge = (status) => {
