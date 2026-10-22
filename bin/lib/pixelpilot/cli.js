@@ -587,10 +587,10 @@ const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", 
 
 // Single-line spinner on stderr, TTY only. The diffing is synchronous and
 // blocks the main thread, so a worker thread owns the animation: the frame
-// advances once per second, and the main thread only publishes the count via
-// shared memory. The worker writes with fs.writeSync because worker stdio is
+// advances every 80ms (the cli-spinners "dots" interval used by ora), and the
+// main thread only publishes the count via shared memory. The worker writes with fs.writeSync because worker stdio is
 // piped through the (blocked) main thread.
-const SPINNER_INTERVAL_MS = Number(process.env.PIXELPILOT_SPINNER_INTERVAL_MS) || 1000;
+const SPINNER_INTERVAL_MS = Number(process.env.PIXELPILOT_SPINNER_INTERVAL_MS) || 80;
 
 const SPINNER_WORKER_SOURCE = `
 const fs = require("node:fs");

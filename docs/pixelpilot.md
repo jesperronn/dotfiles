@@ -32,7 +32,7 @@ Run it from the root of the project being reviewed. See `pixelpilot --help` for 
 
 Settings can also come from `screenshot-review.config.json` or a `screenshotReview` key in `package.json`; CLI flags win.
 
-When stderr is a terminal, a braille spinner with an `n/total` count shows while overlays are built (the frame advances every second; `PIXELPILOT_SPINNER_INTERVAL_MS` overrides it), and the line is removed when done. `--help`, `-h` prints the usage.
+When stderr is a terminal, a braille spinner with an `n/total` count shows while overlays are built (the frame advances every 80 ms, the same pace as the `ora`/cli-spinners "dots" spinner; `PIXELPILOT_SPINNER_INTERVAL_MS` overrides it), and the line is removed when done. `--help`, `-h` prints the usage.
 
 ## Compare two folders
 
