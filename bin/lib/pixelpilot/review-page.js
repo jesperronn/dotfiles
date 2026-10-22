@@ -708,18 +708,37 @@
 		}
 	}
 
-	function selectNextScenario() {
-		if (!MANIFEST.scenarios.length) return;
-		const nextIndex = (state.currentIndex + 1) % MANIFEST.scenarios.length;
-		selectScenario(MANIFEST.scenarios[nextIndex], nextIndex);
+	// Shift jumps NAV_JUMP screenshots instead of one. A single step wraps
+	// around the ends; a jump stops at the first/last screenshot instead.
+	const NAV_JUMP = 10;
+
+	function stepScenario(direction, jump) {
+		const count = MANIFEST.scenarios.length;
+		if (!count) return;
+		let index;
+		if (jump) {
+			index = Math.min(
+				count - 1,
+				Math.max(0, state.currentIndex + direction * NAV_JUMP)
+			);
+		} else {
+			index = (state.currentIndex + direction + count) % count;
+		}
+		selectScenario(MANIFEST.scenarios[index], index);
 	}
 
-	function selectPreviousScenario() {
-		if (!MANIFEST.scenarios.length) return;
-		const prevIndex =
-			(state.currentIndex - 1 + MANIFEST.scenarios.length) %
-			MANIFEST.scenarios.length;
-		selectScenario(MANIFEST.scenarios[prevIndex], prevIndex);
+	function selectNextScenario(e) {
+		stepScenario(1, Boolean(e && e.shiftKey));
+	}
+
+	function selectPreviousScenario(e) {
+		stepScenario(-1, Boolean(e && e.shiftKey));
+	}
+
+	// Mirrors the Shift key on <html data-shift> so the Prev/Next buttons can
+	// swap to their "10" labels while it is held.
+	function setShiftHint(held) {
+		document.documentElement.dataset.shift = held ? "true" : "false";
 	}
 
 	function selectByIndex(index) {
@@ -1270,6 +1289,7 @@
               <tr><td><kbd>?</kbd></td><td>Show/hide this help</td></tr>
               <tr><td><kbd>j</kbd> or <kbd>↓</kbd></td><td>Next screenshot</td></tr>
               <tr><td><kbd>k</kbd> or <kbd>↑</kbd></td><td>Previous screenshot</td></tr>
+              <tr><td><kbd>Shift</kbd> + <kbd>j</kbd>/<kbd>k</kbd> or Prev/Next</td><td>Jump 10 screenshots</td></tr>
               <tr><td><kbd>Space</kbd> or <kbd>d</kbd></td><td>Toggle diff overlay</td></tr>
               <tr><td><kbd>b</kbd></td><td>Toggle blink (flash the diff overlay), while diff is on</td></tr>
               <tr><td><kbd>f</kbd></td><td>Cycle "fade" (dark overlay / white overlay / off) under the diff overlay, while diff is on</td></tr>
@@ -1362,15 +1382,15 @@
 			else if (e.key === "ArrowDown") panZoom(0, step);
 			else if (e.key === "ArrowLeft") panZoom(-step, 0);
 			else panZoom(step, 0);
-		} else if (e.key === "j" || e.key === "ArrowDown") {
+		} else if (e.key === "j" || e.key === "J" || e.key === "ArrowDown") {
 			if (!state.helpVisible) {
 				e.preventDefault();
-				selectNextScenario();
+				selectNextScenario(e);
 			}
-		} else if (e.key === "k" || e.key === "ArrowUp") {
+		} else if (e.key === "k" || e.key === "K" || e.key === "ArrowUp") {
 			if (!state.helpVisible) {
 				e.preventDefault();
-				selectPreviousScenario();
+				selectPreviousScenario(e);
 			}
 		} else if (e.code === "Space" || e.key === "d") {
 			if (
@@ -1501,6 +1521,13 @@
 		}
 
 		document.addEventListener("keydown", handleKeydown);
+		document.addEventListener("keydown", (e) => {
+			if (e.key === "Shift") setShiftHint(true);
+		});
+		document.addEventListener("keyup", (e) => {
+			if (e.key === "Shift") setShiftHint(false);
+		});
+		window.addEventListener("blur", () => setShiftHint(false));
 		document.addEventListener("mousemove", handleMouseMove);
 		document
 			.getElementById("viewerContent")

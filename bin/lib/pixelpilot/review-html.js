@@ -743,6 +743,27 @@ function renderReviewHtml({
       white-space: nowrap;
     }
 
+    /* Both labels share one grid cell, so the button is always as wide as the
+       longer one and swapping them on Shift never moves the layout. The
+       hidden one keeps its width via visibility, not display. */
+    .nav-label {
+      display: inline-grid;
+    }
+
+    .nav-label > span {
+      grid-area: 1 / 1;
+      text-align: center;
+    }
+
+    .nav-label-shift,
+    html[data-shift="true"] .nav-label-normal {
+      visibility: hidden;
+    }
+
+    html[data-shift="true"] .nav-label-shift {
+      visibility: visible;
+    }
+
     .nav-btn:hover {
       background: var(--color-bg-secondary);
       border-color: var(--color-text-secondary);
@@ -1469,8 +1490,8 @@ ${scenariosList}
           </div>
           <span class="zoom-badge" id="zoomBadge" hidden></span>
           <div class="nav-buttons">
-            <button class="nav-btn" id="prevBtn" aria-label="Previous screenshot">← Prev <span class="shortcut">[k]</span></button>
-            <button class="nav-btn" id="nextBtn" aria-label="Next screenshot">Next → <span class="shortcut">[j]</span></button>
+            <button class="nav-btn" id="prevBtn" aria-label="Previous screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">← Prev</span><span class="nav-label-shift" aria-hidden="true">⇧ ← Prev 10</span></span> <span class="shortcut">[k]</span></button>
+            <button class="nav-btn" id="nextBtn" aria-label="Next screenshot (hold Shift to jump 10)"><span class="nav-label"><span class="nav-label-normal">Next →</span><span class="nav-label-shift" aria-hidden="true">Next 10 → ⇧</span></span> <span class="shortcut">[j]</span></button>
           </div>
         </div>
       </div>
