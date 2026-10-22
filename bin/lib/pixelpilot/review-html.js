@@ -37,6 +37,13 @@ function renderReviewHtml({
 		return `<time datetime="${escapeHtml(iso)}" title="${escapeHtml(iso)}">${escapeHtml(formatDateOnly(iso))}</time>`;
 	};
 
+	const generatedIso = manifest.current && manifest.current.generated_at;
+	const generatedAtHtml = generatedIso
+		? `<span class="generated-at" title="${escapeHtml(generatedIso)}">generated: ${escapeHtml(
+				String(generatedIso).slice(0, 16).replace("T", " ")
+			)} UTC</span>`
+		: "";
+
 	const statusBadge = (status) => {
 		if (status === "new")
 			return '<span class="status-badge status-badge-new">NEW</span>';
@@ -227,6 +234,25 @@ function renderReviewHtml({
     .header h1 {
       font-size: 24px;
       margin: 0;
+    }
+
+    .header-title {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .generated-at {
+      font-size: 11px;
+      color: var(--color-text-tertiary);
+      white-space: nowrap;
+    }
+
+    @media (max-width: 1280px) {
+      .generated-at {
+        display: none;
+      }
     }
 
     .header-controls {
@@ -1348,7 +1374,10 @@ function renderReviewHtml({
 <body>
   <div class="header">
     <div class="header-top">
-      <h1>${escapeHtml(title)}</h1>
+      <div class="header-title">
+        <h1>${escapeHtml(title)}</h1>
+        ${generatedAtHtml}
+      </div>
       <div class="header-controls">
         <div class="control-group">
           <label for="themeSelector">Theme <span class="shortcut">[t]</span></label>

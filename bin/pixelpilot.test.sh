@@ -89,6 +89,7 @@ test_folder_mode_needs_no_git_tags() {
   assert_status "0" "$status" "folder mode works in a repo with no commits or tags"
   assert_contains "$(cat "$repo/out/index.html")" "<p>orig " "folder mode defaults the baseline heading to the folder path"
   assert_contains "$(cat "$repo/out/index.html")" "<p>dev</p>" "folder mode defaults the current heading to the folder path"
+  assert_contains "$(cat "$repo/out/index.html")" 'class="generated-at"' "page shows a generated timestamp after the title"
   assert_contains "$(cat "$repo/out/index.html")" '"baseline_source":"orig/01-home.png"' "folder mode shows folder/file as the baseline source"
   assert_contains "$(cat "$repo/out/index.html")" '"current_source":"dev/01-home.png"' "folder mode shows folder/file as the current source"
 }
