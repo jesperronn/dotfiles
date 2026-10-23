@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# Purpose:
+#   Verify that GPG can create a clearsigned message, discarding the output.
+#   Useful for checking that signing works (keys, gpg-agent, passphrase source)
+#   without touching any files, and for testing the 1Password integration.
+#
+# Usage:
+#   bin/gpg-check [--op | --password] [--clear]
+#
+# Options:
+#   --op            Read the key passphrase from 1Password (`op`) and give it to
+#                   gpg via loopback pinentry. This is the default.
+#                   1Password may ask for approval (Touch ID / desktop app).
+#   --password, --pw
+#                   Let gpg ask for the passphrase itself (pinentry / agent
+#                   cache) instead of using 1Password.
+#   --clear         Clear gpg-agent's cached passphrases
+#                   (`gpgconf --reload gpg-agent`) so the next signing has to
+#                   ask again. On its own it only clears; combine with --op or
+#                   --password to clear and then run the check.
+#
+# Environment:
+#   GPG_CHECK_OP_ITEM   1Password item holding the passphrase in its
+#                       "credential" field (default: GPG_SIGN_PASSPHRASE).
+#   NO_COLOR            Disable colored output.
+#
+# Exit status:
+#   0 on success; otherwise a [FAIL] line on stderr and the failing command's
+#   exit status (gpg or op). 2 for bad usage.
+set -euo pipefail
+
+USAGE="usage: bin/gpg-check [--op | --password] [--clear]"
+OP_ITEM="${GPG_CHECK_OP_ITEM:-GPG_SIGN_PASSPHRASE}"
+
+C_RESET=$'\033[0m'
+C_GREEN=$'\033[32m'
+C_RED=$'\033[31m'
+C_DIM=$'\033[90m'
+
+mode="op"
+mode_explicit=0
+clear_cache=0
+pending_inline=0
+status_file=""
+
+OUT_COLOR=0
+ERR_COLOR=0
+if [[ -z "${NO_COLOR:-}" ]]; then
+  [[ -t 1 ]] && OUT_COLOR=1
+  [[ -t 2 ]] && ERR_COLOR=1
+fi
+
+cleanup() {
+  [[ -n "$status_file" ]] && rm -f "$status_file"
+  return 0
+}
+trap cleanup EXIT
+
+# pass_line <label> [dim detail]
+pass_line() {
+  local tag="[PASS]" detail="${2:-}"
+  if [[ "$OUT_COLOR" -eq 1 ]]; then
+    tag="${C_GREEN}${tag}${C_RESET}"
+    [[ -z "$detail" ]] || detail="${C_DIM}${detail}${C_RESET}"
+  fi
+  printf '%s %s%s\n' "$tag" "$1" "${detail:+ $detail}"
+}
+
+# fail_line <message>
+fail_line() {
+  local tag="[FAIL]"
+  if [[ "$ERR_COLOR" -eq 1 ]]; then
+    tag="${C_RED}${tag}${C_RESET}"
+  fi
+  printf '%s %s\n' "$tag" "$1" >&2
+}
+
+# pending <hint>: shown while something may be waiting on the user (1Password
+# dialog, pinentry). On a terminal it is erased once the step finishes.
+pending() {
+  if [[ -t 2 ]]; then
+    printf '%s%s%s' "$C_DIM" "$1" "$C_RESET" >&2
+    pending_inline=1
+  else
+    printf '%s\n' "$1" >&2
+  fi
+}
+
+clear_pending() {
+  if [[ "$pending_inline" -eq 1 ]]; then
+    printf '\r\033[K' >&2
+    pending_inline=0
+  fi
+}
+
+set_mode() {
+  if [[ "$mode_explicit" -eq 1 && "$mode" != "$1" ]]; then
+    echo "$USAGE" >&2
+    exit 2
+  fi
+  mode="$1"
+  mode_explicit=1
+}
+
+# key_summary <fingerprint>: prints "<user id>\t<algo bits>\t<key id>" for the
+# secret key (or subkey) with that fingerprint; prints nothing if unknown.
+key_summary() {
+  gpg --list-secret-keys --with-colons "$1" 2> /dev/null | awk -F: -v fpr="$1" '
+    BEGIN {
+      names["1"] = "RSA"; names["17"] = "DSA"; names["18"] = "ECDH"
+      names["19"] = "ECDSA"; names["22"] = "EdDSA"
+    }
+    /^(sec|ssb):/ { algo = $4; bits = $3 }
+    /^fpr:/ && $10 == fpr { found = 1; a = algo; b = bits }
+    /^uid:/ && uid == "" { uid = $10 }
+    END {
+      if (!found) exit
+      name = (a in names) ? names[a] : "algo " a
+      printf "%s\t%s %s\t%s\n", uid, name, b, substr(fpr, length(fpr) - 15)
+    }'
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --op) set_mode op ;;
+    --password | --pw) set_mode password ;;
+    --clear) clear_cache=1 ;;
+    *)
+      echo "$USAGE" >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ "$clear_cache" -eq 1 ]]; then
+  if gpgconf --reload gpg-agent; then
+    pass_line "Cleared gpg-agent passphrase cache"
+  else
+    fail_line "Could not reload gpg-agent"
+    exit 1
+  fi
+  # Alone, --clear just clears; with a mode flag it goes on to run the check.
+  [[ "$mode_explicit" -eq 1 ]] || exit 0
+fi
+
+status_file="$(mktemp)"
+passphrase=""
+
+if [[ "$mode" == "op" ]]; then
+  pending "Fetching passphrase from 1Password ($OP_ITEM)..."
+  if passphrase="$(op item get "$OP_ITEM" --fields label=credential --reveal)"; then
+    clear_pending
+    pass_line "Fetched passphrase from 1Password" "($OP_ITEM)"
+  else
+    status=$?
+    clear_pending
+    fail_line "Could not fetch passphrase from 1Password ($OP_ITEM) (exit $status)"
+    exit "$status"
+  fi
+else
+  pending "Signing test message (pinentry may ask for the passphrase)..."
+fi
+
+sign() {
+  if [[ "$mode" == "op" ]]; then
+    echo test | gpg --batch --pinentry-mode loopback --passphrase-fd 3 \
+      --status-file "$status_file" --clearsign 3<<< "$passphrase" > /dev/null
+  else
+    echo test | gpg --status-file "$status_file" --clearsign > /dev/null
+  fi
+}
+
+if sign; then
+  clear_pending
+  fpr=""
+  while read -r _ event rest; do
+    if [[ "$event" == "SIG_CREATED" ]]; then
+      fpr="${rest##* }"
+    fi
+  done < "$status_file"
+  info=""
+  [[ -z "$fpr" ]] || info="$(key_summary "$fpr")"
+  if [[ -n "$info" ]]; then
+    IFS=$'\t' read -r uid algo keyid <<< "$info"
+    pass_line "Signed test message with $uid" "($algo, $keyid)"
+  else
+    pass_line "Signed test message"
+  fi
+else
+  status=$?
+  clear_pending
+  fail_line "Signing test message failed (exit $status)"
+  exit "$status"
+fi
