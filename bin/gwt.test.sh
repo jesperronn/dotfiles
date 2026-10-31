@@ -86,6 +86,15 @@ gwt_find_repo_root() {
 }
 
 gwt_test_select_output=""
+gwt_test_worktree_count=2
+
+gwt_list_worktrees() {
+  GWT_WORKTREE_LINES=()
+  local i
+  for ((i = 0; i < gwt_test_worktree_count; i++)); do
+    GWT_WORKTREE_LINES+=("/tmp/wt$i	abc1234	[branch-$i]")
+  done
+}
 
 gwt_select_worktree() {
   if [[ "$gwt_test_select_output" == "ADD" ]]; then
@@ -318,6 +327,81 @@ gwt_test_apply_delete_real_failure() {
 
 }
 
+gwt_test_empty_flow() {
+
+  gwt_test_worktree_count=1
+  gwt_test_select_output="ADD"
+  gwt_test_add_called=0
+  gwt_test_delete_called=0
+  gwt_reset_state
+
+  local out status=0
+  out="$(gwt_run_main 2>&1)" || status=$?
+
+  test_assert_status "only main checkout exits 0" "0" "$status"
+  case "$out" in
+    *"No worktrees found to delete"*) test_pass "prints no-worktrees message" ;;
+    *) test_fail "expected no-worktrees message" "$out" ;;
+  esac
+  case "$out" in
+    *"/tmp/wt0"*) test_pass "prints the git worktree list line" ;;
+    *) test_fail "expected the worktree line in output" "$out" ;;
+  esac
+  test_assert_eq "no add/delete when empty" "0" "$((gwt_test_add_called + gwt_test_delete_called))"
+  gwt_test_worktree_count=2
+
+}
+
+gwt_test_fzf_args() {
+
+  local stub_dir="$TEST_TMP_DIR/stubbin"
+  mkdir -p "$stub_dir"
+  cat >"$stub_dir/fzf" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$FZF_ARGS_FILE"
+STUB
+  chmod +x "$stub_dir/fzf"
+
+  local args_file="$TEST_TMP_DIR/fzf-args"
+  (
+    PATH="$stub_dir:$PATH"
+    FZF_ARGS_FILE="$args_file"
+    export FZF_ARGS_FILE
+    # shellcheck source=/dev/null
+    source "$(dirname "$0")/gwt"
+    GWT_FZF_FOUND=1
+    GWT_WORKTREE_LINES=("/tmp/a" "/tmp/b")
+    gwt_select_worktree >/dev/null 2>&1 || true
+  )
+
+  local args
+  args="$(cat "$args_file")"
+  case "$args" in
+    *"load:last,"*) test_pass "cursor starts on the top row" ;;
+    *) test_fail "expected load:last binding" "$args" ;;
+  esac
+  case "$args" in
+    *"tab:"*) test_fail "tab should keep fzf default (toggle+down)" "$args" ;;
+    *) test_pass "tab keeps fzf default binding" ;;
+  esac
+  case "$args" in
+    *"~50%"*) test_pass "fzf height is adaptive percentage" ;;
+    *) test_fail "expected ~50% height" "$args" ;;
+  esac
+
+}
+
+gwt_test_clear_prompt_line() {
+
+  local out
+  out="$(gwt_clear_prompt_line)"
+  test_assert_eq "no escape codes when stdout is not a tty" "" "$out"
+
+  out="$(GWT_FORCE_CLEAR=1 gwt_clear_prompt_line)"
+  test_assert_eq "clears previous line when forced" $'\033[1A\033[2K\r' "$out"
+
+}
+
 gwt_test_countdown_navigate() {
 
   gwt_countdown_navigate "/tmp/new-wt"
@@ -339,6 +423,9 @@ main() {
   gwt_test_delete_flow_multi
   gwt_test_apply_delete_real_multi
   gwt_test_apply_delete_real_failure
+  gwt_test_empty_flow
+  gwt_test_fzf_args
+  gwt_test_clear_prompt_line
   gwt_test_countdown_navigate
 
   printf '%bResults: %s passed, %s failed%s\n' \

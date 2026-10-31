@@ -86,6 +86,14 @@ gwt_verbose() {
   fi
 }
 
+# Erase the line above the cursor (the yellow prompt line) once fzf has
+# closed, so only the final status output remains. No-op when not a tty.
+gwt_clear_prompt_line() {
+  if [[ -t 1 || "${GWT_FORCE_CLEAR:-0}" == 1 ]]; then
+    printf '\033[1A\033[2K\r'
+  fi
+}
+
 # ── Usage ──────────────────────────────────────────────────────────────
 
 gwt_usage() {
@@ -199,19 +207,17 @@ gwt_select_worktree() {
     display_lines+=("$entry")
   done
 
-  # Compute fzf height: min of 30% of terminal or 15 lines
-  local terminal_lines
-  terminal_lines="$(tput lines 2>/dev/null)" || terminal_lines=24
-  local thirty_pct=$(( (terminal_lines * 30) / 100 ))
-  (( thirty_pct < 1 )) && thirty_pct=1
-  local fzf_height=$(( thirty_pct < 15 ? thirty_pct : 15 ))
-
+  # Default fzf layout is bottom-up, so the first line (the main checkout)
+  # sits at the bottom. 'load:last' puts the cursor on the last item, the top
+  # row on screen. Tab keeps fzf's default (toggle, then move to the next line down).
+  # Height is adaptive (~50%): fits the list, grows up to half the terminal
+  # (not tput, which is unreliable inside $(...)).
   # We use a signal file to communicate "add" vs "select"
   # because fzf's --bind execute can't return a value to bash easily.
   # --multi lets the user toggle several worktrees with Tab; fzf prints
   # every selected line, newline-separated.
   local fzf_output=""
-  local fzf_args=(--multi --prompt='Delete> ' --header='Tab: select · Enter: delete · Ctrl-A: add' --height "$fzf_height" --bind 'ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
+  local fzf_args=(--multi --prompt='Delete> ' --header='Tab: select · Enter: delete · Ctrl-A: add' --height "${GWT_FZF_HEIGHT:-~50%}" --bind 'load:last,ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
 
   fzf_output="$(printf '%s\n' "${display_lines[@]}" | fzf "${fzf_args[@]}" 2>/dev/null)" || true
 
@@ -372,14 +378,23 @@ gwt_run_main() {
 
   gwt_list_worktrees
 
-  if (( ${#GWT_WORKTREE_LINES[@]} == 0 )); then
-    gwt_info "No worktrees found. Use Ctrl-A to create one."
-  else
-    gwt_info "Select worktree(s) to delete — Tab toggles, Enter confirms (Ctrl-A adds new):"
+  # Only the main checkout: nothing to delete.
+  if (( ${#GWT_WORKTREE_LINES[@]} <= 1 )); then
+    local line
+    for line in "${GWT_WORKTREE_LINES[@]}"; do
+      gwt_dim "$line"
+    done
+    gwt_dim "No worktrees found to delete."
+    return 0
   fi
 
+  gwt_info "Select worktree(s) to delete — Tab toggles, Enter confirms (Ctrl-A adds new):"
+
   local selected=""
-  selected="$(gwt_select_worktree)" || return 0
+  local select_status=0
+  selected="$(gwt_select_worktree)" || select_status=$?
+  gwt_clear_prompt_line
+  (( select_status == 0 )) || return 0
 
   if [[ "$selected" == "ADD" ]]; then
     gwt_apply_add
