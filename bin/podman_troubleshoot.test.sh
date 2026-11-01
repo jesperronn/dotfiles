@@ -526,6 +526,7 @@ run_fixture6_verbose() {
 
 # Fixture group 7: --fix --force mode (starts machine)
 run_fixture7_fix_force() {
+  local mode="${1:-stopped}"
   local work_dir=""
   local stub_dir=""
 
@@ -533,6 +534,11 @@ run_fixture7_fix_force() {
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
+  if [[ "$mode" == "hung" ]]; then
+    # machine reports running, but the API is dead until it is restarted
+    : >"$work_dir/state/running"
+    : >"$work_dir/state/hung"
+  fi
 
   write_stub "$stub_dir/podman" '
 state_dir="${PODMAN_TEST_STATE_DIR:?}"
@@ -541,7 +547,7 @@ default_file="$state_dir/default_connection"
 
 case "$1" in
   ps)
-    if [[ -f "$running_file" ]]; then
+    if [[ -f "$running_file" && ! -f "$state_dir/hung" ]]; then
       printf "CONTAINER ID  IMAGE\n"
       exit 0
     fi
@@ -589,6 +595,7 @@ case "$1" in
         ;;
       start)
         : >"$running_file"
+        rm -f "$state_dir/hung"
         printf "Machine started\n"
         ;;
       stop)
@@ -902,10 +909,22 @@ test_fix_force_starts_machine_refreshes_socket_and_verifies() {
   assert_contains "$FIXTURE7_OUTPUT" "== Podman Fix ==" "fix mode prints its own section"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman machine started" "fix mode starts the stopped machine"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] stable Podman socket refreshed" "fix mode refreshes the stable socket"
-  assert_contains "$FIXTURE7_OUTPUT" "[OK] default Podman connection aligned" "fix mode sets the default connection"
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] default Podman connection is already podman-machine-default" "fix mode skips the connection step when it is already correct"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] rootless privileged port floor updated for port 389" "fix mode applies the rootless port 389 sysctl"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] podman ps succeeded after fix" "fix mode verifies podman ps"
   assert_contains "$FIXTURE7_OUTPUT" "[OK] podman info succeeded after fix" "fix mode verifies podman info"
+}
+
+test_fix_force_restarts_machine_with_hung_api() {
+  run_fixture7_fix_force hung
+  assert_status "0" "$FIXTURE7_STATUS" "fix restarts a machine that reports running with a dead API"
+  assert_contains "$FIXTURE7_OUTPUT" "reports running but its API does not respond" "fix detects stale running state"
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman machine restarted" "fix restarts the hung machine"
+}
+
+test_fix_refreshes_missing_stable_socket() {
+  run_fixture7_fix_force
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] stable Podman socket refreshed" "fix refreshes a missing stable socket"
 }
 
 test_fix_force_recreates_low_memory_machine() {

@@ -482,6 +482,32 @@ refresh_stable_podman_socket() {
   printf 'stable socket: %s -> %s\n' "$stable_sock" "$current_vm_sock"
 }
 
+stable_podman_socket_is_current() {
+  local machine_name="$1"
+  local current_vm_sock
+  local stable_sock
+
+  current_vm_sock="$(podman_control machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true)"
+  [[ -n "$current_vm_sock" ]] || return 1
+
+  stable_sock="$(stable_podman_socket_path)"
+  [[ -L "$stable_sock" ]] || return 1
+  [[ "$(readlink "$stable_sock")" == "$current_vm_sock" ]]
+}
+
+podman_api_responds() {
+  local probe_output=""
+  local probe_status=0
+  capture_command_with_timeout probe_output probe_status "$PODMAN_PS_TIMEOUT_SECONDS" podman ps
+  [[ $probe_status -eq 0 ]] && ! podman_error_output "$probe_output"
+}
+
+restart_podman_machine() {
+  local machine_name="$1"
+  podman_control machine stop "$machine_name" 2>&1 || true
+  start_podman_machine "$machine_name"
+}
+
 start_podman_machine() {
   local machine_name="$1"
   local output_file=""
@@ -761,19 +787,37 @@ connection: $connection_name"
       check_machine_log_health
       return 1
     fi
+  elif podman_api_responds; then
+    log_ok "Podman machine is already running and its API responds"
   else
-    log_ok "Podman machine is already running"
+    log_troubleshoot "machine $machine_name reports running but its API does not respond (stale VM state)"
+    if ! run_fix_step \
+      "Podman machine restarted" \
+      "restart $machine_name (stop, then start) to recover the unresponsive API" \
+      restart_podman_machine "$machine_name"; then
+      log_troubleshoot "machine restart failed"
+      check_machine_log_health
+      return 1
+    fi
   fi
 
-  run_fix_step \
-    "stable Podman socket refreshed" \
-    "refresh the stable Podman socket symlink" \
-    refresh_stable_podman_socket "$machine_name" || return 1
+  if stable_podman_socket_is_current "$machine_name"; then
+    log_ok "stable Podman socket symlink already points at the current machine socket"
+  else
+    run_fix_step \
+      "stable Podman socket refreshed" \
+      "refresh the stable Podman socket symlink (missing or stale)" \
+      refresh_stable_podman_socket "$machine_name" || return 1
+  fi
 
-  run_fix_step \
-    "default Podman connection aligned" \
-    "set the default Podman connection to $connection_name" \
-    podman_control system connection default "$connection_name" || return 1
+  if [[ "$(podman_default_connection_name || true)" == "$connection_name" ]]; then
+    log_ok "default Podman connection is already $connection_name"
+  else
+    run_fix_step \
+      "default Podman connection aligned" \
+      "set the default Podman connection to $connection_name" \
+      podman_control system connection default "$connection_name" || return 1
+  fi
 
   if ! port_389_sysctl_allows_rootless; then
     run_fix_step \
