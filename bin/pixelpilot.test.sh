@@ -131,11 +131,100 @@ test_report_prints_table_and_fail_above() {
   fi
 }
 
+test_new_flags_dir_to_dir_and_labels() {
+  local repo="$TEST_TMP_DIR/newflags"
+  local html=""
+  setup_folder_pair "$repo"
+
+  (cd "$repo" && "$PIXELPILOT_BIN" --from-dir orig --to-dir dev \
+    --from-label 'Before' --to-label 'After' \
+    --output-html out/index.html </dev/null >/dev/null 2>&1)
+  html="$(cat "$repo/out/index.html")"
+  assert_contains "$html" '"baseline_source":"orig/01-home.png"' "--from-dir reads the baseline folder"
+  assert_contains "$html" '"current_source":"dev/01-home.png"' "--to-dir reads the current folder"
+  assert_contains "$html" "Before" "--from-label is in the page"
+  assert_contains "$html" "After" "--to-label is in the page"
+}
+
+setup_git_screenshots() {
+  # setup_git_screenshots <repo> <tracked-dir> -- commit a tagged white PNG, then change it on disk
+  local repo="$1" dir="$2"
+  rm -rf "$repo"
+  mkdir -p "$repo/$dir"
+  make_png "$repo/$dir/01-home.png" 20 40 ffffff
+  git -C "$repo" init -q
+  git -C "$repo" add .
+  git -C "$repo" -c user.email=t@example.com -c user.name=t commit -qm init
+  git -C "$repo" tag -a v1 -m v1
+  make_png "$repo/$dir/01-home.png" 20 60 000000
+}
+
+test_path_is_shared_between_ref_and_disk() {
+  local repo="$TEST_TMP_DIR/pathshared"
+  local output=""
+  local status=0
+  setup_git_screenshots "$repo" screenshots
+
+  output="$(cd "$repo" && "$PIXELPILOT_BIN" --report --from v1 --path screenshots --report-dir rep 2>&1)" || status=$?
+  assert_status "0" "$status" "--from <tag> --path compares the tag against the same dir on disk"
+  assert_contains "$output" "20x40" "report shows the tagged baseline size"
+  assert_contains "$output" "20x60" "report shows the on-disk current size"
+}
+
+test_from_path_and_to_dir_override_individually() {
+  local repo="$TEST_TMP_DIR/pathsplit"
+  local output=""
+  local status=0
+  setup_git_screenshots "$repo" doc/screenshots
+  mkdir -p "$repo/screenshots"
+  mv "$repo/doc/screenshots/01-home.png" "$repo/screenshots/01-home.png"
+
+  output="$(cd "$repo" && "$PIXELPILOT_BIN" --report --from v1 --from-path doc/screenshots --to-dir screenshots --report-dir rep 2>&1)" || status=$?
+  assert_status "0" "$status" "--from-path and --to-dir point each side at its own folder"
+  assert_contains "$output" "20x40" "baseline read from --from-path inside the ref"
+  assert_contains "$output" "20x60" "current read from --to-dir on disk"
+
+  status=0
+  output="$(cd "$repo" && "$PIXELPILOT_BIN" --report --from v1 --to HEAD --from-path doc/screenshots --to-path doc/screenshots --report-dir rep 2>&1)" || status=$?
+  assert_status "0" "$status" "--to-path selects the path inside the --to ref"
+}
+
+test_ref_and_dir_on_same_side_conflict() {
+  local repo="$TEST_TMP_DIR/conflict"
+  local output=""
+  local status=0
+  setup_folder_pair "$repo"
+
+  capture_command output status "$PIXELPILOT_BIN" --from HEAD --from-dir "$repo/orig"
+  assert_not_status "0" "$status" "--from and --from-dir are rejected together"
+  assert_contains "$output" "mutually exclusive" "conflict error explains the exclusivity"
+  status=0
+  capture_command output status "$PIXELPILOT_BIN" --to HEAD --to-dir "$repo/dev"
+  assert_not_status "0" "$status" "--to and --to-dir are rejected together"
+}
+
+test_help_lists_new_flags() {
+  local output=""
+  local status=0
+
+  capture_command output status "$PIXELPILOT_BIN" --help
+  assert_contains "$output" "--from-dir" "help lists --from-dir"
+  assert_contains "$output" "--to-dir" "help lists --to-dir"
+  assert_contains "$output" "--extract-dir" "help lists --extract-dir"
+  assert_contains "$output" "Deprecated aliases" "help documents the old flag names"
+}
+
+
 test_help_prints_usage
 test_unknown_option_fails
 test_wrapper_reviews_git_baseline
 test_folder_mode_needs_no_git_tags
 test_labels_appear_in_html
 test_report_prints_table_and_fail_above
+test_new_flags_dir_to_dir_and_labels
+test_path_is_shared_between_ref_and_disk
+test_from_path_and_to_dir_override_individually
+test_ref_and_dir_on_same_side_conflict
+test_help_lists_new_flags
 
 run_tests "$@"

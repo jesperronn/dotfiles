@@ -26,6 +26,7 @@ const CONFIG_KEYS = {
 	outputHtml: "outputHtml",
 	title: "title",
 	screenshotsDir: "screenshotsDir",
+	currentScreenshotsDir: "currentScreenshotsDir",
 	baselineFolder: "baselineFolder",
 	baselineLabel: "baselineLabel",
 	currentLabel: "currentLabel",
@@ -34,33 +35,39 @@ const CONFIG_KEYS = {
 function printUsage() {
 	const usage = `Usage: pixelpilot [options]
 
-Options:
-  --baseline <ref>, --from <ref>
-                                git ref to extract the baseline from
+Sides (a side is either a git ref or an on-disk directory, never both):
+  --from <ref>                  git ref to read the baseline from
                                 (config: baseline, default: HEAD)
-  --current-ref <ref>, --to <ref>
-                                git ref to extract the "current" side from
-                                (config: currentRef); mutually exclusive
-                                with --current-dir
-  --current-dir <path>          directory of current capture PNGs
-                                (config: currentDir, default: tmp/screenshot-output;
-                                mutually exclusive with --current-ref)
-  --baseline-dir <path>         scratch dir the baseline is extracted into
-                                (config: baselineDir, default: tmp/screenshot-review/baseline/<ref>)
+  --from-dir <dir>              plain folder of baseline PNGs instead of a git
+                                ref: no git extraction, git describe or dirty
+                                badge (config: baselineFolder)
+  --to <ref>                    git ref to read the "current" side from
+                                (config: currentRef)
+  --to-dir <dir>                on-disk folder of current PNGs
+                                (config: currentDir, default: tmp/screenshot-output
+                                if it exists, else --path)
+  --path <dir>                  repo-relative folder holding the PNGs inside a ref;
+                                also the default --to-dir
+                                (config: screenshotsDir, default: doc/screenshots)
+  --from-path <dir>             --path for the --from side only
+  --to-path <dir>               --path for the --to side only
+                                (config: currentScreenshotsDir)
+  --from-label <text>           heading for the from side, replaces the git
+                                describe label (config: baselineLabel)
+  --to-label <text>             heading for the to side (config: currentLabel)
   --output-html <path>          where the review HTML page is written
                                 (config: outputHtml, default: tmp/screenshot-review/index.html)
-  --screenshots-dir <path>      git-tracked directory the baseline PNGs are read from
-                                (config: screenshotsDir, default: doc/screenshots)
   --title <text>                page <title> and on-page heading
                                 (config: title, default: Screenshot Review)
-  --baseline-folder <path>      compare against a plain folder of PNGs instead of
-                                a git ref: no git extraction, git describe or
-                                dirty badge; headings default to the folder paths
-                                (config: baselineFolder)
-  --baseline-label <text>       heading text for the baseline side, replaces the
-                                git describe label (config: baselineLabel)
-  --current-label <text>        heading text for the current side
-                                (config: currentLabel)
+
+Advanced:
+  --extract-dir <dir>           scratch dir the --from ref is extracted into
+                                (config: baselineDir, default: tmp/screenshot-review/baseline/<ref>)
+
+Deprecated aliases: --baseline (--from), --current-ref (--to),
+  --baseline-folder (--from-dir), --current-dir (--to-dir),
+  --screenshots-dir (--path), --baseline-dir (--extract-dir),
+  --baseline-label (--from-label), --current-label (--to-label).
 
 Text report (prints a table instead of writing the HTML page):
   --report                      per same-named PNG pair: baseline/current size,
@@ -81,8 +88,10 @@ Configuration file layering (highest precedence first):
   3. Built-in defaults
 
 Example:
-  pixelpilot --baseline HEAD --current-dir ./captures --output-html ./review.html
+  pixelpilot --from v9.1.0 --path screenshots
   pixelpilot --from v20.0.0 --to v21.1.0
+  pixelpilot --from v9.1.0 --from-path doc/screenshots --to-dir screenshots
+  pixelpilot --from-dir ./old --to-dir ./captures --output-html ./review.html
 `;
 	process.stdout.write(usage);
 }
@@ -124,6 +133,10 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 	// a config-supplied one of the other kind instead of conflicting with it.
 	let cliCurrentDir = false;
 	let cliCurrentRef = false;
+	let cliFromRef = false;
+	let cliFromDir = false;
+	let cliPath = false;
+	let cliToPath = false;
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -136,11 +149,13 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 				process.exit(0);
 				break;
 			case "--current-dir":
+			case "--to-dir":
 				options.currentDir = next;
 				cliCurrentDir = true;
 				index += 1;
 				break;
 			case "--baseline-dir":
+			case "--extract-dir":
 				options.baselineDir = next;
 				index += 1;
 				break;
@@ -157,6 +172,7 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 			case "--from":
 			case "--baseline":
 				options.baseline = next;
+				cliFromRef = true;
 				index += 1;
 				break;
 			case "--title":
@@ -164,18 +180,33 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 				index += 1;
 				break;
 			case "--screenshots-dir":
+			case "--path":
+				options.screenshotsDir = next;
+				cliPath = true;
+				index += 1;
+				break;
+			case "--from-path":
 				options.screenshotsDir = next;
 				index += 1;
 				break;
+			case "--to-path":
+				options.currentScreenshotsDir = next;
+				cliToPath = true;
+				index += 1;
+				break;
 			case "--baseline-folder":
+			case "--from-dir":
 				options.baselineFolder = next;
+				cliFromDir = true;
 				index += 1;
 				break;
 			case "--baseline-label":
+			case "--from-label":
 				options.baselineLabel = next;
 				index += 1;
 				break;
 			case "--current-label":
+			case "--to-label":
 				options.currentLabel = next;
 				index += 1;
 				break;
@@ -205,12 +236,21 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 		}
 	}
 
+	if (cliFromRef && cliFromDir) {
+		throw new Error(
+			"--from (a git ref) and --from-dir (a plain folder) are mutually exclusive."
+		);
+	}
+	if (cliFromRef && !cliFromDir) delete options.baselineFolder;
+	// --path sets both sides; --from-path/--to-path override it individually,
+	// and a CLI --path beats a config-supplied --to-path.
+	if (cliPath && !cliToPath) delete options.currentScreenshotsDir;
 	if (cliCurrentRef && !cliCurrentDir) delete options.currentDir;
 	if (cliCurrentDir && !cliCurrentRef) delete options.currentRef;
 	if (options.currentRef !== undefined && options.currentDir !== undefined) {
 		throw new Error(
-			"--current-ref (--to) and --current-dir are mutually exclusive: " +
-				"use --current-ref to compare two git refs, or --current-dir for a capture directory."
+			"--to (a git ref) and --to-dir (a folder) are mutually exclusive: " +
+				"use --to to compare two git refs, or --to-dir for a capture directory."
 		);
 	}
 
@@ -223,15 +263,23 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 // buildManifest. Overridable via --screenshots-dir / the "screenshotsDir"
 // config key so this tool can be used outside this repo.
 const DEFAULT_SCREENSHOTS_DIR = path.join("doc", "screenshots");
+const DEFAULT_CAPTURE_DIR = path.join("tmp", "screenshot-output");
 
 function applyDefaults(options) {
 	const resolved = { ...options };
 
-	if (!resolved.currentDir && !resolved.currentRef) {
-		resolved.currentDir = path.join("tmp", "screenshot-output");
-	}
 	if (!resolved.screenshotsDir) {
 		resolved.screenshotsDir = DEFAULT_SCREENSHOTS_DIR;
+	}
+	if (!resolved.currentScreenshotsDir) {
+		resolved.currentScreenshotsDir = resolved.screenshotsDir;
+	}
+	if (!resolved.currentDir && !resolved.currentRef) {
+		// The capture dir wins when a capture step produced one; otherwise
+		// compare the baseline against the files on disk at --path.
+		resolved.currentDir = fs.existsSync(DEFAULT_CAPTURE_DIR)
+			? DEFAULT_CAPTURE_DIR
+			: resolved.currentScreenshotsDir;
 	}
 	if (resolved.baselineFolder) {
 		// Folder mode reads the folder directly; there is nothing to extract.
@@ -660,16 +708,17 @@ function buildManifest(inputOptions) {
 		validateGitRef(currentRef);
 		const currentExtractDir = currentScratchDir(currentRef);
 		if (
-			path.resolve(currentExtractDir) === path.resolve(options.screenshotsDir)
+			path.resolve(currentExtractDir) ===
+			path.resolve(options.currentScreenshotsDir)
 		) {
 			throw new Error(
-				`current scratch dir must not be ${options.screenshotsDir}: that directory is the tracked source.`
+				`current scratch dir must not be ${options.currentScreenshotsDir}: that directory is the tracked source.`
 			);
 		}
 		extractBaselineFromGit(
 			currentRef,
 			currentExtractDir,
-			options.screenshotsDir
+			options.currentScreenshotsDir
 		);
 		options = { ...options, currentDir: currentExtractDir };
 	}
@@ -682,9 +731,9 @@ function buildManifest(inputOptions) {
 		path.resolve(options.baselineDir) === path.resolve(options.screenshotsDir)
 	) {
 		throw new Error(
-			`--baseline-dir must not be ${options.screenshotsDir}: that directory is the git-tracked ` +
+			`--extract-dir must not be ${options.screenshotsDir}: that directory is the git-tracked ` +
 				"source the baseline is extracted from, not a scratch output location. " +
-				`Leave --baseline-dir unset to use the default (${baselineScratchDir(baselineRef)}).`
+				`Leave --extract-dir unset to use the default (${baselineScratchDir(baselineRef)}).`
 		);
 	}
 
@@ -739,6 +788,10 @@ function buildManifest(inputOptions) {
 		const inBaseline = baselineFiles.includes(file);
 		const inCurrent = currentFiles.includes(file);
 		const trackedPath = trackedScreenshotPath(file, options.screenshotsDir);
+		const currentTrackedPath = trackedScreenshotPath(
+			file,
+			options.currentScreenshotsDir
+		);
 
 		const baselineCommit = inBaseline && !folderMode
 			? lastCommitTouching(baselineRef, trackedPath)
@@ -867,7 +920,7 @@ function buildManifest(inputOptions) {
 				: null,
 			current_source: inCurrent
 				? currentRef
-					? `${currentRef}:${trackedPath}`
+					? `${currentRef}:${currentTrackedPath}`
 					: path.join(options.currentDir, file)
 				: null,
 			current_date:
@@ -1001,11 +1054,13 @@ function printStartSummary(options) {
 	process.stdout.write(
 		`${[
 			"Generating screenshot review page with:",
-			`  baseline: ${options.baseline}`,
+			options.baselineFolder ? null : `  from: ${options.baseline}`,
 			options.currentRef
-				? `  current-ref: ${options.currentRef}`
-				: `  current-dir: ${options.currentDir}`,
-			`  baseline-dir: ${options.baselineDir}`,
+				? `  to: ${options.currentRef}`
+				: `  to-dir: ${options.currentDir}`,
+			options.baselineFolder
+				? `  from-dir: ${options.baselineFolder}`
+				: `  extract-dir: ${options.baselineDir}`,
 			`  output-html: ${options.outputHtml}`,
 			options.title !== "Screenshot Review"
 				? `  title: ${options.title}`
@@ -1160,7 +1215,11 @@ function runReport(options) {
 	if (options.currentRef) {
 		validateGitRef(options.currentRef);
 		currentDir = currentScratchDir(options.currentRef);
-		extractBaselineFromGit(options.currentRef, currentDir, options.screenshotsDir);
+		extractBaselineFromGit(
+			options.currentRef,
+			currentDir,
+			options.currentScreenshotsDir
+		);
 	}
 	let baselineFiles;
 	if (folderMode) {

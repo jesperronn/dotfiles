@@ -14,21 +14,23 @@ Run it from the root of the project being reviewed. See `pixelpilot --help` for 
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--baseline`, `--from` | `HEAD` | Git ref the baseline PNGs are extracted from. |
-| `--current-dir` | `tmp/screenshot-output` | Folder with the current PNGs. |
-| `--current-ref`, `--to` | none | Git ref to use as the current side instead (exclusive with `--current-dir`). |
-| `--baseline-dir` | `tmp/screenshot-review/baseline/<ref>` | Scratch folder the baseline is extracted into. |
-| `--screenshots-dir` | `doc/screenshots` | Git-tracked folder the baseline PNGs are read from. |
+| `--from` | `HEAD` | Git ref the baseline PNGs are read from. |
+| `--from-dir` | none | Plain folder of baseline PNGs instead of a git ref (exclusive with `--from`). No git extraction, `git describe`, dirty badge or tag needed; headings default to the folder paths. |
+| `--to` | none | Git ref for the current side (exclusive with `--to-dir`). |
+| `--to-dir` | `tmp/screenshot-output` if it exists, else `--path` | On-disk folder with the current PNGs (exclusive with `--to`). |
+| `--path` | `doc/screenshots` | Repo-relative folder holding the PNGs inside a ref; also the default `--to-dir`. |
+| `--from-path`, `--to-path` | `--path` | `--path` for one side only, for when the screenshots moved between refs. |
+| `--from-label`, `--to-label` | git describe | Heading text for each side. |
 | `--output-html` | `tmp/screenshot-review/index.html` | Where the page is written; diff images go beside it. |
 | `--title` | `Screenshot Review` | Page title and heading. |
-| `--baseline-folder` | none | Compare against a plain folder of PNGs instead of a git ref. No git extraction, `git describe`, dirty badge or tag needed; headings default to the folder paths. |
-| `--baseline-label` | git describe | Heading text for the baseline side. |
-| `--current-label` | git describe | Heading text for the current side. |
+| `--extract-dir` | `tmp/screenshot-review/baseline/<ref>` | Advanced: scratch folder the `--from` ref is extracted into. |
 | `--report` | off | Print a text table instead of writing the HTML page (see below). |
 | `--band-height` | `100` | Band height in px for the report's per-band summary. |
 | `--only` | all | Report only: comma-separated file-name prefixes (`01` also matches `1-…`). |
 | `--fail-above` | none | Report only: exit 1 if any pair differs by more than this percent. |
 | `--report-dir` | `tmp/pixelpilot-report` | Report only: where diff PNGs are written. |
+
+The old names still work as deprecated aliases: `--baseline`, `--current-ref`, `--baseline-folder`, `--current-dir`, `--screenshots-dir`, `--baseline-dir`, `--baseline-label`, `--current-label`.
 
 Settings can also come from `screenshot-review.config.json` or a `screenshotReview` key in `package.json`; CLI flags win.
 
@@ -37,24 +39,24 @@ When stderr is a terminal, a braille spinner with an `n/total` count shows while
 ## Compare two folders
 
 ```bash
-pixelpilot --baseline-folder screenshots/orig --current-dir screenshots/dev \
-  --baseline-label 'WordPress (original)' --current-label 'Hugo (new)' \
+pixelpilot --from-dir screenshots/orig --to-dir screenshots/dev \
+  --from-label 'WordPress (original)' --to-label 'Hugo (new)' \
   --output-html /tmp/pp/index.html --title 'Site comparison'
 ```
 
-`--baseline-folder` is read in place and never written to. Config keys: `baselineFolder`, `baselineLabel`, `currentLabel`.
+`--from-dir` is read in place and never written to. Config keys: `baselineFolder`, `baselineLabel`, `currentLabel`.
 
 ## Text report
 
 ```bash
-pixelpilot --report --baseline-folder screenshots/orig --current-dir screenshots/dev --fail-above 5
+pixelpilot --report --from-dir screenshots/orig --to-dir screenshots/dev --fail-above 5
 ```
 
 Prints one row per same-named PNG pair: baseline size, current size, height delta (current minus baseline), % differing pixels over the larger canvas (the missing rows of a shorter image count as differing), and the first differing row. A `bands(%)` line under each row gives the differing % per `--band-height` rows, so a layout shift shows as everything differing below one row. Diff PNGs go to `--report-dir`. Differences use the review page's pixelmatch comparison (anti-aliasing ignored), not a per-channel tolerance.
 
 ## Gotchas
 
-- **`--baseline-dir` is an output folder.** Baseline PNGs are written into it, overwriting same-named files. Point it at a scratch folder.
+- **`--extract-dir` is an output folder.** Baseline PNGs are written into it, overwriting same-named files. Point it at a scratch folder.
 - **The `--manifest` option no longer exists** in the upstream version.
 - The page loads images by relative path, so keep it next to its `diffs/` and `baseline/` folders.
 - Errors go to stderr and exit with status 1.
