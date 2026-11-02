@@ -6,7 +6,7 @@ A Node.js screenshot reviewer, synced from `plus-reporter`'s `tools/screenshot` 
 
 ```bash
 pixelpilot --help
-pixelpilot --baseline v1.2.0
+pixelpilot --from v1.2.0
 pixelpilot --from v20.0.0 --to v21.1.0
 ```
 
