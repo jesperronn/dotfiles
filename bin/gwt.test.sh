@@ -402,6 +402,101 @@ gwt_test_clear_prompt_line() {
 
 }
 
+gwt_test_make_repo() {
+
+  local repo="$1"
+  mkdir -p "$repo"
+  git init -q "$repo"
+  git -C "$repo" -c user.email=test@test -c user.name=test -c commit.gpgsign=false commit -q --allow-empty -m init
+
+}
+
+# Run the real gwt_apply_delete in a fresh subshell against $1 with selection $2.
+# Remaining args are env assignments (e.g. GWT_ASSUME_FORCE=y). Output goes to
+# $TEST_TMP_DIR/delete.out; the exit status is returned.
+gwt_test_run_real_delete() {
+
+  local repo="$1" sel="$2"
+  shift 2
+  (
+    # shellcheck source=/dev/null
+    source "$(dirname "$0")/gwt"
+    local kv
+    for kv in "$@"; do declare -x "$kv"; done
+    GWT_REPOSITORY_ROOT="$repo"
+    GWT_COLOR_ENABLED=0
+    gwt_apply_delete "$sel"
+  ) >"$TEST_TMP_DIR/delete.out" 2>&1
+
+}
+
+gwt_test_line_path() {
+
+  local got
+
+  got="$(gwt_line_path "/a/b c/d  abc1234 [feat/x]")"
+  test_assert_eq "line_path keeps spaces in path" "/a/b c/d" "$got"
+
+  got="$(gwt_line_path "/a/rb4  c74e1738 (detached HEAD)")"
+  test_assert_eq "line_path handles detached HEAD" "/a/rb4" "$got"
+
+  got="$(gwt_line_path "/a/wt1	branch-a	abc1234")"
+  test_assert_eq "line_path handles tab-separated lines" "/a/wt1" "$got"
+
+}
+
+gwt_test_apply_delete_dirty() {
+
+  local repo="$TEST_TMP_DIR/dirty-repo"
+  gwt_test_make_repo "$repo"
+  git -C "$repo" worktree add -q "$TEST_TMP_DIR/dirty-wt" -b dirty-a
+  echo x >"$TEST_TMP_DIR/dirty-wt/untracked.txt"
+  local sel
+  sel="$TEST_TMP_DIR/dirty-wt	abc1234	[dirty-a]"
+
+  local status=0
+  gwt_test_run_real_delete "$repo" "$sel" GWT_ASSUME_FORCE=n || status=$?
+  test_assert_status "dirty worktree declined exits 1" "1" "$status"
+  test_assert_eq "dirty worktree kept when declined" "1" "$([[ -d "$TEST_TMP_DIR/dirty-wt" ]] && echo 1 || echo 0)"
+
+  status=0
+  gwt_test_run_real_delete "$repo" "$sel" GWT_ASSUME_FORCE=y || status=$?
+  test_assert_status "dirty worktree force-removed exits 0" "0" "$status"
+  test_assert_eq "dirty worktree gone after force" "0" "$([[ -d "$TEST_TMP_DIR/dirty-wt" ]] && echo 1 || echo 0)"
+
+}
+
+gwt_test_apply_delete_locked() {
+
+  local repo="$TEST_TMP_DIR/locked-repo"
+  gwt_test_make_repo "$repo"
+  git -C "$repo" worktree add -q "$TEST_TMP_DIR/locked-wt" -b locked-a
+  git -C "$repo" worktree lock "$TEST_TMP_DIR/locked-wt"
+
+  local status=0
+  gwt_test_run_real_delete "$repo" "$TEST_TMP_DIR/locked-wt	abc1234	[locked-a]" GWT_ASSUME_FORCE=y || status=$?
+  test_assert_status "locked worktree exits 1" "1" "$status"
+  if grep -q "locked" "$TEST_TMP_DIR/delete.out" && grep -q "git worktree unlock" "$TEST_TMP_DIR/delete.out"; then
+    test_pass "locked worktree shows git error and unlock hint"
+  else
+    test_fail "expected locked error and unlock hint" "$(cat "$TEST_TMP_DIR/delete.out")"
+  fi
+
+}
+
+gwt_test_apply_delete_space_path() {
+
+  local repo="$TEST_TMP_DIR/space-repo"
+  gwt_test_make_repo "$repo"
+  git -C "$repo" worktree add -q "$TEST_TMP_DIR/sp ace" -b spaced-a
+
+  local status=0
+  gwt_test_run_real_delete "$repo" "$TEST_TMP_DIR/sp ace  abc1234 [spaced-a]" || status=$?
+  test_assert_status "worktree with space in path exits 0" "0" "$status"
+  test_assert_eq "space-path worktree removed" "0" "$([[ -d "$TEST_TMP_DIR/sp ace" ]] && echo 1 || echo 0)"
+
+}
+
 gwt_test_countdown_navigate() {
 
   gwt_countdown_navigate "/tmp/new-wt"
@@ -426,6 +521,10 @@ main() {
   gwt_test_empty_flow
   gwt_test_fzf_args
   gwt_test_clear_prompt_line
+  gwt_test_line_path
+  gwt_test_apply_delete_dirty
+  gwt_test_apply_delete_locked
+  gwt_test_apply_delete_space_path
   gwt_test_countdown_navigate
 
   printf '%bResults: %s passed, %s failed%s\n' \

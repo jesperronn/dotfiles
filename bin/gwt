@@ -324,18 +324,79 @@ gwt_countdown_navigate() {
 
 # ── Delete worktree(s) ─────────────────────────────────────────────────
 
+# Extract the worktree path from a `git worktree list` line. The path may
+# contain spaces, so strip the trailing "<hash> [branch]" / "<hash> (detached
+# HEAD)" columns instead of taking the first word. Tab-separated lines (path
+# first) are handled too.
+gwt_line_path() {
+  local line="$1"
+
+  if [[ "$line" == *$'\t'* ]]; then
+    printf '%s\n' "${line%%$'\t'*}"
+  elif [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+[0-9a-f]{7,40}[[:space:]]+[\[\(] ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    printf '%s\n' "${line%% *}"
+  fi
+}
+
+# Ask before force-removing a dirty worktree (it deletes untracked files).
+# GWT_ASSUME_FORCE=y|n answers without prompting (used by tests).
+gwt_confirm_force() {
+  local worktree_path="$1"
+  local answer="${GWT_ASSUME_FORCE:-}"
+
+  if [[ -z "$answer" ]]; then
+    printf '%s has modified or untracked files. Force remove? [y/N] ' "$worktree_path" >&2
+    read -r answer </dev/tty 2>/dev/null || answer=""
+  fi
+
+  [[ "$answer" == "y" || "$answer" == "Y" ]]
+}
+
+# Remove one worktree; prints git's own error and returns 1 on failure.
+gwt_remove_one() {
+  local worktree_path="$1"
+  local err=""
+
+  if err="$(git -C "$GWT_REPOSITORY_ROOT" worktree remove "$worktree_path" 2>&1)"; then
+    return 0
+  fi
+
+  if [[ "$err" == *"modified or untracked files"* ]]; then
+    if gwt_confirm_force "$worktree_path"; then
+      gwt_dim "git worktree remove --force ${worktree_path}"
+      if err="$(git -C "$GWT_REPOSITORY_ROOT" worktree remove --force "$worktree_path" 2>&1)"; then
+        return 0
+      fi
+    else
+      gwt_warn "Skipped (dirty worktree): $worktree_path"
+      return 1
+    fi
+  fi
+
+  gwt_error "Failed to remove worktree: $worktree_path"
+  while IFS= read -r err_line; do
+    gwt_warn "  $err_line"
+  done <<< "$err"
+  if [[ "$err" == *"locked"* ]]; then
+    gwt_warn "  Unlock it first: git worktree unlock \"$worktree_path\""
+  fi
+  return 1
+}
+
 gwt_apply_delete() {
   local selected_lines="$1"
   local worktree_path=""
   local removed=0
   local failed=0
 
-  # Each line has the format "path\tbranch\tHEAD"; remove every selected one.
+  # Remove every selected worktree line.
   local line
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
 
-    worktree_path="$(echo "$line" | awk '{print $1}')"
+    worktree_path="$(gwt_line_path "$line")"
 
     if [[ -z "$worktree_path" ]]; then
       gwt_error "Could not parse worktree path from: $line"
@@ -344,10 +405,9 @@ gwt_apply_delete() {
     fi
 
     gwt_dim "git worktree remove ${worktree_path}"
-    if git -C "$GWT_REPOSITORY_ROOT" worktree remove "$worktree_path" 2>/dev/null; then
+    if gwt_remove_one "$worktree_path"; then
       removed=$((removed + 1))
     else
-      gwt_error "Failed to remove worktree: $worktree_path"
       failed=$((failed + 1))
     fi
   done <<< "$selected_lines"
