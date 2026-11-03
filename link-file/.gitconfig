@@ -49,12 +49,15 @@
   lss = log --pretty=\"%C(green)%h %C(cyan)%<(7,trunc)%cr%C(reset)%C(magenta)%C(bold)%<|(-44,trunc)% s%C(reset)%C(cyan)%C(dim)%<(13,trunc)% aN%C(blue)% G? %>|(-1)% ai%C(reset)%C(auto)%+d%C(reset) %C(red)%+b%C(reset)\" --abbrev-commit --decorate=short
   logsince  = log --pretty='* %s' --reverse
   logsinceh = log --pretty='%C(dim)%h%C(reset) %s' --reverse
+  # local branch names on commits in a range, one per line (no "HEAD ->"), for e.g. `git refsince master.. | xargs git push --force-with-lease origin`
+  refsince = !git log --decorate-refs=refs/heads/ --pretty='%(decorate:prefix=,suffix=,tag=,pointer=,separator=%x0A)'
   # stats shorcuts fra https://gist.github.com/hofmannsven/6814278
   stats      = log -10 --dirstat=files,1,cumulative --ignore-blank-lines --abbrev-commit --oneline --graph --decorate
   rebasesign = rebase --exec 'git commit --amend --no-edit -n -S'
   sign       = commit --amend --no-edit -S
   # clean/remove merged branches
-  gone       = !git branch -v | grep gone | awk '{print $1}'
+  # Prints bare branch names (no +/* markers) whose upstream is gone; worktree branches included so branch -D fails until the worktree is removed
+  gone       = !git for-each-ref --format='%(upstream:track) %(refname:short)' refs/heads | awk '$1 ~ /gone/ {print $2}'
   # check-whitespace usage:
   # git check-whitespace | grep trailing | cut -d: -f1 | uniq -u -z | xargs -0 sed --in-place -e 's/[ \t]+$//'
   # from https://stackoverflow.com/a/40371757/109305
