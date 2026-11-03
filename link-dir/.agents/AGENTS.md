@@ -6,6 +6,7 @@ Detail lives in `~/.agents/notes/` — open a linked note only when it applies.
 
 - Conventional commits: `type(scope): subject`.
 - Do not add `Co-authored-by:` trailers.
+- Never record test/verification results in commit messages (no "Verified: …", "tests pass", example counts). The message says what changed and why.
 - `git diff`/`log`/`show` → always `git --no-pager …` or `GIT_PAGER= git …` to avoid hanging output → `~/.agents/notes/git-pager.md`
 
 
