@@ -9,8 +9,8 @@ $git_branch\
 $git_state\
 $git_status\
 $cmd_duration\
-$line_break\
 $status\
+$line_break\
 $character"""
 
 # Replace the '❯' symbol in the prompt with something else

@@ -23,8 +23,9 @@ export HISTFILESIZE=200000
 
 # Write each command to the history file immediately instead of only on a
 # clean shell exit, so a crash / force-quit / kill doesn't lose the session.
+# Appended (not prepended) so starship_precmd runs first and still sees $?.
 if [[ -n "$PROMPT_COMMAND" ]]; then
-  PROMPT_COMMAND="history -a; $PROMPT_COMMAND"
+  PROMPT_COMMAND="$PROMPT_COMMAND; history -a"
 else
   PROMPT_COMMAND="history -a"
 fi
