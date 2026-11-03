@@ -10,9 +10,13 @@ source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
 TEST_TMP_DIR=""
 
+cleanup_test_tmp() {
+  rm -rf "$TEST_TMP_DIR"
+}
+
 setup_tmpdir() {
   TEST_TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+  trap 'cleanup_test_tmp' EXIT
 }
 
 test_link_phase_skips_temporary_link_file_artifacts() {
@@ -131,6 +135,29 @@ test_link_phase_replaces_old_parent_symlink_even_when_file_target_matches() {
   if [[ ! -L "$home_dir/.cave/agent/models.json" ]]; then
     test_fail "matching nested file is relinked under real parent dir" "Missing symlink at [$home_dir/.cave/agent/models.json]"
   fi
+}
+
+test_link_phase_links_symlinked_instruction_file() {
+  local home_dir="$TEST_TMP_DIR/home-instructions"
+  local repo_root="$home_dir/src/dotfiles"
+  local output=""
+  local status=0
+
+  mkdir -p "$repo_root/bin" "$repo_root/link-file/.codex" "$repo_root/link-dir/.agents" "$repo_root/copy" "$repo_root/init"
+  cp "$DOTFILES_BIN" "$repo_root/bin/dotfiles"
+  printf 'shared instructions\n' >"$repo_root/link-dir/.agents/AGENTS.md"
+  ln -s ../../link-dir/.agents/AGENTS.md "$repo_root/link-file/.codex/AGENTS.md"
+  ln -s "$repo_root/link-dir/.agents" "$repo_root/link-file/.codex/directory"
+  ln -s missing "$repo_root/link-file/.codex/broken"
+
+  capture_command output status env HOME="$home_dir" bash "$repo_root/bin/dotfiles" --link
+
+  assert_status "0" "$status" "dotfiles --link accepts symlinked files"
+  assert_contains "$output" "Linking ~/.codex/AGENTS.md." "symlinked instructions are installed"
+  assert_eq "$repo_root/link-file/.codex/AGENTS.md" "$(readlink "$home_dir/.codex/AGENTS.md")" "Codex instructions link through the managed file"
+  assert_eq "$(cat "$home_dir/.agents/AGENTS.md")" "$(cat "$home_dir/.codex/AGENTS.md")" "Codex reads the shared instructions"
+  assert_not_contains "$output" "Linking ~/.codex/directory." "directory symlinks are skipped"
+  assert_not_contains "$output" "Linking ~/.codex/broken." "broken symlinks are skipped"
 }
 
 setup_tmpdir

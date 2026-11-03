@@ -1,0 +1,1 @@
+../../link-dir/.agents/AGENTS.md

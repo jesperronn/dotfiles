@@ -443,8 +443,8 @@ function link_file_is_managed() {
   return 0
 }
 function link_file_files() {
-  find "$DOTFILES/link-file" -type f | while IFS= read -r path; do
-    if link_file_is_managed "$path"; then
+  find "$DOTFILES/link-file" \( -type f -o -type l \) | while IFS= read -r path; do
+    if [[ -f "$path" ]] && link_file_is_managed "$path"; then
       printf '%s\n' "$path"
     fi
   done | sort
