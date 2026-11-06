@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# bbapprove — wrapper: runs ~/src/bbapprove with the Bitbucket token from 1Password; passes all flags through.
+# bbapprove — wrapper: runs ~/src/bbapprove with the BITBUCKET_TOKEN_JRJ token from 1Password; passes all flags through.
 
 set -euo pipefail
 
@@ -11,10 +11,8 @@ if [[ ! -x "$BBAPPROVE_BIN" ]]; then
   exit 127
 fi
 
-# A caller-supplied token wins; otherwise fetch it from 1Password.
-if [[ -z "${BBAPPROVE_TOKEN:-}" ]]; then
-  BBAPPROVE_TOKEN="$(op item get BITBUCKET_TOKEN_JRJ --fields label=token --reveal)"
-fi
+# Always use the BITBUCKET_TOKEN_JRJ token from 1Password (ignores any preset BBAPPROVE_TOKEN).
+BBAPPROVE_TOKEN="$(op item get BITBUCKET_TOKEN_JRJ --fields label=token --reveal)"
 export BBAPPROVE_TOKEN
 
 exec "$BBAPPROVE_BIN" "$@"

@@ -41,11 +41,11 @@ test_fetches_token_and_passes_flags() {
   cleanup_test_tmp; TEST_TMP=""
 }
 
-test_existing_token_skips_op() {
+test_preset_token_is_ignored() {
   setup_stubs
-  local out; out="$(BBAPPROVE_TOKEN=given run_wrapper)"
-  assert_eq "$out" "token=given args=" "caller token wins"
-  assert_eq "$(cat "$STUB_OP_LOG")" "" "op not called when token preset"
+  local out; out="$(BBAPPROVE_TOKEN=other run_wrapper)"
+  assert_eq "$out" "token=op-token args=" "always uses the 1Password token"
+  assert_contains "$(cat "$STUB_OP_LOG")" "BITBUCKET_TOKEN_JRJ" "op called even with preset token"
   cleanup_test_tmp; TEST_TMP=""
 }
 
