@@ -932,4 +932,51 @@ test_fix_force_recreates_low_memory_machine() {
   assert_status "0" "$FIXTURE8_STATUS" "podman_troubleshoot --fix --force completes successfully with a low-memory machine"
 }
 
+run_fixture_vm_aaaa() {
+  local mode="$1"
+  local work_dir="" stub_dir=""
+
+  work_dir="$(mktemp -d)"
+  stub_dir="$work_dir/stub-bin"
+  make_stub_dir "$stub_dir"
+  mkdir -p "$work_dir/home" "$work_dir/podman"
+
+  setup_basic_podman_stub "$stub_dir"
+  setup_common_stubs "$stub_dir"
+  setup_basic_jq_stub "$stub_dir"
+  if [[ "$mode" == "broken" ]]; then
+    # Wrap the stub: VM commands that query AAAA fail (gvproxy SERVFAIL).
+    mv "$stub_dir/podman" "$stub_dir/podman.real"
+    write_stub "$stub_dir/podman" '
+if [[ "${1:-}" == machine && "${2:-}" == ssh && "${3:-}" == *AAAA* ]]; then exit 1; fi
+exec "$(dirname "$0")/podman.real" "$@"
+'
+  fi
+  write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
+
+  capture_command VMAAAA_OUTPUT VMAAAA_STATUS env \
+    NO_COLOR=1 \
+    HOME="$work_dir/home" \
+    TMPDIR="$work_dir" \
+    PATH="$stub_dir:$PATH" \
+    PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
+    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
+    bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
+
+  rm -rf "$work_dir"
+}
+
+test_vm_aaaa_failure_is_reported_with_gvproxy_hint() {
+  run_fixture_vm_aaaa broken
+  assert_contains "$VMAAAA_OUTPUT" "[TROUBLESHOOT] VM resolver fails AAAA queries" "AAAA failure is surfaced as a troubleshooting issue"
+  assert_contains "$VMAAAA_OUTPUT" "GODEBUG" "hint names the GODEBUG netdns cause"
+}
+
+test_vm_aaaa_success_is_reported_ok() {
+  run_fixture_vm_aaaa healthy
+  assert_contains "$VMAAAA_OUTPUT" "[OK] VM resolver answers AAAA queries" "healthy AAAA is reported ok"
+  assert_not_contains "$VMAAAA_OUTPUT" "VM resolver fails AAAA" "healthy AAAA raises no issue"
+}
+
 run_tests "$@"

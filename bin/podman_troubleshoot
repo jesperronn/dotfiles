@@ -170,19 +170,21 @@ capture_command() {
   local status_var="$2"
   shift 2
 
-  local output_file
-  local status=0
-  output_file="$(mktemp)"
+  # Locals use a cmd_ prefix: printf -v writes through the caller's variable
+  # name, so a local named like the caller's (e.g. "status") would shadow it.
+  local cmd_output_file
+  local cmd_status=0
+  cmd_output_file="$(mktemp)"
 
-  if "$@" >"$output_file" 2>&1; then
-    status=0
+  if "$@" >"$cmd_output_file" 2>&1; then
+    cmd_status=0
   else
-    status=$?
+    cmd_status=$?
   fi
 
-  printf -v "$output_var" '%s' "$(<"$output_file")"
-  rm -f "$output_file"
-  printf -v "$status_var" '%s' "$status"
+  printf -v "$output_var" '%s' "$(<"$cmd_output_file")"
+  rm -f "$cmd_output_file"
+  printf -v "$status_var" '%s' "$cmd_status"
 }
 
 capture_command_with_timeout() {
@@ -191,15 +193,15 @@ capture_command_with_timeout() {
   local timeout_seconds="$3"
   shift 3
 
-  local output_file
+  local cmd_output_file
   local cmd_pid=0
   local killer_pid=0
-  local status=0
+  local cmd_status=0
   local start_epoch=0
 
-  output_file="$(mktemp)"
+  cmd_output_file="$(mktemp)"
 
-  "$@" >"$output_file" 2>&1 &
+  "$@" >"$cmd_output_file" 2>&1 &
   cmd_pid=$!
   start_epoch="$EPOCHSECONDS"
 
@@ -216,29 +218,29 @@ capture_command_with_timeout() {
   # Wait for command to complete; if it's still running after timeout,
   # the killer process will terminate it
   if wait "$cmd_pid" 2>/dev/null; then
-    status=0
+    cmd_status=0
   else
-    status=$?
+    cmd_status=$?
   fi
 
   # Kill the timeout killer if command finished before timeout
   kill "$killer_pid" 2>/dev/null || true
   wait "$killer_pid" 2>/dev/null || true
 
-  # Check if we timed out (status 143 = SIGTERM)
+  # Check if we timed out (cmd_status 143 = SIGTERM)
   local elapsed=$((EPOCHSECONDS - start_epoch))
-  if (( status == 143 || (status == 0 && elapsed >= timeout_seconds) )); then
-    printf -v "$output_var" '%s' "$(<"$output_file")"$'\n'"timed out after ${timeout_seconds}s"
+  if (( cmd_status == 143 || (cmd_status == 0 && elapsed >= timeout_seconds) )); then
+    printf -v "$output_var" '%s' "$(<"$cmd_output_file")"$'\n'"timed out after ${timeout_seconds}s"
     printf -v "$status_var" '%s' "124"
   else
     if [[ "$VERBOSE_MODE" == "1" ]] && (( elapsed > 0 )); then
       log_verbose "completed in ${elapsed}s"
     fi
-    printf -v "$output_var" '%s' "$(<"$output_file")"
-    printf -v "$status_var" '%s' "$status"
+    printf -v "$output_var" '%s' "$(<"$cmd_output_file")"
+    printf -v "$status_var" '%s' "$cmd_status"
   fi
 
-  rm -f "$output_file"
+  rm -f "$cmd_output_file"
 }
 
 run_check() {
@@ -1575,6 +1577,15 @@ check_vm_dns_and_registry() {
     "VM could not reach registry-1.docker.io" \
     "run: podman machine ssh 'curl -I --max-time 15 https://registry-1.docker.io/v2/'" \
     podman machine ssh 'curl -I --max-time 15 https://registry-1.docker.io/v2/'
+
+  # Alpine/musl resolvers query A and AAAA together; a SERVFAIL or timeout on
+  # AAAA alone breaks `apk` while A-only checks above still pass.
+  run_check \
+    "VM resolver answers AAAA queries for registry-1.docker.io" \
+    "troubleshoot" \
+    "VM resolver fails AAAA queries (gvproxy DNS); Alpine apk/wget will fail to resolve hosts" \
+    "unset GODEBUG (netdns=go breaks gvproxy AAAA), then: podman machine stop && podman machine start; verify: podman machine ssh 'dig +time=3 +tries=1 AAAA registry-1.docker.io'" \
+    podman machine ssh 'dig +time=3 +tries=1 AAAA registry-1.docker.io | grep -q "status: NOERROR"'
 }
 
 check_container_https_egress() {
