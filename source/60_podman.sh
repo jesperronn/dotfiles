@@ -82,7 +82,6 @@ podman_allow_port_389() {
 }
 export REGISTRY_AUTH_FILE="${HOME}/.docker/config.json"
 export PODMAN_PULL_PARALLEL=5
-export GODEBUG=netdns=go
 
 podman-default-machine-name() {
     podman_default_machine_name "$@"
