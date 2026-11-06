@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+# bbapprove — wrapper: runs ~/src/bbapprove with the Bitbucket token from 1Password; passes all flags through.
+
+set -euo pipefail
+
+BBAPPROVE_BIN="${BBAPPROVE_BIN:-$HOME/src/bbapprove/bin/bbapprove}"
+
+if [[ ! -x "$BBAPPROVE_BIN" ]]; then
+  printf 'bbapprove: not found or not executable: %s\n' "$BBAPPROVE_BIN" >&2
+  exit 127
+fi
+
+# A caller-supplied token wins; otherwise fetch it from 1Password.
+if [[ -z "${BBAPPROVE_TOKEN:-}" ]]; then
+  BBAPPROVE_TOKEN="$(op item get BITBUCKET_TOKEN_JRJ --fields label=token --reveal)"
+fi
+export BBAPPROVE_TOKEN
+
+exec "$BBAPPROVE_BIN" "$@"
