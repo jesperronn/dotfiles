@@ -11,6 +11,13 @@ if [[ ! -x "$BBAPPROVE_BIN" ]]; then
   exit 127
 fi
 
+# Help needs no token: skip 1Password entirely.
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) exec "$BBAPPROVE_BIN" "$@" ;;
+  esac
+done
+
 # Always use the BITBUCKET_TOKEN_JRJ token from 1Password (ignores any preset BBAPPROVE_TOKEN).
 BBAPPROVE_TOKEN="$(op item get BITBUCKET_TOKEN_JRJ --fields label=token --reveal)"
 export BBAPPROVE_TOKEN
