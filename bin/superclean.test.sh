@@ -893,4 +893,22 @@ test_access_helpers() {
   unset TERM_PROGRAM
 }
 
+test_brew_bin_resolution() {
+  local tmp_root
+  tmp_root=$(mktemp -d)
+  printf '#!/bin/sh\n' >"$tmp_root/wrapper"
+  chmod +x "$tmp_root/wrapper"
+  mkdir -p "$tmp_root/path"
+  printf '#!/bin/sh\n' >"$tmp_root/path/brew"
+  chmod +x "$tmp_root/path/brew"
+
+  assert_eq "$tmp_root/wrapper" "$(HOMEBREW_FORCE_BREW_WRAPPER="$tmp_root/wrapper" PATH="$tmp_root/path:$PATH" superclean_brew_bin)" "uses workbrew wrapper when advertised"
+  if [[ ! -x /opt/workbrew/bin/brew ]]; then
+    assert_eq "$tmp_root/path/brew" "$(HOMEBREW_FORCE_BREW_WRAPPER="" PATH="$tmp_root/path:$PATH" superclean_brew_bin)" "falls back to brew on PATH"
+  else
+    test_pass "workbrew present on host; PATH fallback not asserted"
+  fi
+  rm -rf "$tmp_root"
+}
+
 run_tests "$@"

@@ -1716,15 +1716,30 @@ superclean_go_cleanup_estimate_kb() {
   superclean_sum_paths_kb "$gocache" "$gomodcache"
 }
 
-superclean_brew_cleanup_estimate_kb() {
-  local brew_cache
+# Resolve the brew executable. Workbrew (MDM-managed Homebrew) refuses to run
+# unless invoked through its own wrapper, so prefer the wrapper it advertises
+# via HOMEBREW_FORCE_BREW_WRAPPER, then /opt/workbrew/bin/brew, then PATH.
+superclean_brew_bin() {
+  local candidate
+  for candidate in "${HOMEBREW_FORCE_BREW_WRAPPER:-}" /opt/workbrew/bin/brew; do
+    if [[ -n "$candidate" && -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  command -v brew 2>/dev/null
+}
 
-  command -v brew >/dev/null 2>&1 || {
+superclean_brew_cleanup_estimate_kb() {
+  local brew_cache brew_bin
+
+  brew_bin=$(superclean_brew_bin) || brew_bin=""
+  [[ -n "$brew_bin" ]] || {
     echo 0
     return 0
   }
 
-  brew_cache=$(brew --cache 2>/dev/null || true)
+  brew_cache=$("$brew_bin" --cache 2>/dev/null || true)
   superclean_sum_paths_kb "$brew_cache"
 }
 
@@ -2218,7 +2233,7 @@ superclean_plan_runtime_caches() {
     superclean_log "  - go clean -cache -modcache$(superclean_format_estimate_suffix "$estimate_kb")"
   fi
 
-  if superclean_group_enabled brew && command -v brew >/dev/null 2>&1; then
+  if superclean_group_enabled brew && [[ -n "$(superclean_brew_bin)" ]]; then
     estimate_kb=$(superclean_brew_cleanup_estimate_kb)
     SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB=$(( SUPER_CLEAN_TOTAL_COMMAND_ESTIMATE_KB + estimate_kb ))
     superclean_log "  - brew cleanup -s$(superclean_format_estimate_suffix "$estimate_kb")"
@@ -2238,7 +2253,13 @@ superclean_apply_runtime_caches() {
     superclean_maybe_run_tool_cleanup go "Cleaning Go build and module caches" go clean -cache -modcache
   fi
   if superclean_group_enabled brew; then
-    superclean_maybe_run_tool_cleanup brew "Cleaning Homebrew caches" brew cleanup -s
+    local brew_bin
+    brew_bin=$(superclean_brew_bin) || brew_bin=""
+    if [[ -n "$brew_bin" ]]; then
+      superclean_run_command "Cleaning Homebrew caches" "$brew_bin" cleanup -s
+    else
+      superclean_verbose "Skipping unavailable tool: brew"
+    fi
   fi
 }
 
