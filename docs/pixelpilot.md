@@ -17,7 +17,7 @@ Run it from the root of the project being reviewed. See `pixelpilot --help` for 
 | `--from` | `HEAD` | Git ref the baseline PNGs are read from. |
 | `--from-dir` | none | Plain folder of baseline PNGs instead of a git ref (exclusive with `--from`). No git extraction, `git describe`, dirty badge or tag needed; headings default to the folder paths. |
 | `--to` | none | Git ref for the current side (exclusive with `--to-dir`). |
-| `--to-dir` | `tmp/screenshot-output` if it exists, else `--path` | On-disk folder with the current PNGs (exclusive with `--to`). |
+| `--to-dir` | `tmp/screenshot-output` if it has PNGs, else `--path` | On-disk folder with the current PNGs (exclusive with `--to`). |
 | `--path` | `doc/screenshots` | Repo-relative folder holding the PNGs inside a ref; also the default `--to-dir`. |
 | `--from-path`, `--to-path` | `--path` | `--path` for one side only, for when the screenshots moved between refs. |
 | `--from-label`, `--to-label` | git describe | Heading text for each side. |

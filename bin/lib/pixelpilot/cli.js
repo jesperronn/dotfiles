@@ -45,7 +45,7 @@ Sides (a side is either a git ref or an on-disk directory, never both):
                                 (config: currentRef)
   --to-dir <dir>                on-disk folder of current PNGs
                                 (config: currentDir, default: tmp/screenshot-output
-                                if it exists, else --path)
+                                if it has PNGs, else --path)
   --path <dir>                  repo-relative folder holding the PNGs inside a ref;
                                 also the default --to-dir
                                 (config: screenshotsDir, default: doc/screenshots)
@@ -291,6 +291,14 @@ function parseArgs(argv, { config = loadConfigFile() } = {}) {
 const DEFAULT_SCREENSHOTS_DIR = path.join("doc", "screenshots");
 const DEFAULT_CAPTURE_DIR = path.join("tmp", "screenshot-output");
 
+function hasPngs(dir) {
+	try {
+		return fs.readdirSync(dir).some((file) => file.endsWith(".png"));
+	} catch {
+		return false;
+	}
+}
+
 function applyDefaults(options) {
 	const resolved = { ...options };
 
@@ -301,9 +309,9 @@ function applyDefaults(options) {
 		resolved.currentScreenshotsDir = resolved.screenshotsDir;
 	}
 	if (!resolved.currentDir && !resolved.currentRef) {
-		// The capture dir wins when a capture step produced one; otherwise
-		// compare the baseline against the files on disk at --path.
-		resolved.currentDir = fs.existsSync(DEFAULT_CAPTURE_DIR)
+		// The capture dir wins when a capture step left PNGs in it; an absent
+		// or empty one falls through to the files on disk at --path.
+		resolved.currentDir = hasPngs(DEFAULT_CAPTURE_DIR)
 			? DEFAULT_CAPTURE_DIR
 			: resolved.currentScreenshotsDir;
 	}

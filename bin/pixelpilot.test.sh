@@ -297,7 +297,24 @@ test_fails_when_a_side_has_no_screenshots() {
   assert_not_status "0" "$status" "report mode also fails on an empty --from folder"
 }
 
+test_empty_capture_dir_falls_back_to_path() {
+  local repo="$TEST_TMP_DIR/emptycapture"
+  local output=""
+  local status=0
+  setup_git_screenshots "$repo" screenshots
+  mkdir -p "$repo/tmp/screenshot-output"
+
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --report --from v1 --path screenshots --report-dir rep </dev/null"
+  assert_status "0" "$status" "an empty tmp/screenshot-output falls back to --path on disk"
+  assert_contains "$output" "20x60" "report reads the current side from --path"
+
+  make_png "$repo/tmp/screenshot-output/01-home.png" 20 80 ff0000
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --report --from v1 --path screenshots --report-dir rep </dev/null"
+  assert_contains "$output" "20x80" "a capture dir with PNGs still wins over --path"
+}
+
 test_help_prints_usage
+test_empty_capture_dir_falls_back_to_path
 test_fails_when_a_side_has_no_screenshots
 test_slim_images_are_not_upscaled
 test_zoom_levels_include_zoom_out
