@@ -258,8 +258,20 @@ test_slim_images_are_not_upscaled() {
   assert_eq "0.625 0.625 1.066 1.000" "$scales" "scale fits width for normal/long images and caps slim ones"
 }
 
+test_zoom_levels_include_zoom_out() {
+  local repo="$TEST_TMP_DIR/zoomlevels"
+  local html=""
+  setup_folder_pair "$repo"
+  (cd "$repo" && "$PIXELPILOT_BIN" --from-dir orig --to-dir dev --output-html out/index.html </dev/null >/dev/null 2>&1)
+  html="$(cat "$repo/out/index.html")"
+  assert_contains "$html" "const ZOOM_LEVELS = [0.5, 1, 2, 4, 8];" "zoom levels include 0.5x and 1x"
+  assert_contains "$html" 'scale < 1 ? "50% 0%"' "zoomed-out view anchors at the top centre"
+  assert_contains "$html" "0.5× / 1× / 2× / 4× / 8×" "help lists the zoom levels"
+}
+
 test_help_prints_usage
 test_slim_images_are_not_upscaled
+test_zoom_levels_include_zoom_out
 test_help_is_colorized_on_demand
 test_unknown_option_fails
 test_wrapper_reviews_git_baseline

@@ -10,7 +10,9 @@
 	// baked into the stored value. See applyViewState(), the single function
 	// that reconciles all of this onto the DOM after every navigation and
 	// every intent change.
-	const ZOOM_LEVELS = [2, 4, 8];
+	// Zoom is relative to the base display scale (see applyImageSizing), so 1x is
+	// the sized-to-fit view and 0.5x zooms out from it.
+	const ZOOM_LEVELS = [0.5, 1, 2, 4, 8];
 	const ZOOM_STEP = 10;
 	const ZOOM_STEP_LARGE = 30;
 
@@ -145,7 +147,9 @@
 		if (instant) layer.style.transition = "none";
 		const { active, scale, x, y } = state.zoom;
 		if (active) {
-			layer.style.transformOrigin = `${x}% ${y}%`;
+			// Zooming out anchors at the top centre; following the cursor
+			// would slide the shrunken image around the pane.
+			layer.style.transformOrigin = scale < 1 ? "50% 0%" : `${x}% ${y}%`;
 			layer.style.transform = `scale(${scale})`;
 			layer.classList.toggle("pixelated", scale >= 4);
 		} else {
@@ -1331,7 +1335,7 @@
               <tr><td><kbd>m</kbd></td><td>Toggle sidebar menu</td></tr>
               <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Jump to screenshot</td></tr>
               <tr><td><kbd>z</kbd></td><td>Toggle zoom (2×), centred on cursor</td></tr>
-              <tr><td><kbd>+</kbd> / <kbd>-</kbd></td><td>Zoom step: 2× / 4× / 8×</td></tr>
+              <tr><td><kbd>+</kbd> / <kbd>-</kbd></td><td>Zoom step: 0.5× / 1× / 2× / 4× / 8× (<kbd>-</kbd> also zooms out from normal view)</td></tr>
               <tr><td><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></td><td>Pan while zoomed (Shift = bigger step)</td></tr>
               <tr><td><kbd>0</kbd> or <kbd>Esc</kbd></td><td>Reset zoom</td></tr>
               <tr><td><kbd>Esc</kbd></td><td>Close this help</td></tr>
@@ -1394,9 +1398,17 @@
 		) {
 			e.preventDefault();
 			stepZoom(1);
-		} else if (!state.helpVisible && state.zoom.active && e.key === "-") {
+		} else if (!state.helpVisible && e.key === "-") {
 			e.preventDefault();
-			stepZoom(-1);
+			if (state.zoom.active) {
+				stepZoom(-1);
+			} else {
+				// Not zoomed yet: "-" goes straight to the zoomed-out level.
+				activateZoom();
+				state.zoom.scale = ZOOM_LEVELS[0];
+				applyZoomState();
+				persistZoom();
+			}
 		} else if (!state.helpVisible && state.zoom.active && e.key === "0") {
 			e.preventDefault();
 			deactivateZoom();
