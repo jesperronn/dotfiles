@@ -649,6 +649,38 @@
 		updateDiffViewModeButtons();
 		updateFallbackButton();
 		applyZoomState();
+		applyImageSizing();
+	}
+
+	// Base display scale for a screenshot of w x h CSS px in a pane paneW wide
+	// with availH of vertical room. Fitting the pane width is the normal rule
+	// (wide and very tall images alike); a slim image is capped so it is never
+	// upscaled past natural size, or past what fits the viewport height if
+	// that is larger. min(fitWidth, max(1, fitHeight)) can only shrink the
+	// fit-width scale, so normal and very long images are unchanged.
+	function computeImageScale(w, h, paneW, availH) {
+		return Math.min(paneW / w, Math.max(1, availH / h));
+	}
+
+	// Caps the width of both panes' image area (via --canvas-max, see
+	// .pane-image in the CSS) so a slim screenshot renders sharp instead of
+	// being stretched to the pane width. Both panes get the same cap, derived
+	// from the shared canvas, so baseline/current/diff layers stay aligned.
+	function applyImageSizing() {
+		const scenario = effectiveScenario(state.currentScenario);
+		const panes = document.querySelectorAll(".pane-image");
+		if (!scenario || !panes.length) return;
+		const w = scenario.diff_width || scenario.current_width || scenario.baseline_width;
+		const h = scenario.diff_height || scenario.current_height || scenario.baseline_height;
+		if (!w || !h) return;
+		const paneBox = panes[0].parentElement;
+		const paneW = paneBox.clientWidth;
+		const top = paneBox.getBoundingClientRect().top + window.scrollY;
+		const availH = Math.max(300, window.innerHeight - top);
+		const maxWidth = Math.round(w * computeImageScale(w, h, paneW, availH));
+		panes.forEach((pane) => {
+			pane.style.setProperty("--canvas-max", `${maxWidth}px`);
+		});
 	}
 
 	function updateView() {
@@ -1533,6 +1565,7 @@
 			.getElementById("viewerContent")
 			.addEventListener("wheel", handleWheel, { passive: false });
 		window.addEventListener("hashchange", selectFromHash);
+		window.addEventListener("resize", applyImageSizing);
 
 		if (MANIFEST.scenarios.length > 0) {
 			selectFromHash();

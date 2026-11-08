@@ -232,7 +232,34 @@ test_help_is_colorized_on_demand() {
   assert_not_contains "$output" "${esc}[" "NO_COLOR disables color"
 }
 
+test_slim_images_are_not_upscaled() {
+  local repo="$TEST_TMP_DIR/slim"
+  local html=""
+  local scales=""
+  rm -rf "$repo"
+  mkdir -p "$repo/orig" "$repo/dev"
+  make_png "$repo/orig/01-slim.png" 39 146 ffffff
+  make_png "$repo/dev/01-slim.png" 39 140 000000
+  git -C "$repo" init -q
+  (cd "$repo" && "$PIXELPILOT_BIN" --from-dir orig --to-dir dev --output-html out/index.html </dev/null >/dev/null 2>&1)
+  html="$(cat "$repo/out/index.html")"
+  assert_contains "$html" "max-width: var(--canvas-max, 100%)" "pane image area is capped by --canvas-max"
+  assert_contains "$html" "function applyImageSizing" "page computes the image sizing"
+
+  # min(fitWidth, max(1, fitHeight)): normal, very long and slim images
+  scales="$(node -e '
+    const src = require("node:fs").readFileSync(process.argv[1], "utf8");
+    const fn = src.match(/function computeImageScale[\s\S]*?\n\t}\n/)[0];
+    const compute = new Function(fn + "; return computeImageScale;")();
+    // [w, h, paneW, availH]
+    console.log([[1280, 800, 800, 900], [1280, 6000, 800, 900], [390, 844, 800, 900], [390, 1463, 800, 900]]
+      .map((a) => compute(...a).toFixed(3)).join(" "));
+  ' "$ROOT/bin/lib/pixelpilot/review-page.js")"
+  assert_eq "0.625 0.625 1.066 1.000" "$scales" "scale fits width for normal/long images and caps slim ones"
+}
+
 test_help_prints_usage
+test_slim_images_are_not_upscaled
 test_help_is_colorized_on_demand
 test_unknown_option_fails
 test_wrapper_reviews_git_baseline

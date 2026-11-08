@@ -832,8 +832,14 @@ function renderReviewHtml({
       border-color: var(--color-border);
     }
 
+    /* --canvas-max (set per scenario by applyImageSizing in review-page.js)
+       caps the image area so slim screenshots are not upscaled to the pane
+       width; it is centred when narrower than the pane. Unset = fill. */
     .pane-image {
       flex: 1;
+      width: 100%;
+      max-width: var(--canvas-max, 100%);
+      align-self: center;
       overflow: auto;
       position: relative;
       display: flex;
