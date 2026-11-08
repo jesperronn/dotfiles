@@ -492,6 +492,54 @@ function fileMtimeIso(filePath) {
 	return fs.statSync(filePath).mtime.toISOString();
 }
 
+// Directories (repo-relative) that hold PNGs at a git ref, for the hint shown
+// when --path points at the wrong place.
+function pngDirsAtRef(ref) {
+	try {
+		const output = execFileSync(
+			"git",
+			["ls-tree", "-r", "--name-only", ref],
+			{ encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], maxBuffer: 50 * 1024 * 1024 }
+		);
+		return Array.from(
+			new Set(
+				output
+					.split("\n")
+					.filter((file) => file.endsWith(".png"))
+					.map((file) => path.dirname(file))
+			)
+		).sort();
+	} catch {
+		return [];
+	}
+}
+
+// A side with no screenshots would produce an empty review that looks like a
+// pass, so it is an error. `side` is "from" or "to"; `ref` is set when the
+// side was read from git.
+function requirePngs(files, side, where, ref) {
+	if (files.length) return files;
+	let message = `No screenshots (PNGs) found for --${side} in ${where}.`;
+	if (ref) {
+		const dirs = pngDirsAtRef(ref);
+		message += dirs.length
+			? ` ${ref} has PNGs in: ${dirs.join(", ")}. Pass --path <dir> (or --${side}-path) to pick one.`
+			: ` ${ref} has no PNGs; check the ref.`;
+	} else {
+		message += ` Check the folder, or use --path / --${side}-dir.`;
+	}
+	throw new Error(message);
+}
+
+function pngFilesIn(dir, side) {
+	if (!fs.existsSync(dir)) {
+		throw new Error(
+			`No screenshots (PNGs) found for --${side}: folder ${dir} does not exist. Check the folder, or use --path / --${side}-dir.`
+		);
+	}
+	return pngFiles(dir);
+}
+
 function pngFiles(dir) {
 	return fs
 		.readdirSync(dir)
@@ -741,10 +789,15 @@ function buildManifest(inputOptions) {
 				`current scratch dir must not be ${options.currentScreenshotsDir}: that directory is the tracked source.`
 			);
 		}
-		extractBaselineFromGit(
-			currentRef,
-			currentExtractDir,
-			options.currentScreenshotsDir
+		requirePngs(
+			extractBaselineFromGit(
+				currentRef,
+				currentExtractDir,
+				options.currentScreenshotsDir
+			),
+			"to",
+			`${currentRef}:${options.currentScreenshotsDir}`,
+			currentRef
 		);
 		options = { ...options, currentDir: currentExtractDir };
 	}
@@ -764,13 +817,20 @@ function buildManifest(inputOptions) {
 	}
 
 	const baselineExtractDir = options.baselineDir;
-	const baselineFiles = folderMode
-		? pngFiles(baselineExtractDir)
-		: extractBaselineFromGit(
-				baselineRef,
-				baselineExtractDir,
-				options.screenshotsDir
-			);
+	const baselineFiles = requirePngs(
+		folderMode
+			? pngFilesIn(baselineExtractDir, "from")
+			: extractBaselineFromGit(
+					baselineRef,
+					baselineExtractDir,
+					options.screenshotsDir
+				),
+		"from",
+		folderMode
+			? baselineExtractDir
+			: `${baselineRef}:${options.screenshotsDir}`,
+		folderMode ? null : baselineRef
+	);
 
 	// A label override replaces the git-derived heading and skips the git
 	// call; folder mode never touches git, so headings default to the paths.
@@ -790,7 +850,12 @@ function buildManifest(inputOptions) {
 		"fallback"
 	);
 
-	const currentFiles = pngFiles(options.currentDir);
+	const currentFiles = requirePngs(
+		pngFilesIn(options.currentDir, "to"),
+		"to",
+		options.currentDir,
+		null
+	);
 	const allFiles = Array.from(
 		new Set([...currentFiles, ...baselineFiles])
 	).sort();
@@ -1241,24 +1306,41 @@ function runReport(options) {
 	if (options.currentRef) {
 		validateGitRef(options.currentRef);
 		currentDir = currentScratchDir(options.currentRef);
-		extractBaselineFromGit(
-			options.currentRef,
-			currentDir,
-			options.currentScreenshotsDir
+		requirePngs(
+			extractBaselineFromGit(
+				options.currentRef,
+				currentDir,
+				options.currentScreenshotsDir
+			),
+			"to",
+			`${options.currentRef}:${options.currentScreenshotsDir}`,
+			options.currentRef
 		);
 	}
 	let baselineFiles;
 	if (folderMode) {
-		baselineFiles = pngFiles(options.baselineFolder);
+		baselineFiles = requirePngs(
+			pngFilesIn(options.baselineFolder, "from"),
+			"from",
+			options.baselineFolder,
+			null
+		);
 	} else {
 		validateGitRef(options.baseline);
-		baselineFiles = extractBaselineFromGit(
-			options.baseline,
-			options.baselineDir,
-			options.screenshotsDir
+		baselineFiles = requirePngs(
+			extractBaselineFromGit(
+				options.baseline,
+				options.baselineDir,
+				options.screenshotsDir
+			),
+			"from",
+			`${options.baseline}:${options.screenshotsDir}`,
+			options.baseline
 		);
 	}
-	const currentFiles = new Set(pngFiles(currentDir));
+	const currentFiles = new Set(
+		requirePngs(pngFilesIn(currentDir, "to"), "to", currentDir, null)
+	);
 	const files = baselineFiles.filter(
 		(file) => currentFiles.has(file) && matchesOnly(file, options.only)
 	);

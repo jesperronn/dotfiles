@@ -269,7 +269,36 @@ test_zoom_levels_include_zoom_out() {
   assert_contains "$html" "0.5× / 1× / 2× / 4× / 8×" "help lists the zoom levels"
 }
 
+test_fails_when_a_side_has_no_screenshots() {
+  local repo="$TEST_TMP_DIR/nopngs"
+  local output=""
+  local status=0
+  setup_git_screenshots "$repo" screenshots
+  mkdir -p "$repo/empty"
+
+  # default --path (doc/screenshots) does not exist at the ref: hint the real dir
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --from v1 </dev/null"
+  assert_not_status "0" "$status" "fails when the --from ref has no PNGs at --path"
+  assert_contains "$output" "No screenshots (PNGs) found for --from in v1:doc/screenshots" "names the side and where it looked"
+  assert_contains "$output" "v1 has PNGs in: screenshots" "hints which directory at the ref holds PNGs"
+
+  status=0
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --from v1 --path screenshots --to-dir nope </dev/null"
+  assert_not_status "0" "$status" "fails when the --to folder does not exist"
+  assert_contains "$output" "for --to: folder nope does not exist" "names the missing --to folder"
+
+  status=0
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --from v1 --path screenshots --to-dir empty </dev/null"
+  assert_not_status "0" "$status" "fails when the --to folder has no PNGs"
+  assert_contains "$output" "No screenshots (PNGs) found for --to in empty" "names the empty --to folder"
+
+  status=0
+  capture_command output status bash -c "cd '$repo' && '$PIXELPILOT_BIN' --report --from-dir empty --to-dir screenshots </dev/null"
+  assert_not_status "0" "$status" "report mode also fails on an empty --from folder"
+}
+
 test_help_prints_usage
+test_fails_when_a_side_has_no_screenshots
 test_slim_images_are_not_upscaled
 test_zoom_levels_include_zoom_out
 test_help_is_colorized_on_demand
