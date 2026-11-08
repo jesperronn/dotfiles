@@ -71,6 +71,10 @@ package into a temporary project and audits it there. Global packages are never
 changed; freshly resolved transitive dependencies are reported and are NOT the
 installed globally hoisted tree.
 
+After the table, one "Installed tree" line audits what is actually installed
+(every nested copy, as "npm -g update" counts it) by building a lockfile from
+"$(npm root -g)" in a temp dir. It is skipped if that tree cannot be read.
+
 Usage:
   $PROG [--jobs N|--color|--no-color|--help]
 
@@ -670,6 +674,58 @@ build_next_data() {
   done
 }
 
+# Audit the globally *installed* tree as npm sees it (the number `npm -g update`
+# prints). npm refuses `audit -g` and needs a lockfile, so synthesize one by
+# walking <global root>/node_modules (name, version and dependency edges come
+# from each package.json) into a temp project and run `npm audit` there. Sets
+# INSTALLED_LINE; stays empty (section skipped) if anything is unavailable.
+audit_installed_tree() {
+  INSTALLED_LINE=""
+  local root="" dir="${WORK_DIR}/installed" counts="" pkgs="" total low moderate high critical
+  root="$(npm root -g 2>/dev/null)" || return 0
+  [[ -d "$root" ]] || return 0
+  mkdir -p "$dir"
+  pkgs="$(node -e '
+    const fs = require("fs"), path = require("path");
+    const root = process.argv[1], out = process.argv[2];
+    const packages = {}, top = {};
+    function walk(nm, prefix) {
+      let ents;
+      try { ents = fs.readdirSync(nm, { withFileTypes: true }); } catch (e) { return; }
+      for (const e of ents) {
+        if (e.name.startsWith(".") || !(e.isDirectory() || e.isSymbolicLink())) { continue; }
+        const names = e.name.startsWith("@")
+          ? fs.readdirSync(path.join(nm, e.name)).map(function (s) { return e.name + "/" + s; })
+          : [e.name];
+        for (const n of names) {
+          const d = path.join(nm, n);
+          let pj;
+          try { pj = JSON.parse(fs.readFileSync(path.join(d, "package.json"), "utf8")); } catch (x) { continue; }
+          if (!pj.version) { continue; }
+          const key = prefix + "node_modules/" + n;
+          const ent = { version: pj.version };
+          ["dependencies", "optionalDependencies", "peerDependencies"].forEach(function (f) { if (pj[f]) { ent[f] = pj[f]; } });
+          packages[key] = ent;
+          if (!prefix) { top[n] = pj.version; }
+          walk(path.join(d, "node_modules"), key + "/");
+        }
+      }
+    }
+    walk(root, "");
+    const count = Object.keys(packages).length;
+    if (count === 0) { process.exit(1); }
+    const lock = { name: "global", version: "0.0.0", lockfileVersion: 3, requires: true,
+      packages: Object.assign({ "": { name: "global", version: "0.0.0", dependencies: top } }, packages) };
+    fs.writeFileSync(path.join(out, "package-lock.json"), JSON.stringify(lock));
+    fs.writeFileSync(path.join(out, "package.json"), JSON.stringify({ name: "global", version: "0.0.0", dependencies: top }));
+    process.stdout.write(String(count));
+  ' "$root" "$dir" 2>/dev/null)" || return 0
+  npm --prefix "$dir" audit --json >"${dir}/audit.json" 2>/dev/null || true
+  counts="$(parse_vulns "${dir}/audit.json" 2>/dev/null)" || return 0
+  IFS=$'\t' read -r total low moderate high critical _ <<<"$counts"
+  INSTALLED_LINE="Installed tree (${pkgs} packages): $(format_vuln_text "$total" "$low" "$moderate" "$high" "$critical")"
+}
+
 main() {
   parse_opts "$@"
   enable_color
@@ -791,6 +847,9 @@ main() {
     done
     printf '\n'
   fi
+
+  audit_installed_tree
+  [[ -z "$INSTALLED_LINE" ]] || printf '%s\n\n' "$INSTALLED_LINE"
 
   build_next_data
   if (( ${#OUTDATED_NAMES[@]} == 0 && ${#VULNERABLE_WITHOUT_UPDATE[@]} == 0 )); then

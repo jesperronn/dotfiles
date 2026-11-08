@@ -127,6 +127,10 @@ case "$cmd" in
     [[ -n "${NPM_STUB_EVENT_LOG:-}" ]] && printf 'install-end %s\n' "$spec" >>"$NPM_STUB_EVENT_LOG"
     :
     ;;
+  root)
+    [[ -n "${NPM_STUB_ROOT:-}" ]] || exit 1
+    printf '%s\n' "$NPM_STUB_ROOT"
+    ;;
   audit)
     spec=""
     prefix=""
@@ -138,6 +142,11 @@ case "$cmd" in
         break
       fi
     done
+    if [[ "$prefix" == */installed ]]; then
+      cp "${prefix}/package-lock.json" "${NPM_STUB_LOCK_COPY:-/dev/null}"
+      printf '{"metadata":{"vulnerabilities":{"total":66,"low":60,"moderate":0,"high":5,"critical":1,"info":0}}}\n'
+      exit 0
+    fi
     [[ -n "$prefix" && -f "${prefix}/.npm-global-audit-spec" ]] && spec="$(cat "${prefix}/.npm-global-audit-spec")"
     [[ -z "$spec" && -n "${NPM_STUB_SPEC_FILE:-}" && -f "$NPM_STUB_SPEC_FILE" ]] && spec="$(cat "$NPM_STUB_SPEC_FILE")"
     if [[ -z "${NPM_STUB_FIXTURES:-}" ]]; then
@@ -249,7 +258,7 @@ prepare() {
   W_SPEC="${W_DIR}/spec.txt"
   rm -f "$W_SPEC"  # Clear spec file from previous test
   export NPM_STUB_SPEC_FILE="$W_SPEC"
-  unset NPM_STUB_FIXTURES NPM_STUB_LIST_JSON NPM_STUB_BARRIER_DIR NPM_STUB_OUTDATED_BARRIER_DIR NPM_STUB_EVENT_LOG
+  unset NPM_STUB_ROOT NPM_STUB_LOCK_COPY NPM_STUB_FIXTURES NPM_STUB_LIST_JSON NPM_STUB_BARRIER_DIR NPM_STUB_OUTDATED_BARRIER_DIR NPM_STUB_EVENT_LOG
 }
 
 spec_key() {
@@ -465,6 +474,28 @@ test_empty_packages() {
 
   assert_status "0" "$R_STATUS" "empty global list exits 0"
   assert_contains "$R_OUTPUT" "No global npm packages found." "empty list emits no-packages message"
+}
+
+test_installed_tree_line() {
+  prepare
+  local root="${W_DIR}/root"
+  mkdir -p "${root}/a/node_modules/b" "${root}/@s/c"
+  printf '{"name":"a","version":"1.0.0","dependencies":{"b":"^1"}}' >"${root}/a/package.json"
+  printf '{"name":"b","version":"1.2.0"}' >"${root}/a/node_modules/b/package.json"
+  printf '{"name":"@s/c","version":"2.0.0"}' >"${root}/@s/c/package.json"
+  export NPM_STUB_ROOT="$root" NPM_STUB_LOCK_COPY="${W_DIR}/lock.json"
+  run_script "$W_STUB" "1"
+
+  assert_contains "$R_OUTPUT" "Installed tree (3 packages): 66 vulnerabilities (60 low, 0 moderate, 5 high, 1 critical)" "installed tree line shows nested count and severities"
+  assert_contains "$(<"${W_DIR}/lock.json")" '"node_modules/a/node_modules/b":{"version":"1.2.0"}' "lockfile keeps nested copy"
+  assert_contains "$(<"${W_DIR}/lock.json")" '"node_modules/@s/c":{"version":"2.0.0"}' "lockfile keeps scoped package"
+}
+
+test_installed_tree_skipped_without_root() {
+  prepare
+  run_script "$W_STUB" "1"
+
+  assert_not_contains "$R_OUTPUT" "Installed tree" "no installed line when npm root -g fails"
 }
 
 test_help() {
