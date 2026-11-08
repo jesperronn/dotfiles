@@ -35,7 +35,7 @@
   sw           = switch
   root         = rev-parse --show-toplevel
   sha          = rev-parse HEAD
-  taglist      = for-each-ref --sort taggerdate --color --format '%(align:25,left)%(refname:short)%(end) %(objectname:short) %(color:blue)%(taggerdate:short)%(color:reset)%(color:cyan)%(committerdate:short)%(color:reset)' refs/tags
+  taglist      = for-each-ref --sort creatordate --color --format '%(align:25,left)%(refname:short)%(end) %(if)%(*objectname)%(then)%(*objectname:short)%(else)%(objectname:short)%(end) %(color:blue)%(if)%(*objectname)%(then)%(*committerdate:short)%(else)%(committerdate:short)%(end)%(color:reset) %(color:yellow)%(if)%(*objectname)%(then)A%(else)L%(end)%(color:reset) %(color:dim)%(if)%(*objectname)%(then)%(*contents:subject)%(else)%(contents:subject)%(end)%(color:reset)' refs/tags
   branchlist   = git for-each-ref --sort committerdate --format '%(objectname:short) %(color:blue)%(authordate:short)%(color:reset) %(align:36,left)%(refname:short)%(end)%09(%(authorname))' refs/remotes
   sortsize     = ! git ls-tree -r --long HEAD | sort --key 4 --numeric-sort
   alias        = ! git config --get-regexp ^alias\\.
