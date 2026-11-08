@@ -93,7 +93,33 @@ Example:
   pixelpilot --from v9.1.0 --from-path doc/screenshots --to-dir screenshots
   pixelpilot --from-dir ./old --to-dir ./captures --output-html ./review.html
 `;
-	process.stdout.write(usage);
+	process.stdout.write(useColor() ? colorizeUsage(usage) : usage);
+}
+
+// Color only for a terminal, honouring NO_COLOR; FORCE_COLOR overrides both
+// (used by the tests, which capture output through a pipe).
+function useColor() {
+	if (process.env.NO_COLOR) return false;
+	if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== "0") return true;
+	return Boolean(process.stdout.isTTY);
+}
+
+// Highlights the script name, option flags and <values> in the --help text.
+function colorizeUsage(text) {
+	const paint = (code, str) => `\x1b[${code}m${str}\x1b[0m`;
+	return text
+		.split("\n")
+		.map((line) => {
+			if (/^\S.*:$/.test(line) || /^Usage:/.test(line)) {
+				line = line.replace(/^([^:]+:)/, (m) => paint("1", m));
+			}
+			line = line
+				.replace(/(^|[\s,(])(--?[a-z][a-z-]*)/g, (m, pre, flag) => `${pre}${paint("1;36", flag)}`)
+				.replace(/<[^>\s]+(?: [^>\s]+)*>/g, (m) => paint("33", m))
+				.replace(/(\(config: [^)]*\))/g, (m) => paint("2", m));
+			return line.replace(/^(\x1b\[1mUsage:\x1b\[0m |  )pixelpilot\b/, (m, pre) => `${pre}${paint("1;32", "pixelpilot")}`);
+		})
+		.join("\n");
 }
 
 function readJsonFileIfExists(filePath) {

@@ -215,7 +215,25 @@ test_help_lists_new_flags() {
 }
 
 
+test_help_is_colorized_on_demand() {
+  local output=""
+  local status=0
+  local esc=$'\033'
+
+  capture_command output status "$PIXELPILOT_BIN" --help
+  assert_not_contains "$output" "${esc}[" "help has no color codes when piped"
+
+  output="$(FORCE_COLOR=1 "$PIXELPILOT_BIN" --help 2>&1)"
+  assert_contains "$output" "${esc}[1;32mpixelpilot${esc}[0m" "help colors the script name"
+  assert_contains "$output" "${esc}[1;36m--from-dir${esc}[0m" "help colors option flags"
+  assert_contains "$output" "${esc}[33m<dir>${esc}[0m" "help colors option values"
+
+  output="$(NO_COLOR=1 FORCE_COLOR=1 "$PIXELPILOT_BIN" --help 2>&1)"
+  assert_not_contains "$output" "${esc}[" "NO_COLOR disables color"
+}
+
 test_help_prints_usage
+test_help_is_colorized_on_demand
 test_unknown_option_fails
 test_wrapper_reviews_git_baseline
 test_folder_mode_needs_no_git_tags
