@@ -911,4 +911,20 @@ test_brew_bin_resolution() {
   rm -rf "$tmp_root"
 }
 
+test_brew_cleanup_failure_is_nonfatal() {
+  local tmp_root output status
+  tmp_root=$(mktemp -d)
+  printf '#!/bin/sh\nexit 1\n' >"$tmp_root/brew"
+  chmod +x "$tmp_root/brew"
+  superclean_reset_state
+  SUPER_CLEAN_GROUP_NODE=0 SUPER_CLEAN_GROUP_RUBY=0 SUPER_CLEAN_GROUP_GO=0 SUPER_CLEAN_GROUP_BREW=1
+  superclean_brew_bin() { printf '%s\n' "$tmp_root/brew"; }
+  capture_command output status superclean_apply_runtime_caches
+  assert_status "0" "$status" "failing brew cleanup does not abort"
+  assert_contains "$output" "brew cleanup failed" "failing brew cleanup warns"
+  unset -f superclean_brew_bin
+  rm -rf "$tmp_root"
+  reload_superclean_functions
+}
+
 run_tests "$@"

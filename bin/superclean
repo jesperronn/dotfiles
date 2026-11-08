@@ -2256,7 +2256,10 @@ superclean_apply_runtime_caches() {
     local brew_bin
     brew_bin=$(superclean_brew_bin) || brew_bin=""
     if [[ -n "$brew_bin" ]]; then
-      superclean_run_command "Cleaning Homebrew caches" "$brew_bin" cleanup -s
+      # Managed (MDM/Workbrew) setups may refuse brew when launched from a
+      # script; warn and carry on instead of aborting the whole run.
+      superclean_run_command "Cleaning Homebrew caches" "$brew_bin" cleanup -s ||
+        superclean_warn "brew cleanup failed (managed Homebrew may require its wrapper); skipping"
     else
       superclean_verbose "Skipping unavailable tool: brew"
     fi
