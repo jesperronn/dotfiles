@@ -1,6 +1,6 @@
 # Skills Index
 
-35 skills.
+36 skills.
 
 > **To update:** edit `summary` in the skill's `SKILL.md` frontmatter.
 > The pre-commit hook regenerates this file automatically on commit.
@@ -13,6 +13,7 @@
 | **clean-stack-traces** | Condenses noisy exception-frame data into a readable, copy-pasteable stack trace. |
 | **code-review** | Two-axis review of the diff since a fixed point: Standards and Spec, run as parallel sub-agents and reported side by side. |
 | **codebase-design** | Shared vocabulary and principles for designing deep modules: small interface, clean seam, testable and AI-navigable. |
+| **concise-docs** | Tightens README/markdown docs and CLI --help text without losing detail: one source per fact, drift tests, task-first structure. |
 | **continue-implementation** | Continues and orchestrates an existing implementation plan to completion. |
 | **diagnosing-bugs** | Disciplined diagnosis loop for hard bugs and performance regressions; skip phases only when justified. |
 | **dispatching-parallel-agents** | Coordinates independent tasks across isolated parallel agents. |
@@ -44,4 +45,4 @@
 | **writing-plans** | Creates detailed implementation plans from requirements before coding. |
 | **writing-skills** | Creates, improves, and validates reusable agent skills. |
 
-*Last updated: 2026-11-09 · 35 skills*
+*Last updated: 2026-11-09 · 36 skills*
