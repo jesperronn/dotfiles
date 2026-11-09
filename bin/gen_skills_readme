@@ -6,7 +6,7 @@ Each skill's SKILL.md must have frontmatter with:
 Any `group` field is ignored. Symlinked skill dirs (owned by other repos) are skipped.
 
 Run manually: bin/gen_skills_readme
-Or via the pre-commit hook (bin/git-hooks/pre-commit).
+Run it after adding or editing a skill.
 Exits 1 and prints paste-ready AI prompts for any skills missing required fields.
 """
 
@@ -88,7 +88,7 @@ def render(skills):
         f"{len(skills)} skills.",
         "",
         "> **To update:** edit `summary` in the skill's `SKILL.md` frontmatter.",
-        "> The pre-commit hook regenerates this file automatically on commit.",
+        "> Regenerate it after editing a skill (there is no commit hook).",
         "> To regenerate manually: `bin/gen_skills_readme`",
         "",
         "| Skill | Does |",

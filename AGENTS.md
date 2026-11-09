@@ -2,7 +2,7 @@
 
 ## Verify before done
 
-- Run `bin/lint` then `bin/runtests`; both default to all of `bin/`, pass paths to narrow. Nothing runs them automatically — `.githooks/pre-commit` only regenerates the skills README.
+- Run `bin/lint` then `bin/runtests`; both default to all of `bin/`, pass paths to narrow. Nothing runs them automatically (no commit hooks); run `bin/gen_skills_readme` after editing a skill.
 - Single test file: `bin/runtests bin/<name>.test.sh`; `--verbose` prints per-test `[RUN]`/`[TIME]` lines.
 
 ## Commits

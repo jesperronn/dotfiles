@@ -3,7 +3,7 @@
 36 skills.
 
 > **To update:** edit `summary` in the skill's `SKILL.md` frontmatter.
-> The pre-commit hook regenerates this file automatically on commit.
+> Regenerate it after editing a skill (there is no commit hook).
 > To regenerate manually: `bin/gen_skills_readme`
 
 | Skill | Does |

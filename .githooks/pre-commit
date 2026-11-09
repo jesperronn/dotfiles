@@ -6,5 +6,3 @@ set -uo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 
-# Regenerate skills README when skill SKILL.md files are staged
-"$root/.githooks/pre-commit-skill-gen" || exit 1
