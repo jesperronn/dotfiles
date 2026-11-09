@@ -60,4 +60,16 @@ test_missing_summary_is_reported() {
   assert_not_contains "$out" "group" "group never mentioned"
 }
 
+test_symlinked_skill_is_skipped() {
+  new_skills_dir
+  write_skill alpha 'name: alpha' 'summary: "Alpha."' 'description: d'
+  mkdir -p "$TEST_TMP_DIR/external/linked"
+  printf -- '---\nname: linked\ndescription: d\n---\n' >"$TEST_TMP_DIR/external/linked/SKILL.md"
+  ln -s "$TEST_TMP_DIR/external/linked" "$TEST_TMP_DIR/skills/linked"
+  local out status
+  capture_command out status env SKILLS_DIR="$TEST_TMP_DIR/skills" python3 "$SCRIPT_UNDER_TEST"
+  assert_status 0 "$status" "symlinked skill without summary does not fail"
+  assert_not_contains "$(cat "$TEST_TMP_DIR/skills/README.md")" "linked" "symlinked skill not listed"
+}
+
 run_tests "$@"

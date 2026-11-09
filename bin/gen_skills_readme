@@ -3,7 +3,7 @@
 
 Each skill's SKILL.md must have frontmatter with:
   name, description, summary (one-line description for the table)
-Any `group` field is ignored.
+Any `group` field is ignored. Symlinked skill dirs (owned by other repos) are skipped.
 
 Run manually: bin/gen_skills_readme
 Or via the pre-commit hook (bin/git-hooks/pre-commit).
@@ -64,7 +64,7 @@ def parse_frontmatter(path):
 def load_skills():
     skills = []
     for entry in sorted(os.scandir(SKILLS_DIR), key=lambda e: e.name):
-        if not entry.is_dir() or entry.name.startswith("."):
+        if entry.is_symlink() or not entry.is_dir() or entry.name.startswith("."):  # symlinked skills belong to other repos
             continue
         skill_file = os.path.join(entry.path, "SKILL.md")
         if not os.path.exists(skill_file):
