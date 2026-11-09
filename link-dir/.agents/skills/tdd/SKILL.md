@@ -1,5 +1,6 @@
 ---
 name: tdd
+summary: "Test-driven development reference: red-green loop, what a good test is, where tests go, anti-patterns."
 description: Test-driven development. Use when the user wants to build features or fix bugs test-first, mentions "red-green-refactor", or wants integration tests.
 ---
 

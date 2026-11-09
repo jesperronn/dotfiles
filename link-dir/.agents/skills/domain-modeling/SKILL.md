@@ -1,5 +1,6 @@
 ---
 name: domain-modeling
+summary: "Actively build the project domain model: challenge terms, probe edge cases, record CONTEXT.md glossary and ADRs as decisions form."
 description: Build and sharpen a project's domain model. Use when discussing codebase terminology, writing or editing a CONTEXT.md, or recording or editing an ADR.
 ---
 

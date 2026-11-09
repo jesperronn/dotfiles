@@ -1,5 +1,6 @@
 ---
 name: grilling
+summary: "Interview the user relentlessly in rounds over a design tree, asking the whole frontier with a recommended answer for each."
 description: Grill the user relentlessly about a plan, decision, or idea. Use when the user wants to stress-test their thinking, or uses any 'grill' trigger phrases.
 ---
 

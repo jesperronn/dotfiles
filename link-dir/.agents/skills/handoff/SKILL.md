@@ -1,5 +1,6 @@
 ---
 name: handoff
+summary: "Compacts the current conversation into a handoff doc in the OS temp dir for a fresh agent, referencing artifacts instead of copying them."
 description: Compact the current conversation into a handoff document for another agent to pick up.
 argument-hint: "What will the next session be used for?"
 disable-model-invocation: true

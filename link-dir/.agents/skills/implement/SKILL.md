@@ -1,5 +1,6 @@
 ---
 name: implement
+summary: "Implements a spec or tickets using /tdd at agreed seams; typechecks often, runs single tests often and the full suite once at the end."
 description: "Implement a piece of work based on a spec or set of tickets."
 disable-model-invocation: true
 ---
