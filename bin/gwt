@@ -298,7 +298,7 @@ gwt_display_row() {
     branch="${BASH_REMATCH[2]}"
   fi
 
-  printf '%s\t%-14s %-*s  %s  %s\n' \
+  printf '%s\t%-16s %-*s  %s  %s\n' \
     "$path" "$status" "$width" "$branch" "$sha" "$(gwt_short_path "$path")"
 }
 

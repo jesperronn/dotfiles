@@ -549,7 +549,7 @@ gwt_test_display_rows() {
   local row
   row="$(gwt_display_row "/private/tmp/a/b/c/wt-x  f13040f [feat/x]" "unmerged" 10)"
   test_assert_eq "display_row layout" \
-    "/private/tmp/a/b/c/wt-x"$'\t'"unmerged       feat/x      f13040f  …/c/wt-x" "$row"
+    "/private/tmp/a/b/c/wt-x"$'\t'"unmerged         feat/x      f13040f  …/c/wt-x" "$row"
   test_assert_eq "line_path recovers full path from display row" "/private/tmp/a/b/c/wt-x" \
     "$(gwt_line_path "$row")"
 
