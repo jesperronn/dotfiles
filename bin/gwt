@@ -21,6 +21,7 @@ set -euo pipefail
 #   - Must be run inside (or below) a git repository.
 #   - Worktrees are created at repo_root/../<repo_name>-wt<N>.
 #   - After creating a worktree, a 3-second countdown lets you cd into it (press y).
+#   - Each row is tagged <dirty|merged|unmerged|no-commits|clean|missing>.
 #   - fzf is required for interactive mode.
 
 GWT_COLOR_ENABLED=0
@@ -109,7 +110,9 @@ gwt_usage() {
   printf '%sDescription:%s Manage git worktrees interactively.\n' "$section_style" "$reset_style"
   printf '  Lists existing worktrees via fzf. Select one or more to delete.\n'
   printf '  Tab toggles selection; Enter deletes everything selected.\n'
-  printf '  Press Ctrl-A (or your fzf binding) to create a new worktree.\n\n'
+  printf '  Press Ctrl-A (or your fzf binding) to create a new worktree.\n'
+  printf '  Each row ends with <status>: dirty, merged (into main), unmerged,\n'
+  printf '  no-commits, clean or missing.\n\n'
   printf '%sOptions:%s\n' "$section_style" "$reset_style"
   printf '  %s-h, --help%s  Show this help.\n\n' "$GWT_C_GREEN" "$GWT_C_RESET"
 }
@@ -192,6 +195,68 @@ gwt_list_worktrees() {
   gwt_verbose "Found ${#GWT_WORKTREE_LINES[@]} worktree(s)"
 }
 
+# ── Worktree status ────────────────────────────────────────────────────
+
+# Branch worktrees are compared against: origin/HEAD, else main, else master.
+gwt_base_ref() {
+  local ref=""
+
+  ref="$(git -C "$GWT_REPOSITORY_ROOT" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" || ref=""
+  if [[ -z "$ref" ]]; then
+    local candidate
+    for candidate in main master; do
+      if git -C "$GWT_REPOSITORY_ROOT" rev-parse --verify --quiet "refs/heads/$candidate" >/dev/null; then
+        ref="$candidate"
+        break
+      fi
+    done
+  fi
+  printf '%s\n' "$ref"
+}
+
+# Print status tags for one `git worktree list` line, comma-joined:
+# dirty, merged (tip is an ancestor of base, not equal to it), no-commits
+# (tip equals base), unmerged, clean, or missing. Squash-merged branches
+# show as unmerged because ancestry cannot see them.
+gwt_worktree_status() {
+  local line="$1"
+  local base="${2-}"
+  local path="" sha="" tags=()
+
+  path="$(gwt_line_path "$line")"
+  if [[ ! -d "$path" ]]; then
+    printf 'missing\n'
+    return 0
+  fi
+
+  if [[ -n "$(git -C "$path" status --porcelain 2>/dev/null | head -n1)" ]]; then
+    tags+=("dirty")
+  fi
+
+  if [[ "$line" =~ \[([^]]+)\][[:space:]]*$ && -n "$base" ]]; then
+    local branch="${BASH_REMATCH[1]}"
+    if [[ "$branch" != "$base" && "$branch" != "${base#origin/}" ]]; then
+      sha="$(git -C "$path" rev-parse HEAD 2>/dev/null)" || sha=""
+      if [[ -n "$sha" ]] && git -C "$path" merge-base --is-ancestor "$sha" "$base" 2>/dev/null; then
+        if [[ "$sha" == "$(git -C "$path" rev-parse "$base" 2>/dev/null)" ]]; then
+          tags+=("no-commits")
+        else
+          tags+=("merged")
+        fi
+      elif [[ -n "$sha" ]]; then
+        tags+=("unmerged")
+      fi
+    fi
+  fi
+
+  if (( ${#tags[@]} == 0 )); then
+    printf 'clean\n'
+  else
+    local IFS=,
+    printf '%s\n' "${tags[*]}"
+  fi
+}
+
 # ── Fzf selector ───────────────────────────────────────────────────────
 
 gwt_select_worktree() {
@@ -203,8 +268,11 @@ gwt_select_worktree() {
   # Build fzf input: display lines
   local display_lines=()
   local entry=""
+  local base="" status=""
+  base="$(gwt_base_ref)"
   for entry in "${GWT_WORKTREE_LINES[@]}"; do
-    display_lines+=("$entry")
+    status="$(gwt_worktree_status "$entry" "$base")"
+    display_lines+=("$entry  <$status>")
   done
 
   # Default fzf layout is bottom-up, so the first line (the main checkout)

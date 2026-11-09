@@ -497,6 +497,44 @@ gwt_test_apply_delete_space_path() {
 
 }
 
+gwt_test_worktree_status() {
+
+  local repo="$TEST_TMP_DIR/status-repo"
+  mkdir -p "$repo"
+  (
+    cd "$repo"
+    export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+    git init -q -b main
+    git commit -q --allow-empty -m init
+    git worktree add -q -b b-merged "$TEST_TMP_DIR/wt-merged"
+    git -C "$TEST_TMP_DIR/wt-merged" commit -q --allow-empty -m work
+    git merge -q --ff-only b-merged
+    git commit -q --allow-empty -m later
+    git worktree add -q -b b-empty "$TEST_TMP_DIR/wt-empty"
+    git worktree add -q -b b-unmerged "$TEST_TMP_DIR/wt-unmerged"
+    git -C "$TEST_TMP_DIR/wt-unmerged" commit -q --allow-empty -m wip
+    touch "$TEST_TMP_DIR/wt-unmerged/new.txt"
+  ) >/dev/null 2>&1
+
+  gwt_reset_state
+  GWT_REPOSITORY_ROOT="$repo"
+  local base
+  base="$(gwt_base_ref)"
+  test_assert_eq "base_ref falls back to main" "main" "$base"
+
+  test_assert_eq "status: merged branch" "merged" \
+    "$(gwt_worktree_status "$TEST_TMP_DIR/wt-merged  abc1234 [b-merged]" "$base")"
+  test_assert_eq "status: branch with no commits" "no-commits" \
+    "$(gwt_worktree_status "$TEST_TMP_DIR/wt-empty  abc1234 [b-empty]" "$base")"
+  test_assert_eq "status: dirty unmerged branch" "dirty,unmerged" \
+    "$(gwt_worktree_status "$TEST_TMP_DIR/wt-unmerged  abc1234 [b-unmerged]" "$base")"
+  test_assert_eq "status: main checkout is clean" "clean" \
+    "$(gwt_worktree_status "$repo  abc1234 [main]" "$base")"
+  test_assert_eq "status: missing directory" "missing" \
+    "$(gwt_worktree_status "$TEST_TMP_DIR/nope  abc1234 [x]" "$base")"
+
+}
+
 gwt_test_countdown_navigate() {
 
   gwt_countdown_navigate "/tmp/new-wt"
@@ -526,6 +564,7 @@ main() {
   gwt_test_apply_delete_locked
   gwt_test_apply_delete_space_path
   gwt_test_countdown_navigate
+  gwt_test_worktree_status
 
   printf '%bResults: %s passed, %s failed%s\n' \
     "$TEST_C_GREEN" "$TEST_PASS" "$TEST_FAIL" "$TEST_C_RESET"
