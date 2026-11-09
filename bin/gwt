@@ -24,6 +24,7 @@ set -euo pipefail
 #   - Each row is tagged <dirty|merged|unmerged|no-commits|clean|missing>.
 #   - fzf is required for interactive mode.
 
+GWT_TILDE='~'
 GWT_COLOR_ENABLED=0
 GWT_VERBOSE=0
 GWT_FZF_FOUND=0
@@ -257,6 +258,50 @@ gwt_worktree_status() {
   fi
 }
 
+# Shorten a path for display: $HOME becomes ~, and anything deeper than
+# three components keeps only the last two (".../scratchpad/wt-x").
+gwt_short_path() {
+  local path="$1"
+
+  if [[ -n "${HOME-}" && "$path" == "$HOME"* ]]; then
+    path="${GWT_TILDE}${path#"$HOME"}"
+  fi
+
+  local trimmed="${path#/}"
+  local rest="$trimmed" depth=1
+  while [[ "$rest" == */* ]]; do
+    rest="${rest#*/}"
+    depth=$((depth + 1))
+  done
+
+  if (( depth > 3 )); then
+    local last="${path##*/}"
+    local parent="${path%/*}"
+    printf '…/%s/%s\n' "${parent##*/}" "$last"
+  else
+    printf '%s\n' "$path"
+  fi
+}
+
+# Build one fzf row: "<full path><TAB><status> <branch> <sha> <short path>".
+# fzf shows only the part after the tab (--with-nth); the full path stays in
+# field 1 so gwt_line_path can recover it from the selected output.
+# Args: line status branch_width
+gwt_display_row() {
+  local line="$1" status="$2" width="${3:-0}"
+  local path="" sha="" branch=""
+
+  path="$(gwt_line_path "$line")"
+  local row_re='[[:space:]]([0-9a-f]{7,40})[[:space:]]+[[(]([^])]*)[])][[:space:]]*$'
+  if [[ "$line" =~ $row_re ]]; then
+    sha="${BASH_REMATCH[1]}"
+    branch="${BASH_REMATCH[2]}"
+  fi
+
+  printf '%s\t%-14s %-*s  %s  %s\n' \
+    "$path" "$status" "$width" "$branch" "$sha" "$(gwt_short_path "$path")"
+}
+
 # ── Fzf selector ───────────────────────────────────────────────────────
 
 gwt_select_worktree() {
@@ -268,11 +313,17 @@ gwt_select_worktree() {
   # Build fzf input: display lines
   local display_lines=()
   local entry=""
-  local base="" status=""
+  local base="" status="" statuses=() width=0 i=0
   base="$(gwt_base_ref)"
   for entry in "${GWT_WORKTREE_LINES[@]}"; do
-    status="$(gwt_worktree_status "$entry" "$base")"
-    display_lines+=("$entry  <$status>")
+    statuses+=("$(gwt_worktree_status "$entry" "$base")")
+    if [[ "$entry" =~ \[([^]]*)\][[:space:]]*$ ]] && (( ${#BASH_REMATCH[1]} > width )); then
+      width=${#BASH_REMATCH[1]}
+    fi
+  done
+  for entry in "${GWT_WORKTREE_LINES[@]}"; do
+    display_lines+=("$(gwt_display_row "$entry" "${statuses[i]}" "$width")")
+    i=$((i + 1))
   done
 
   # Default fzf layout is bottom-up, so the first line (the main checkout)
@@ -285,7 +336,7 @@ gwt_select_worktree() {
   # --multi lets the user toggle several worktrees with Tab; fzf prints
   # every selected line, newline-separated.
   local fzf_output=""
-  local fzf_args=(--multi --prompt='Delete> ' --header='Tab: select · Enter: delete · Ctrl-A: add' --height "${GWT_FZF_HEIGHT:-~50%}" --bind 'load:last,ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
+  local fzf_args=(--multi --delimiter=$'\t' --with-nth=2 --prompt='Delete> ' --header='Tab: select · Enter: delete · Ctrl-A: add' --height "${GWT_FZF_HEIGHT:-~50%}" --bind 'load:last,ctrl-a:execute(echo ADD > /tmp/gwt-add-signal)')
 
   fzf_output="$(printf '%s\n' "${display_lines[@]}" | fzf "${fzf_args[@]}" 2>/dev/null)" || true
 

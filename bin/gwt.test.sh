@@ -535,6 +535,29 @@ gwt_test_worktree_status() {
 
 }
 
+gwt_test_display_rows() {
+
+  local home_saved="$HOME"
+  HOME="/Users/jt"
+  # shellcheck disable=SC2088
+  test_assert_eq "short_path: ~ for home" "~/src/app" "$(gwt_short_path "/Users/jt/src/app")"
+  test_assert_eq "short_path: deep path keeps last two" "…/scratchpad/wt-x" \
+    "$(gwt_short_path "/private/tmp/claude/a/b/scratchpad/wt-x")"
+  test_assert_eq "short_path: short path untouched" "/tmp/wt0" "$(gwt_short_path "/tmp/wt0")"
+  HOME="$home_saved"
+
+  local row
+  row="$(gwt_display_row "/private/tmp/a/b/c/wt-x  f13040f [feat/x]" "unmerged" 10)"
+  test_assert_eq "display_row layout" \
+    "/private/tmp/a/b/c/wt-x"$'\t'"unmerged       feat/x      f13040f  …/c/wt-x" "$row"
+  test_assert_eq "line_path recovers full path from display row" "/private/tmp/a/b/c/wt-x" \
+    "$(gwt_line_path "$row")"
+
+  row="$(gwt_display_row "/a/b c/d  abc1234 (detached HEAD)" "clean" 0)"
+  test_assert_eq "line_path keeps spaces via display row" "/a/b c/d" "$(gwt_line_path "$row")"
+
+}
+
 gwt_test_countdown_navigate() {
 
   gwt_countdown_navigate "/tmp/new-wt"
@@ -565,6 +588,7 @@ main() {
   gwt_test_apply_delete_space_path
   gwt_test_countdown_navigate
   gwt_test_worktree_status
+  gwt_test_display_rows
 
   printf '%bResults: %s passed, %s failed%s\n' \
     "$TEST_C_GREEN" "$TEST_PASS" "$TEST_FAIL" "$TEST_C_RESET"
