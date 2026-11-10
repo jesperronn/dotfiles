@@ -120,8 +120,6 @@ brew "libtool"
 brew "imagemagick"
 # Library of 2D and 3D vector, matrix, and math operations
 brew "imath"
-# Load testing and performance measurement application
-brew "jmeter"
 # Lightweight and flexible command-line JSON processor
 brew "jq"
 # Lazier way to manage everything docker
@@ -148,8 +146,6 @@ brew "mlx-lm"
 brew "neovim"
 # Open-source, cross-platform JavaScript runtime environment
 brew "node@24", link: true
-# Create, run, and share large language models (LLMs)
-brew "ollama"
 # Swiss-army knife of markup format conversion
 brew "pandoc"
 # Shell command parallelization utility
@@ -239,8 +235,6 @@ cask "k6-studio"
 cask "lm-studio"
 # Knowledge base that works on top of a local folder of plain text Markdown files
 cask "obsidian"
-# Get up and running with large language models locally
-cask "ollama-app"
 # Browse, manage, inspect containers and images
 cask "podman-desktop"
 # All-in-One Java Troubleshooting Tool
@@ -281,16 +275,14 @@ vscode "vscjava.vscode-java-pack"
 vscode "vscjava.vscode-maven"
 vscode "zoocodeorganization.zoo-code"
 go "github.com/spf13/cobra-cli"
-go "github.com/jesperronn/filemirror-fmr/cmd/fmr"
-uv "litellm[proxy]"
 uv "mistral-vibe"
 uv "omnigent"
 uv "openhands"
 npm "@continuedev/cli"
 npm "@earendil-works/pi-coding-agent"
-npm "@juliusbrussee/caveman-code"
 npm "@kilocode/cli"
 npm "@nanocollective/nanocoder"
+npm "@playwright/cli"
 npm "@qwen-code/qwen-code"
 npm "@zvec/zvec-grep"
 npm "jumbo-cli"
