@@ -1,6 +1,6 @@
 # Skills Index
 
-36 skills.
+37 skills.
 
 > **To update:** edit `summary` in the skill's `SKILL.md` frontmatter.
 > Regenerate it after editing a skill (there is no commit hook).
@@ -27,6 +27,7 @@
 | **handoff** | Compacts the current conversation into a handoff doc in the OS temp dir for a fresh agent, referencing artifacts instead of copying them. |
 | **implement** | Implements a spec or tickets using /tdd at agreed seams; typechecks often, runs single tests often and the full suite once at the end. |
 | **improve-codebase-architecture** | Scans for deepening opportunities, presents them as a visual HTML report, then grills through the chosen one. |
+| **maintainer-workflow-commands** | Recipe for maintainer bin/ commands (workflows cheat sheet, troubleshoot, deps, changelog) with safety rules, exit codes and hermetic tests. |
 | **memfile** | Creates/updates structured session file: task spec, state, files, workflow, errors, learnings, worklog. |
 | **memory-during-chat** | Keeps running in-session memory of constraints and goals. Consulted before each answer. |
 | **receiving-code-review** | Evaluates code review feedback rigorously before applying changes. |
@@ -45,4 +46,4 @@
 | **writing-plans** | Creates detailed implementation plans from requirements before coding. |
 | **writing-skills** | Creates, improves, and validates reusable agent skills. |
 
-*Last updated: 2026-11-10 · 36 skills*
+*Last updated: 2026-11-11 · 37 skills*
