@@ -19,6 +19,28 @@ setup_tmpdir() {
   trap 'cleanup_test_tmp' EXIT
 }
 
+test_readme_relative_links_exist() {
+  local line="" target="" output="" status=0
+  local link_pattern='\]\(([^)#]+)(#[^)]*)?\)'
+  while IFS= read -r line; do
+    while [[ "$line" =~ $link_pattern ]]; do
+      target="${BASH_REMATCH[1]}"
+      line="${line#*"${BASH_REMATCH[0]}"}"
+      [[ "$target" == *://* ]] && continue
+      capture_command output status test -e "$DOTFILES_ROOT/$target"
+      assert_status 0 "$status" "README link exists: $target"
+    done
+  done < "$DOTFILES_ROOT/README.md"
+}
+
+test_readme_lists_current_init_scripts() {
+  local readme="" script=""
+  readme="$(cat "$DOTFILES_ROOT/README.md")"
+  for script in "$DOTFILES_ROOT"/init/*.sh; do
+    assert_contains "$readme" "(init/$(basename "$script"))" "README links current init script $(basename "$script")"
+  done
+}
+
 test_link_phase_skips_temporary_link_file_artifacts() {
   local home_dir="$TEST_TMP_DIR/home"
   local repo_root="$home_dir/src/dotfiles"

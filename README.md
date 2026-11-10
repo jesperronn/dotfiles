@@ -1,107 +1,34 @@
-# Jespers Dotfiles
+# Jesper's Dotfiles
 
-Cloned from Ben Almans dotfiles project. This fork focuses on my personal setup.
-
-My OSX / Ubuntu dotfiles.
-
-## About this project
-
-I've been using bash on-and-off for a long time, every time I've set up a new Linux or OS X machine, I've copied over my `.bashrc` file and my `~/bin` folder to each machine manually. And I've never done a very good job of actually maintaining these files. It's been a total mess.
-
-I finally decided that I wanted to be able to execute a single command to "bootstrap" a new system to pull down all of my dotfiles and configs, as well as install all the tools I commonly use. In addition, I wanted to be able to re-execute that command at any time to synchronize anything that might have changed. Finally, I wanted to make it easy to re-integrate changes back in, so that other machines could be updated.
-
-That command is [dotfiles][dotfiles], and this is my "dotfiles" Git repo.
-
-[dotfiles]: bin/dotfiles
-
-## How the "dotfiles" command works
-
-When [dotfiles][dotfiles] is run for the first time, it does a few things:
-
-1. In Ubuntu, Git is installed if necessary via APT (it's already there in OSX).
-1. This repo is cloned into your user directory, under `~/src/dotfiles`.
-1. Files in `/copy` are copied into `~/`. ([read more](#the-copy-step))
-1. Directories in `/link-dir` are symlinked into `~/`. ([read more](#the-link-dir-step))
-1. Files in `/link-file` are symlinked into `~/`. The entire `link-dir/.config` tree is symlinked into `~/.config`. ([read more](#the-link-file-step))
-1. You are prompted to choose scripts in `/init` to be executed. The installer attempts to only select relevant scripts, based on the detected OS and the script filename.
-1. Your chosen init scripts are executed (in alphanumeric order, hence the funky names). ([read more](#the-init-step))
-
-On subsequent runs, step 1 is skipped, step 2 just updates the already-existing repo, and step 5 remembers what you selected the last time. The other steps are the same.
-
-### Other subdirectories
-
-* The `/backups` directory gets created when necessary. Any files in `~/` that would have been overwritten by files in `/copy` or `/link` get backed up there.
-* The `/bin` directory contains executable shell scripts (including the [dotfiles][dotfiles] script) and symlinks to executable shell scripts. This directory is added to the path.
-* The `/caches` directory contains cached files, used by some scripts or functions.
-* The `/conf` directory just exists. If a config file doesn't **need** to go in `~/`, reference it from the `/conf` directory.
-* The `/source` directory contains files that are sourced whenever a new shell is opened (in alphanumeric order, hence the funky names).
-* The `/test` directory contains unit tests for especially complicated bash functions.
-* The `/vendor` directory contains third-party libraries.
-
-### The "copy" step
-Any file in the `/copy` subdirectory will be copied into `~/`. Any file that _needs_ to be modified with personal information (like [copy/.gitconfig](copy/.gitconfig) which contains an email address and private key) should be _copied_ into `~/`. Because the file you'll be editing is no longer in `~/src/dotfiles`, it's less likely to be accidentally committed into your public dotfiles repo.
-
-### The "link-dir" step
-Any directory in the `/link-dir` subdirectory gets symlinked into `~/` with `ln -s`. Edit one or the other, and you change the directory in both places.
-
-### The "link-file" step
-Any file in the `/link-file` subdirectory gets symlinked into `~/` without replacing its parent directory. Top-level files like `link-file/.zshrc` link directly to `~/.zshrc`. Nested files like `link-file/.continue/config.yaml` link only `~/.continue/config.yaml`, leaving `~/.continue/logs`, `~/.continue/sessions`, and other runtime data alone.
-
-### The "init" step
-Scripts in the `/init` subdirectory will be executed. A whole bunch of things will be installed, but _only_ if they aren't already.
-
-#### OS X
-
-* Minor XCode init via the [init/10_osx_xcode.sh](init/10_osx_xcode.sh) script
-* Homebrew via the [init/20_osx_homebrew.sh](init/20_osx_homebrew.sh) script
-* Homebrew recipes via the [init/30_osx_homebrew_recipes.sh](init/30_osx_homebrew_recipes.sh) script
-* Homebrew casks via the [init/30_osx_homebrew_casks.sh](init/30_osx_homebrew_casks.sh) script
-* [Fonts](conf/osx/fonts) via the [init/50_osx_fonts.sh](init/50_osx_fonts.sh) script
-
-#### MacOs and Ubuntu
-* Node.js, npm and nave via the [init/50_node.sh](init/50_node.sh) script
-* Ruby, gems and rbenv via the [init/50_ruby.sh](init/50_ruby.sh) script
-* Vim plugins via the [init/50_vim.sh](init/50_vim.sh) script
-
-## Hacking my dotfiles
-
-Because the [dotfiles][dotfiles] script is completely self-contained, you should be able to delete everything else from your dotfiles repo fork, and it will still work. The only thing it really cares about are the `/copy`, `/link-dir`, `/link-file` and `/init` subdirectories, which will be ignored if they are empty or don't exist.
-
-If you modify things and notice a bug or an improvement, [file an issue](https://github.com/jesperronn/cowboy-dotfiles/issues) or [a pull request](https://github.com/jesperronn/cowboy-dotfiles/pulls) and let me know.
-
-Also, before installing, be sure to [read my gently-worded note](#read-this-critically-important-warning-before-you-install).
+Personal macOS / Ubuntu shell configuration and tools, forked from Ben Alman's
+dotfiles project. The `dotfiles` command installs the configuration and updates
+an existing checkout.
 
 ## Installation
 
-### OS X Notes
-
-You need to have [XCode](https://developer.apple.com/downloads/index.action?=xcode) or, at the very minimum, the [XCode Command Line Tools](https://developer.apple.com/downloads/index.action?=command%20line%20tools), which are available as a much smaller download.
-
-The easiest way to install the XCode Command Line Tools in OSX 10.9+ is to open up a terminal, type `xcode-select --install` and [follow the prompts](http://osxdaily.com/2014/02/12/install-command-line-tools-mac-os-x/).
-
-_Tested in OSX 26.4_
-
 ### Read this critically important warning before you install
 
-**If you're not me, please _do not_ install dotfiles directly from this repo!**
+This repository contains my personal setup. Review the files and init scripts
+before installing; the installer changes your home directory and can run commands
+with `sudo`. Fork and adapt it for your own machine.
 
-Why? Because I often completely break this repo while updating. Which means that if I do that and you run the `dotfiles` command, your home directory will burst into flames, and you'll have to go buy a new computer. No, not really, but it will be very messy.
+### OS X Notes
+
+On macOS, install the Xcode Command Line Tools with `xcode-select --install`.
 
 ### Actual installation (for you)
 
-1. [Read my gently-worded note](#read-this-critically-important-warning-before-you-install)
-1. Fork this repo
-1. Open a terminal/shell and do this (change `jesperronn` and `main` as appropriate):
+Clone your adapted fork into `~/src/dotfiles`, then run its local installer:
 
 ```sh
-export DOTFILES_GH_USER=jesperronn
-export DOTFILES_GH_BRANCH=main
-bash -c "$(wget -qO- https://raw.github.com/$DOTFILES_GH_USER/dotfiles/$DOTFILES_GH_BRANCH/bin/dotfiles)" && source ~/.bashrc
+git clone https://github.com/YOUR_USER/YOUR_FORK.git ~/src/dotfiles
+cd ~/src/dotfiles
+bin/dotfiles
+source ~/.bashrc
 ```
 
-Since you'll be using the [dotfiles][dotfiles] command on subsequent runs, you'll only have to set the `DOTFILES_GH_USER` variable for the initial install, but if you have a custom branch, you _will_ need to export `DOTFILES_GH_BRANCH` for subsequent runs.
-
-There's a lot of stuff that requires admin access via `sudo`, so be warned that you might need to enter your password here or there.
+Select your branch when cloning if it differs from the fork's default branch.
+The installer updates this checkout using `git pull`.
 
 ### Actual installation (for me)
 
@@ -109,52 +36,95 @@ There's a lot of stuff that requires admin access via `sudo`, so be warned that 
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/jesperronn/cowboy-dotfiles/main/bin/dotfiles)" && source ~/.bashrc
 ```
 
+## Use and update
+
+Run `dotfiles` to update the checkout and apply its configuration again. Run
+`bin/dotfiles --help` for individual installation phases; the options are defined
+in the [installer](bin/dotfiles).
+
+## How the "dotfiles" command works
+
+A full run installs Git via APT if needed on Ubuntu, clones this repository into
+`~/src/dotfiles` if absent (or updates the existing checkout), then performs the
+steps below. Init-script selections are saved in `caches/init/selected` for reuse.
+Files replaced by the copy and link steps are backed up under `backups/`.
+
+### The "copy" step
+
+Files in `copy/` are copied into `~/`. Use this for files you want to edit locally,
+such as configuration containing personal information.
+
+### The "link-dir" step
+
+Managed directories in `link-dir/` are symlinked into `~/`. The installer skips
+state-heavy directories such as `.config` and `.claude`; the complete exclusion
+list is in `link_dir_is_managed` in the [installer](bin/dotfiles).
+
+### The "link-file" step
+
+Files in `link-file/` are symlinked individually into `~/`, preserving their
+parent directories. For example, `link-file/.continue/config.yaml` manages only
+`~/.continue/config.yaml`, leaving logs and sessions alone.
+
+### The "init" step
+
+The installer offers an OS-filtered selection of [init scripts](init) and runs
+the chosen scripts in filename order. Review them before selecting them:
+
+- [Xcode Command Line Tools](init/10_osx_xcode.sh)
+- [Homebrew and Brewfile packages](init/20_osx_homebrew.sh)
+- [fzf shell integration](init/40_fzf.sh)
+- [Ruby via RVM](init/50_ruby.sh)
+- [Shared Claude skills](init/60_claude_agents.sh)
+
+### Other subdirectories
+
+- `bin/`: commands added to `PATH` by the installer.
+- `caches/`: generated caches and saved installer selections.
+- `source/`: shell configuration loaded in filename order.
+
 ## Aliases and Functions
-To keep things easy, the `~/.bashrc` and `~/.bash_profile` files are extremely simple, and should never need to be modified. Instead, add your aliases, functions, settings, etc into one of the files in the `source` subdirectory, or add a new file. They're all automatically sourced when a new shell is opened. Take a look, I have [a lot of aliases and functions](source). I even have a [fancy prompt](source/50_prompt.sh) that shows the current directory, time and current git/svn repo status.
 
-If you want to manage a nested home file without symlinking its whole parent directory, put it under `link-file/`. For example, `link-file/.continue/config.yaml` links only `~/.continue/config.yaml`, leaving `~/.continue/logs`, `~/.continue/sessions`, and other runtime data alone.
-
-The entire `~/.config` tree is symlinked from `link-dir/.config`.
-
-If you already have a file or folder in place and want to bring it under repo management, use `rehome /path/to/item`. It moves the target into `link-file/` or `link-dir/` inside the selected repo and leaves a symlink behind at the original location. Use `REHOME_DEFAULT_FILE_DEST` and `REHOME_DEFAULT_FOLDER_DEST` to change the default destinations.
+Add aliases, functions and settings to [source/](source). Run `src` to reload
+these files; its implementation lives in [.bashrc](link-file/.bashrc).
 
 ## Scripts
-In addition to the aforementioned [dotfiles][dotfiles] script, there are a few other [bin scripts](bin). This includes [nave](https://github.com/isaacs/nave), which is a [git submodule](vendor).
 
-* [dotfiles][dotfiles] - (re)initialize dotfiles. It might ask for your password (for `sudo`). Use `--copy`, `--link`, or `--init` to run a single phase.
-* `rehome` - move an existing file or folder into `link-file/` or `link-dir/` and symlink it back. Use `--repo-root /path/to/repo` to target another repo, and `REHOME_DEFAULT_FILE_DEST` / `REHOME_DEFAULT_FOLDER_DEST` to override the default destinations.
-* [src](link-file/.bashrc#L8-18) - (re)source all files in `/source` directory
-* `bin/lint` - lint shell scripts with `bash -n` and `shellcheck`, including `--format offenses`, `--format worst`, and `--autocorrect` support for ShellCheck diff patches.
-* Look through the [bin](bin) subdirectory for a few more.
+- [rehome](bin/rehome): bring an existing file or folder under repository
+  management, or move it back out. Run `rehome --help` for destinations and options.
+- [rehome_doctor](bin/rehome_doctor): find unmanaged home-directory items.
+- [lint](bin/lint): check shell syntax and ShellCheck findings; run `bin/lint --help`
+  for output formats and automatic fixes.
+- [runtests](bin/runtests): run shell tests; run `bin/runtests --help` for options.
+
+Browse [bin/](bin) for the remaining commands.
 
 ## AI tooling
 
-See [docs/ai-tooling.md](docs/ai-tooling.md) for the Ollama persistence setup, the shared Modelfile aliases in `~/.ollama/modelfiles`, and how that fits with VS Code extensions such as Copilot Chat and local Ollama clients.
+See [docs/ai-tooling.md](docs/ai-tooling.md) for Ollama persistence, shared Modelfile
+aliases and editor integration.
 
 ## Prompt
-I think [my bash prompt](source/50_prompt.sh) is awesome. It shows git and svn repo status, a timestamp, error exit codes, and even changes color depending on how you've logged in.
 
-Git repos display as **[branch:flags]** where flags are:
+The interactive Bash prompt uses [Starship](source/40_prompt.sh), configured in
+[starship.toml](link-file/.config/starship.toml).
 
-**?** untracked files
-**!** changed (but unstaged) files
-**+** staged files
+## Hacking my dotfiles
 
-SVN repos display as **[rev1:rev2]** where rev1 and rev2 are:
+The installer handles `copy/`, `link-dir/`, `link-file/` and `init/`; missing or
+empty directories are ignored. Run `bin/lint` followed by `bin/runtests` before
+submitting changes. See [AGENTS.md](AGENTS.md) for contributor conventions.
 
-**rev1** last changed revision
-**rev2** revision
-
-Check it out:
-
-![My awesome bash prompt](http://farm8.staticflickr.com/7142/6754488927_563dd73553_b.jpg)
+Report bugs through [issues](https://github.com/jesperronn/cowboy-dotfiles/issues)
+or submit a [pull request](https://github.com/jesperronn/cowboy-dotfiles/pulls).
 
 ## Inspiration
-<https://github.com/gf3/dotfiles>
-<https://github.com/mathiasbynens/dotfiles>
-(and 15+ years of accumulated crap)
+
+- [Ben Alman's dotfiles](https://github.com/cowboy/dotfiles)
+- [gf3/dotfiles](https://github.com/gf3/dotfiles)
+- [mathiasbynens/dotfiles](https://github.com/mathiasbynens/dotfiles)
 
 ## License
-Copyright (c) 2014 "Cowboy" Ben Alman
-Licensed under the MIT license.
-<http://benalman.com/about/license/>
+
+Copyright (c) 2014 "Cowboy" Ben Alman. Licensed under the
+[MIT license](http://benalman.com/about/license/).
