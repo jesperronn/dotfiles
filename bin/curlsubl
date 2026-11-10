@@ -5,7 +5,7 @@ if [[ ! "$1" || "$1" == "-h" || "$1" == "--help" ]]; then cat <<HELP
 Curl a remote file into an editor.
 http://benalman.com/
 
-echo "Usage: $(basename "$0") [curloptions...] url"
+Usage: $(basename "$0") [curloptions...] url
 
 Curl a remote file into the editor of your choice. The filename will be based
 on the URL's filename. If a file extension can't be determined from the URL,

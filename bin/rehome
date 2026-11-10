@@ -16,30 +16,24 @@ rehome_usage() {
   cat <<HELP
 Move an existing file or folder into a managed repo and leave a symlink behind.
 
-Usage: $(basename "$0") [options] [path]
+Usage: $(basename "$0") [options] <path>
 
 Options:
   -r, --repo-root PATH  Repo to write into.
       --revert          Move a managed path back from the repo.
   -h, --help            Show this help.
 
-Defaults:
-  Files are moved to REHOME_DEFAULT_FILE_DEST.
-  Folders are moved to REHOME_DEFAULT_FOLDER_DEST.
-  If those variables are unset, files go to link-file/ and folders go to link-dir/
-  under the selected repo root.
-
 Environment:
-  REHOME_REPO_ROOT            Repo to write into. Defaults to the directory
-                              that contains this script.
-  REHOME_DEFAULT_FILE_DEST    Default destination for files.
-  REHOME_DEFAULT_FOLDER_DEST  Default destination for folders.
+  REHOME_REPO_ROOT            Repo to write into (default: parent of this script's
+                              directory). --repo-root overrides it.
+  REHOME_DEFAULT_FILE_DEST    File destination (default: link-file/).
+  REHOME_DEFAULT_FOLDER_DEST  Folder destination (default: link-dir/).
+  Relative destinations are resolved under the selected repo root.
 
 Behavior:
-  - If the target is a file, it is moved into the file destination and symlinked back.
-  - If the target is a folder, it is moved into the folder destination and symlinked back.
-  - Relative paths are resolved from the current working directory.
-  - Existing symlinks are rejected.
+  Move the path into its file or folder destination and symlink it back.
+  Relative target paths are resolved from the current working directory.
+  Existing symlinks are rejected unless --revert is used.
 
 Revert behavior:
   - The target must be a symlink into the selected repo root.

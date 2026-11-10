@@ -10,9 +10,13 @@ source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
 TEST_TMP_DIR=""
 
+cleanup_test_tmp() {
+  rm -rf "$TEST_TMP_DIR"
+}
+
 setup_tmpdir() {
   TEST_TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TEST_TMP_DIR"' EXIT
+  trap 'cleanup_test_tmp' EXIT
 }
 
 make_repo_root() {
@@ -35,10 +39,11 @@ test_help_output() {
 
   capture_command output status "$REHOME_BIN" --help
   assert_status "0" "$status" "rehome --help succeeds"
-  assert_contains "$output" "Usage: rehome [options] [path]" "help lists the command usage"
+  assert_contains "$output" "Usage: rehome [options] <path>" "help lists the command usage"
   assert_contains "$output" "REHOME_DEFAULT_FILE_DEST" "help explains file destination defaults"
   assert_contains "$output" "REHOME_DEFAULT_FOLDER_DEST" "help explains folder destination defaults"
   assert_contains "$output" "--repo-root PATH" "help explains repo-root"
+  assert_contains "$output" "parent of this script's" "help describes the default repo root"
 }
 
 test_rehome_file_into_custom_repo() {
