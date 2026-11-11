@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """agent_insights — /insights-style usage reports for local coding-agent session logs.
 
-Usage: agent_insights <harness> [report|list] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+Usage: agent_insights <harness> [report|list|analyze] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
                                 [--project SUBSTR] [--top N] [--json]
 Harnesses: see HARNESSES below. Each reads its own on-disk format; --root overrides the default location.
 """
@@ -14,7 +14,37 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "li
 
 from agent_insights import common  # noqa: E402
 
-HARNESSES = ("omp", "copilot")
+HARNESSES = ("omp", "copilot", "codex", "pi")
+
+
+def run_analyze(args, sessions) -> int:
+    from agent_insights import analyze
+
+    if not sessions:
+        print(f"{args.harness}: no sessions found.", file=sys.stderr)
+        return 1
+    cmd = args.llm or analyze.DEFAULT_LLM
+    size = max(1, args.batch_size)
+    if args.dry_run:
+        print(analyze.dry_run_text(args.harness, sessions, cmd, size, args.top))
+        return 0
+    digest_bytes = sum(len(d.encode()) + 1 for d in analyze.build_digests(sessions))
+    print(f"agent_insights: sending {len(sessions)} sessions ({digest_bytes} digest bytes, no full "
+          f"transcripts) to LLM command: {cmd}", file=sys.stderr)
+    status = 0
+    try:
+        sections = analyze.analyze(args.harness, sessions, cmd, size, args.top)
+    except analyze.AnalyzeError as exc:
+        print(f"agent_insights: analyze failed: {exc}; emitting raw LLM output", file=sys.stderr)
+        sections = [{"title": "Raw LLM output (unparsed)", "paragraphs": [exc.raw or "(empty)"], "bullets": []}]
+        status = 1
+    text = analyze.render(args.format, args.harness, sections, analyze.meta_line(sessions))
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    else:
+        sys.stdout.write(text)
+    return status
 
 
 def main(argv=None) -> int:
@@ -22,13 +52,19 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="harness", required=True, metavar="HARNESS")
     for name in HARNESSES:
         p = sub.add_parser(name, help=f"usage insights for {name} sessions")
-        p.add_argument("mode", nargs="?", choices=("report", "list"), default="report")
+        p.add_argument("mode", nargs="?", choices=("report", "list", "analyze"), default="report")
         p.add_argument("--root", help="session directory (default: the harness's standard location)")
         p.add_argument("--since", help="only sessions started on/after YYYY-MM-DD")
         p.add_argument("--until", help="only sessions started on/before YYYY-MM-DD")
         p.add_argument("--project", help="only sessions whose working directory contains this text")
         p.add_argument("--top", type=int, default=10, help="rows per ranking (default 10)")
         p.add_argument("--json", action="store_true", help="machine-readable output (with per-session rows)")
+        p.add_argument("--llm", help="analyze: shell command reading the prompt on stdin, answer on stdout "
+                                     "(default: 'claude -p')")
+        p.add_argument("--format", choices=("md", "html"), default="md", help="analyze: output format")
+        p.add_argument("--out", help="analyze: write the report to this file instead of stdout")
+        p.add_argument("--dry-run", action="store_true", help="analyze: print prompts, make no LLM call")
+        p.add_argument("--batch-size", type=int, default=40, help="analyze: sessions per map call (default 40)")
     args = parser.parse_args(argv)
 
     module = importlib.import_module(f"agent_insights.{args.harness}")
@@ -37,6 +73,8 @@ def main(argv=None) -> int:
         print(f"agent_insights: {args.harness}: no such directory: {root}", file=sys.stderr)
         return 1
     sessions = common.filter_sessions(module.load_sessions(root), args.since, args.until, args.project)
+    if args.mode == "analyze":
+        return run_analyze(args, sessions)
     if args.json:
         print(common.render_json(args.harness, sessions, with_sessions=True))
     elif args.mode == "list":
