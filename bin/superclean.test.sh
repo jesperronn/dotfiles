@@ -378,7 +378,7 @@ test_interactive_main_flow() {
   rm -f "$order_log"
   rm -rf "$tmp_root"
 
-  capture_command output status bash -lc "cd \"$DOTFILES\" && source bin/superclean source && \
+  capture_command output status bash -c "cd \"$DOTFILES\" && source bin/superclean source && \
     superclean_detect_tools() { :; } && \
     superclean_protips() { :; } && \
     superclean_capture_start_disk() { :; } && \
@@ -681,7 +681,7 @@ test_selector_and_apply_flows() {
   rm -rf "$tmp_root"
 
   tmp_root="$(mktemp -d)"
-  apply_output="$(TMP_ROOT="$tmp_root" DOTFILES="$DOTFILES" bash -lc '
+  apply_output="$(TMP_ROOT="$tmp_root" DOTFILES="$DOTFILES" bash -c '
     set -euo pipefail
     cd "$DOTFILES"
     source bin/superclean source
@@ -731,7 +731,7 @@ test_selector_and_apply_flows() {
   rm -rf "$tmp_root"
 
   tmp_root="$(mktemp -d)"
-  apply_output="$(TMP_ROOT="$tmp_root" DOTFILES="$DOTFILES" bash -lc '
+  apply_output="$(TMP_ROOT="$tmp_root" DOTFILES="$DOTFILES" bash -c '
     set -euo pipefail
     cd "$DOTFILES"
     source bin/superclean source
@@ -830,7 +830,7 @@ test_review_path_helpers() {
   rm -rf "$tmp_root"
   HOME="/Users/jesper"
 
-  apply_output="$(TMP_ROOT="$(mktemp -d)" DOTFILES="$DOTFILES" bash -lc '
+  apply_output="$(TMP_ROOT="$(mktemp -d)" DOTFILES="$DOTFILES" bash -c '
     set -euo pipefail
     cd "$DOTFILES"
     source bin/superclean source
