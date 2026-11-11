@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# dev — start the local development server (or watcher) for the project.
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/dev [--dry-run] [ARGS...]
+
+Starts the first match, passing ARGS on:
+  $DEV_CMD                            any command (run through bash -c)
+  Procfile.dev                        overmind start -f | foreman start -f
+  Rails                               bin/rails server
+  package.json "dev" script           <pm> run dev
+  Spring Boot (maven | gradle)        mvn spring-boot:run | gradle bootRun
+  Go main.go or one cmd/<name>/       go run
+Nothing matches: exit 1; set DEV_CMD or edit this script.
+Exit: the server's own status; 2 usage. Env: DRY_RUN=1 like --dry-run.
+USAGE
+}
+
+dev_command() {
+  local cmds=() pm tool
+  if [[ -n "${DEV_CMD:-}" ]]; then
+    cmds=(bash -c "$DEV_CMD" dev)
+  elif has_file Procfile.dev; then
+    if command -v overmind >/dev/null 2>&1; then
+      cmds=(overmind start -f Procfile.dev)
+    else
+      cmds=(foreman start -f Procfile.dev)
+    fi
+  elif is_rails; then
+    cmds=(bin/rails server)
+  elif has_file package.json && grep -q '"dev"' "$PROJECT_ROOT/package.json"; then
+    pm="$(js_pm)"
+    cmds=("$pm" run dev)
+  elif (is_maven || is_gradle) && build_file_mentions spring-boot; then
+    tool="$(java_tool)"
+    if is_maven; then cmds=("$tool" spring-boot:run); else cmds=("$tool" bootRun); fi
+  elif has_file go.mod && has_file main.go; then
+    cmds=(go run .)
+  elif has_file go.mod && [[ $(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) -eq 1 ]]; then
+    cmds=(go run "./cmd/$(basename "$(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d)")")
+  else
+    return 1
+  fi
+  printf '%s\0' "${cmds[@]}"
+}
+
+main() {
+  local cmd=() args=() arg
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --dry-run) export DRY_RUN=1 ;;
+      --)
+        args+=("$@")
+        break
+        ;;
+      *) args+=("$arg") ;;
+    esac
+  done
+  while IFS= read -r -d '' arg; do cmd+=("$arg"); done < <(dev_command) || true
+  if [[ ${#cmd[@]} -eq 0 ]]; then
+    echo "bin/dev: no dev command found; set DEV_CMD or edit bin/dev" >&2
+    exit "$EX_FAILED"
+  fi
+  cmd+=(${args[@]+"${args[@]}"})
+  if [[ "$DRY_RUN" == 1 ]]; then
+    printf '+'
+    printf ' %q' "${cmd[@]}"
+    printf '\n'
+    exit 0
+  fi
+  cd "$PROJECT_ROOT"
+  exec "${cmd[@]}"
+}
+
+main "$@"

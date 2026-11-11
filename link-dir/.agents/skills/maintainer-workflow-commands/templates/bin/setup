@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# setup — install what the project needs to start, per ecosystem. Idempotent.
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/setup [--check] [--dry-run]
+
+Installs dependencies for every detected ecosystem, then runs bin/setup.d/*
+(executable, sorted; put project steps there: TLS certs, git hooks, seed data).
+  bash   needs shellcheck, shfmt
+  ruby   bundle install; Rails with config/database.yml: bin/rails db:prepare
+  js     npm ci | yarn install --immutable | pnpm install --frozen-lockfile (by lockfile)
+  go     go mod download
+  java   mvn dependency:go-offline | gradle assemble (wrapper preferred)
+--check only verifies the tools are installed and changes nothing.
+Exit: 0 ok, 1 a step failed, 9 tool missing, 2 usage. Env: DRY_RUN=1 like --dry-run.
+USAGE
+}
+
+CHECK=0
+
+tools_for() {
+  case "$1" in
+    bash) echo "shellcheck shfmt" ;;
+    ruby) echo "ruby bundle" ;;
+    js) echo "node $(js_pm)" ;;
+    go) echo "go" ;;
+    java) echo "java $(java_tool)" ;;
+  esac
+}
+
+check_tools() {
+  local t
+  for t in $(tools_for "$1"); do
+    if [[ "$t" == ./* ]] && [[ -x "$PROJECT_ROOT/$t" ]] || command -v "$t" >/dev/null 2>&1; then
+      record_step "$1: $t" ok
+    else
+      record_step "$1: $t" MISSING
+    fi
+  done
+}
+
+ruby_install() { bundle check >/dev/null 2>&1 || bundle install; }
+
+setup_ruby() {
+  run_step "ruby bundle install" ruby_install
+  if is_rails && has_file config/database.yml; then
+    run_step "rails db:prepare" bin/rails db:prepare
+  fi
+}
+
+setup_js() {
+  case "$(js_pm)" in
+    pnpm) run_step "js pnpm install" pnpm install --frozen-lockfile ;;
+    yarn)
+      if has_file .yarnrc.yml; then
+        run_step "js yarn install" yarn install --immutable
+      else
+        run_step "js yarn install" yarn install --frozen-lockfile
+      fi
+      ;;
+    *)
+      if has_file package-lock.json; then
+        run_step "js npm ci" npm ci
+      else
+        run_step "js npm install" npm install
+      fi
+      ;;
+  esac
+}
+
+setup_go() { run_step "go mod download" go mod download; }
+
+setup_java() {
+  local tool
+  tool="$(java_tool)"
+  if is_maven; then
+    run_step "java $tool dependency:go-offline" "$tool" -B -q dependency:go-offline
+  else
+    run_step "java $tool assemble" "$tool" assemble
+  fi
+}
+
+setup_bash() { skip_step "bash" "nothing to install (run bin/setup --check for shellcheck, shfmt)"; }
+
+run_setup_d() {
+  local f
+  for f in "$PROJECT_ROOT"/bin/setup.d/*; do
+    [[ -x "$f" && -f "$f" ]] && run_step "setup.d/$(basename "$f")" "bin/setup.d/$(basename "$f")"
+  done
+  return 0
+}
+
+main() {
+  local arg g
+  local groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --check) CHECK=1 ;;
+      --dry-run) export DRY_RUN=1 ;;
+      *) die_usage "unknown option: $arg" ;;
+    esac
+  done
+  while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "nothing to set up: no Gemfile, package.json, go.mod, pom.xml, build.gradle or *.sh found" >&2
+    exit "$EX_FAILED"
+  fi
+  for g in "${groups[@]}"; do
+    if [[ "$CHECK" == 1 ]]; then check_tools "$g"; else "setup_$g"; fi
+  done
+  [[ "$CHECK" == 1 ]] || run_setup_d
+  print_summary
+}
+
+main "$@"

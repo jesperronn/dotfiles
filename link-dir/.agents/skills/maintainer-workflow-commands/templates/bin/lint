@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# lint — lint (and with --autofix, format) the project per ecosystem (bash, ruby, js, go, java).
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/lint [--autofix] [--bash] [--ruby] [--js] [--go] [--java] [--dry-run] [PATH...]
+
+No PATH lints the whole project; PATH may be files or directories (a directory
+expands through git ls-files). Each file goes to its own group by extension, else
+by shebang. Group flags restrict the run. Java linters work on the whole project
+and ignore PATH.
+  bash   shellcheck + shfmt (.editorconfig, else -i 2 -ci)   --autofix: shfmt -w
+  ruby   rubocop                                              --autofix: rubocop -a
+  js     biome | eslint | package.json "lint" script          --autofix: --write / --fix
+  go     gofmt -l, go vet, golangci-lint when configured      --autofix: gofmt -w
+  java   spotless | checkstyle when configured                --autofix: spotless apply
+Every group runs even if one fails. Exit: 0 clean, 1 findings, 9 tool missing, 2 usage.
+Env: DRY_RUN=1 like --dry-run.
+USAGE
+}
+
+AUTOFIX=0
+F_bash=() F_ruby=() F_js=() F_go=() F_java=()
+
+lint_group_of() {
+  local f="$1" first
+  case "$f" in
+    *.sh | *.bash)
+      echo bash
+      return
+      ;;
+    *.rb | *.rake | *.gemspec | Gemfile | Rakefile | Capfile | config.ru | */Gemfile | */Rakefile)
+      echo ruby
+      return
+      ;;
+    *.js | *.mjs | *.cjs | *.jsx | *.ts | *.tsx)
+      echo js
+      return
+      ;;
+    *.go)
+      echo go
+      return
+      ;;
+    *.java)
+      echo java
+      return
+      ;;
+  esac
+  [[ -f "$PROJECT_ROOT/$f" && "$f" != *.* ]] || return 0
+  first="$(head -n 1 "$PROJECT_ROOT/$f" 2>/dev/null || true)"
+  case "$first" in
+    '#!'*bash* | '#!'*/sh | '#!/usr/bin/env sh') echo bash ;;
+    '#!'*ruby*) echo ruby ;;
+    '#!'*node*) echo js ;;
+  esac
+}
+
+add_file() {
+  case "$1" in
+    bash) F_bash+=("$2") ;;
+    ruby) F_ruby+=("$2") ;;
+    js) F_js+=("$2") ;;
+    go) F_go+=("$2") ;;
+    java) F_java+=("$2") ;;
+  esac
+}
+
+# Classify a root-relative file or directory and queue its files.
+queue_path() {
+  local rel="$1" f g
+  if [[ -d "$PROJECT_ROOT/$rel" ]]; then
+    while IFS= read -r f; do
+      g="$(lint_group_of "$f")"
+      [[ -n "$g" ]] && add_file "$g" "$f"
+    done < <(cd "$PROJECT_ROOT" && { git ls-files -- "$rel" 2>/dev/null || find "$rel" -type f; })
+  else
+    g="$(lint_group_of "$rel")"
+    [[ -n "$g" ]] && add_file "$g" "$rel"
+  fi
+  return 0
+}
+
+# Whole-project bash files: tracked *.sh plus extensionless scripts under bin/.
+queue_all_bash() {
+  local f g
+  while IFS= read -r f; do
+    g="$(lint_group_of "$f")"
+    [[ "$g" == bash ]] && F_bash+=("$f")
+  done < <(cd "$PROJECT_ROOT" && git ls-files '*.sh' 'bin/*' 2>/dev/null || true)
+  return 0
+}
+
+# go: print the package directories of a file list (default ./...).
+go_pkgs() {
+  local f d seen=" "
+  if [[ $# -eq 0 ]]; then
+    echo "./..."
+    return
+  fi
+  for f in "$@"; do
+    d="$(dirname "$f")"
+    [[ "$d" == . ]] && d="." || d="./$d"
+    case "$seen" in *" $d "*) continue ;; esac
+    seen+="$d "
+    echo "$d"
+  done
+}
+
+go_fmt_check() {
+  local out
+  out="$(gofmt -l "$@")" || return $?
+  [[ -z "$out" ]] || {
+    printf 'not gofmt-formatted:\n%s\n' "$out"
+    return 1
+  }
+}
+
+lint_bash() {
+  local style=(-i 2 -ci)
+  has_file .editorconfig && style=()
+  [[ ${#F_bash[@]} -eq 0 ]] && skip_step "bash" "no shell files" && return
+  run_step "bash shellcheck" shellcheck -x -P SCRIPTDIR "${F_bash[@]}"
+  if [[ "$AUTOFIX" == 1 ]]; then
+    run_step "bash shfmt -w" shfmt ${style[@]+"${style[@]}"} -w "${F_bash[@]}"
+  else
+    run_step "bash shfmt -d" shfmt ${style[@]+"${style[@]}"} -d "${F_bash[@]}"
+  fi
+}
+
+lint_ruby() {
+  local cmd=(bundle exec rubocop) flags=()
+  [[ -x "$PROJECT_ROOT/bin/rubocop" ]] && cmd=(bin/rubocop)
+  [[ "$AUTOFIX" == 1 ]] && flags=(-a)
+  run_step "ruby ${cmd[*]}" "${cmd[@]}" ${flags[@]+"${flags[@]}"} ${F_ruby[@]+"${F_ruby[@]}"}
+}
+
+lint_js() {
+  local targets=(.) pm
+  pm="$(js_pm)"
+  [[ ${#F_js[@]} -gt 0 ]] && targets=("${F_js[@]}")
+  if has_file biome.json || has_file biome.jsonc; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "js biome check --write" npx --no-install biome check --write "${targets[@]}"
+    else
+      run_step "js biome check" npx --no-install biome check "${targets[@]}"
+    fi
+  elif compgen -G "$PROJECT_ROOT/eslint.config.*" >/dev/null || compgen -G "$PROJECT_ROOT/.eslintrc*" >/dev/null; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "js eslint --fix" npx --no-install eslint --fix "${targets[@]}"
+    else
+      run_step "js eslint" npx --no-install eslint "${targets[@]}"
+    fi
+  elif grep -q '"lint"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
+    run_step "js $pm run lint" "$pm" run lint
+  else
+    skip_step "js" "no biome, eslint or lint script configured"
+  fi
+}
+
+lint_go() {
+  local files=(".") pkgs=()
+  [[ ${#F_go[@]} -gt 0 ]] && files=("${F_go[@]}")
+  while IFS= read -r p; do pkgs+=("$p"); done < <(go_pkgs ${F_go[@]+"${F_go[@]}"})
+  if [[ "$AUTOFIX" == 1 ]]; then
+    run_step "go gofmt -w" gofmt -w "${files[@]}"
+  else
+    run_step "go gofmt -l" go_fmt_check "${files[@]}"
+  fi
+  run_step "go vet" go vet "${pkgs[@]}"
+  if has_file .golangci.yml || has_file .golangci.yaml || has_file .golangci.toml; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "go golangci-lint --fix" golangci-lint run --fix "${pkgs[@]}"
+    else
+      run_step "go golangci-lint" golangci-lint run "${pkgs[@]}"
+    fi
+  fi
+}
+
+lint_java() {
+  local tool
+  tool="$(java_tool)"
+  if build_file_mentions spotless; then
+    if is_maven; then
+      run_step "java spotless" "$tool" -B "spotless:$([[ "$AUTOFIX" == 1 ]] && echo apply || echo check)"
+    else
+      run_step "java spotless" "$tool" "$([[ "$AUTOFIX" == 1 ]] && echo spotlessApply || echo spotlessCheck)"
+    fi
+  elif build_file_mentions checkstyle; then
+    if is_maven; then run_step "java checkstyle" "$tool" -B checkstyle:check; else run_step "java checkstyle" "$tool" checkstyleMain; fi
+  else
+    skip_step "java" "no spotless or checkstyle configured (add spotless)"
+  fi
+}
+
+main() {
+  local arg g p rel
+  local paths=() groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --dry-run) export DRY_RUN=1 ;;
+      -a | --autofix) AUTOFIX=1 ;;
+      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
+      -*) die_usage "unknown option: $arg" ;;
+      *) paths+=("$arg") ;;
+    esac
+  done
+
+  if [[ ${#paths[@]} -gt 0 ]]; then
+    for p in "${paths[@]}"; do
+      rel="$(root_rel "$p")" || die_usage "no such path: $p"
+      queue_path "$rel"
+    done
+    for g in $ALL_GROUPS; do
+      case "$g" in
+        bash) [[ ${#F_bash[@]} -gt 0 ]] && groups+=(bash) ;;
+        ruby) [[ ${#F_ruby[@]} -gt 0 ]] && groups+=(ruby) ;;
+        js) [[ ${#F_js[@]} -gt 0 ]] && groups+=(js) ;;
+        go) [[ ${#F_go[@]} -gt 0 ]] && groups+=(go) ;;
+        java) [[ ${#F_java[@]} -gt 0 ]] && groups+=(java) ;;
+      esac
+    done
+    if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
+      local keep=()
+      for g in ${groups[@]+"${groups[@]}"}; do
+        case " ${SELECTED_GROUPS[*]} " in *" $g "*) keep+=("$g") ;; esac
+      done
+      groups=(${keep[@]+"${keep[@]}"})
+    fi
+  else
+    while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
+    case " ${groups[*]-} " in *" bash "*) queue_all_bash ;; esac
+  fi
+
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "nothing to lint for the given paths and flags" >&2
+    exit 0
+  fi
+  for g in "${groups[@]}"; do "lint_$g"; done
+  print_summary
+}
+
+main "$@"

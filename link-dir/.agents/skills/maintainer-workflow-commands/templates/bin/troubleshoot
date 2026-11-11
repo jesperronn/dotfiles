@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# troubleshoot — diagnose a local target by running checks; for any other target only print commands.
+set -euo pipefail
+
+# PROJECT: edit these.
+APP_NAME="${APP_NAME:-myapp}"
+LOCAL_TARGETS="local compose"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/troubleshoot <target>
+
+Local targets (local, compose; edit LOCAL_TARGETS): run bin/setup --check and every
+executable bin/doctor, continue past failures, exit 1 if any failed.
+Any other target (staging, production, a host): runs NOTHING; prints the commands
+for you to run and paste back. Safety rule, do not weaken it.
+Exit: 0 ok, 1 a local check failed, 2 usage. Env: APP_NAME.
+USAGE
+}
+
+is_local() {
+  local t
+  for t in $LOCAL_TARGETS; do [[ "$t" == "$1" ]] && return 0; done
+  return 1
+}
+
+run_local() {
+  local root failed=0 check
+  root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  for check in "bin/setup --check" "bin/doctor"; do
+    [[ -x "$root/${check%% *}" ]] || continue
+    printf '==> %s\n' "$check"
+    # shellcheck disable=SC2086
+    (cd "$root" && $check) || failed=$((failed + 1))
+  done
+  [[ "$failed" -eq 0 ]] || {
+    printf '%d check(s) failed.\n' "$failed"
+    return 1
+  }
+}
+
+# printf only: this path must work with an empty PATH, proving nothing is executed.
+print_remote() {
+  printf '%s\n' "Run these yourself and paste the output back (nothing was executed):" \
+    "  ssh $1 'sudo systemctl status $APP_NAME --no-pager'" \
+    "  ssh $1 'sudo journalctl -u $APP_NAME -n 200 --no-pager'" \
+    "  curl -fsS -o /dev/null -w '%{http_code}\\n' https://$1/    # PROJECT: use the health endpoint"
+}
+
+main() {
+  case "${1-}" in
+    -h | --help) usage ;;
+    "")
+      usage >&2
+      exit 2
+      ;;
+    *) if is_local "$1"; then run_local; else print_remote "$1"; fi ;;
+  esac
+}
+
+main "$@"

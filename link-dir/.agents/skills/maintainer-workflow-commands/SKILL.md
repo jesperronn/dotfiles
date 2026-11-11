@@ -1,122 +1,93 @@
 ---
 name: maintainer-workflow-commands
 group: shell-bash
-summary: "Recipe for maintainer bin/ commands (workflows cheat sheet, troubleshoot, deps, changelog) with safety rules, exit codes and hermetic tests."
-description: Use when adding or auditing maintainer workflow commands in a project (bin/workflows, bin/troubleshoot, bin/deps, bin/changelog), or when asked to make setup, deps, release, deploy and troubleshoot discoverable and safe for humans and agents.
+summary: "Copy-in bin/ command templates (setup, dev, test, lint, deps, workflows, troubleshoot) for bash, Ruby/Rails, JS, Go and Java projects, with safety rules, exit codes and hermetic tests."
+description: Use when adding or auditing maintainer commands in any project (bin/setup, bin/dev, bin/test, bin/lint, bin/deps, bin/workflows, bin/troubleshoot, release/changelog), or when asked to make setup, test, lint, deps, release, deploy and troubleshoot discoverable and safe for humans and agents.
 ---
 
 # Maintainer workflow commands
 
-Generalized from plus-reporter, cancerventetid and bbapprove. Examples use
-their script names; adapt to the project.
-Full command/flag/exit-code catalogue: [workflows.md](workflows.md).
+One verb per task, same name in every project. Humans and agents run
+`bin/workflows`, then the verb. Templates are in [templates/bin](templates/bin);
+per-ecosystem commands in [ecosystems.md](ecosystems.md); how three real repos
+did it in [examples.md](examples.md).
 
-## 1. Survey, index, fill gaps
+## Verbs
 
-Workflow set: setup, develop, deps, release (preview + bump), deploy (local
-rehearsal vs real), troubleshoot (local vs remote).
-
-1. List what `bin/`, `Makefile`, CI and docs already provide. Reuse it.
-2. Index existing commands in `bin/workflows`; write new scripts only for gaps.
-3. If a concept does not exist (no staging, no rehearsal target, no
-   changelog file), say so in the sheet. Never invent stages or targets.
-
-## 2. `bin/workflows [name]`
-
-- Print-only cheat sheet: no side effects, one `== name ==` section per
-  workflow, no argument prints all, unknown name exits 64 (usage), `--help` 0.
-- Docs: a pointer in AGENTS.md plus one short `doc(s)/workflows.md`; the
-  sheet is the command index, the doc holds only the why and links.
-- Test: each section header present, unknown name exits 64.
-
-## 3. `bin/troubleshoot <target>`
-
-- Local/rehearsal targets (`deploymock`, `compose`): run the checks (status,
-  doctor, host check), continue past failures, exit non-zero if any failed.
-- Any other target (staging, production, remote host): run NOTHING; print the
-  commands for the user to run and paste back. Hard safety rule.
-- Missing target: usage, exit 64.
-- Test the rule by running with `PATH=/nonexistent:/usr/bin:/bin`: output must
-  still be the hints, proving nothing was executed.
-
-## 4. `bin/deps`
-
-- No flag: read-only list of outdated packages. `--patch|--minor|--major`
-  (mutually exclusive) update up to that level. `--ruby|--js` scope (default
-  both). Named packages need exactly one scope flag. `--dry-run` (level flags only; listing ignores it with a note), `--verbose`.
-- Never commits. Prints next steps (`bin/test && bin/lint`) and a suggested
-  commit message.
-- Outdated listers exit 1 when something is outdated: not a failure.
-- Ecosystems differ: bundler uses `bundle outdated --only-explicit`;
-  yarn has its own upgrade flow; npm needs `npx npm-check-updates --target
-  <level> -u` then `npm install` (rewrites ranges, so it changes pins).
-- Ruby/runtime versions are a separate command (`bin/bump_ruby`), not `deps`.
-- Include project-specific drift checks (vendored Bootstrap) in the listing.
-
-## 5. `bin/changelog next|render|due`
-
-Read-only preview of "what would this release be" (inspired by bbapprove's
-Go tool).
-
-- `next`: next vX.Y.Z from conventional commits since the latest tag
-  (`v0.0.0` if none). `render`: the changelog section. `due`: time left of
-  the quiet period since HEAD (`--grace 2h`, `--now EPOCH` for tests).
-- Exit: 0 ok/releasable/due, 1 error, 2 usage, 3 nothing releasable, 4 not
-  yet due. Never tags, fetches or writes.
-
-| Commit | Bump | Section |
+| Verb | Does | Template |
 | --- | --- | --- |
-| `!:` / `BREAKING CHANGE` | major | Changed (BREAKING), first |
-| `feat` | minor | Added |
-| `fix` | patch | Fixed |
-| `perf` | patch | Changed |
-| `revert` | none alone | Changed |
-| docs/test/chore/refactor/ci/build/style | none | omitted |
+| `workflows [name]` | print-only cheat sheet | yes |
+| `setup [--check]` | install what the project needs; idempotent | yes |
+| `dev` | start the dev server | yes |
+| `test [--group] [PATH]` | tests per ecosystem, narrowed by path | yes |
+| `lint [--autofix] [PATH]` | lint/format per ecosystem | yes |
+| `deps [--patch\|--minor\|--major]` | list or update dependencies | yes |
+| `troubleshoot <target>` | local: run checks; remote: print only | yes |
+| `changelog next\|render\|due`, release, deploy | project specific | see below |
 
-- Omit an `update` subcommand when the changelog lives in tag messages (or the
-  file is stale); say why in the docs. bbapprove has `update` because it keeps
-  CHANGELOG.md.
-- Share tag lookup and version math with `bin/bump_version`: guard its main
-  with `if [[ "${BASH_SOURCE[0]}" == "$0" ]]`, then `source` it. Do not
-  duplicate. After sourcing, undo its `pushd`/`cd` and its color setup.
-- Deliberate difference: `bump_version` suggests a patch when nothing is
-  releasable; `changelog next` exits 3. Document it in the release doc.
+## Adopt in a project
 
-## 6. Shared conventions
+1. Survey `bin/`, `Makefile`, CI, docs. Reuse what exists; index it in
+   `bin/workflows`. Where a concept does not exist (staging, release), write
+   "none". Never invent stages.
+2. Copy `templates/bin/*` and `lib/project.sh`, `chmod +x`. Keep only the
+   ecosystems the project uses; detection is by `Gemfile`, `package.json`,
+   `go.mod`, `pom.xml`/`build.gradle*`, `*.sh`.
+3. Project-specific steps go in `bin/setup.d/NN-name` (executable), checks in
+   `bin/doctor`; edit the `PROJECT` lines in `workflows` and `troubleshoot`.
+4. Wire `bin/test` and `bin/lint` into CI. Add `bin/commands.test.sh` (needs a
+   `bin/lib/bash_test.sh` harness; `BASH_TEST_LIB` overrides the path).
+5. Point AGENTS.md at `bin/workflows`.
 
-- Exit codes: 0 ok, 1 error, 2 usage (or 64 if the project already uses
-  it; pick one per project and keep it). `--help` on every command.
-- Plain output when not a TTY or `NO_COLOR` is set; one shared color lib
-  (`bin/lib/common_output.sh`).
-- Tests: colocated `bin/<name>.test.sh` with the shared harness
-  (`bin/lib/bash_test.sh`, PASS/FAIL), wired into the project runner
-  (`bin/test-sh`, `bin/test --sh`, CI). Hermetic: scratch git repos with
-  explicit `user.name/email`; PATH stubs for ssh/scp/curl/bundle/npm; never
-  real servers or the repo's own tags. Fixed commit dates and `--now` for
-  time logic.
-- Lint: shellcheck + shfmt through `bin/lint`.
-- Docs: short, one home per fact (see concise-docs). Help text is the
-  reference for flags; docs link to it.
+A Makefile, `just` or Gradle task project keeps its runner: make the verbs
+thin wrappers or index them in `bin/workflows`.
 
-## 7. Applying to a new project
+## Template behaviour
 
-1. Survey (section 1); note missing concepts.
-2. Write `bin/workflows` + test; add the AGENTS.md pointer and a short doc.
-3. Add `bin/troubleshoot` + test if there is any deploy target.
-4. Add `bin/deps` + test with PATH stubs; add the `--dry-run` path first.
-5. Add `bin/changelog` once releases use conventional commits and tags.
-6. Wire tests into the runner and CI; run lint and the full suite.
-7. Update `bin/workflows` so every new command is indexed.
+- `--dry-run` (or `DRY_RUN=1`) prints `+ command` lines and runs nothing; use it
+  to preview and to test.
+- Groups: `--bash --ruby --js --go --java`. None selected = all detected.
+- PATH args (test, lint) route to the right group by name; a file never goes
+  to a linter of another language.
+- Every group runs even if one fails; summary lines `ok|FAIL|MISSING|skip`.
+- Exit: 0 ok, 1 failed, 9 tool missing, 2 usage (`EX_USAGE` in `lib/project.sh`;
+  use 64 if the project already does). `--help` exits 0 everywhere.
+- Plain output when not a TTY or `NO_COLOR` is set.
+
+## Safety rules
+
+- Remote targets (staging, production, any host): run NOTHING, print the
+  commands for the user. Test with `PATH=/nonexistent bash bin/troubleshoot prod`.
+- `deps` never commits; `changelog` never tags; release never pushes without a
+  prompt. Agents never run deploys, `ssh`, `cap` or `ansible` against remote.
+- Never probe a script with `--help` unless you know it parses it: some `bin/setup`
+  scripts ignore args and run everything.
+
+## Release and changelog (no template; write when releases use tags)
+
+- Prefer the project's existing tool (goreleaser, git-cliff, release-please,
+  semantic-release, JReleaser). Hand-roll only if none exists.
+- `changelog next`: next `vX.Y.Z` from conventional commits since the latest tag
+  (`v0.0.0` if none); `render`: the section; `due --grace 2h`: quiet period
+  left. Exit 0 ok, 3 nothing releasable, 4 not yet due. Read-only.
+- Bump: `!:`/`BREAKING CHANGE` major; `feat` minor; `fix`, `perf` patch; the
+  rest none. Entry format `- **scope:** description (hash)`.
+- Share tag lookup with any `bump_version`: guard its main with
+  `[[ "${BASH_SOURCE[0]}" == "$0" ]]` and `source` it.
+
+## Tests
+
+Colocated `bin/*.test.sh` with a shared harness (`test_pass`, `assert_*`).
+Hermetic: scratch git repos with explicit `user.name/email`, stubs first on
+`PATH`, waits as env vars set to `0`, `--dry-run` instead of real installs. Every
+assertion prints `[PASS]`.
 
 ## Pitfalls
 
-- macOS: BSD `sed` breaks GNU syntax; use `gsed` when available.
-- In a sourced script `$0` is the caller; use `${BASH_SOURCE[0]}` for paths and
-  the main guard.
+- macOS BSD `sed`: use `gsed`. Bash 3.2 has no associative arrays and breaks
+  `"${arr[@]}"` on empty arrays under `set -u`: use `${arr[@]+"${arr[@]}"}`.
+- In a sourced script `$0` is the caller; use `${BASH_SOURCE[0]}`.
+- A test copying `bin/` into a scratch project must drop its own `*.test.sh`,
+  or `bin/test --bash` runs it recursively.
+- Test the "runs nothing" path with builtins only (`printf`, not `cat`).
 - `assert_contains` takes the haystack first, then the needle.
-- Tests that `source` another script need `# shellcheck disable=SC1091` (or
-  `source=` directive).
-- `bump_version`-style tools default to a patch bump when nothing is
-  releasable; guard with `changelog next` (exit 3).
-- Sourcing a script that `set -e`s or `pushd`s changes the caller's shell;
-  restore it.

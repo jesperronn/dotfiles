@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# commands.test.sh — tests for the bin/ command templates; hermetic, uses --dry-run and a scratch project.
+# shellcheck disable=SC1090,SC1091
+set -euo pipefail
+
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+source "${BASH_TEST_LIB:-$BIN_DIR/lib/bash_test.sh}"
+
+TEST_TMP_DIR="$(mktemp -d)"
+cleanup_test_tmp() { rm -rf "$TEST_TMP_DIR"; }
+trap cleanup_test_tmp EXIT
+
+# mk_project NAME FILES...: scratch git repo with a copy of bin/ and the given files.
+mk_project() {
+  local dir="$TEST_TMP_DIR/$1" f
+  shift
+  mkdir -p "$dir/bin"
+  cp -R "$BIN_DIR/." "$dir/bin/"
+  rm -f "$dir/bin/commands.test.sh" # the copy would run itself through bin/test --bash
+  for f in "$@"; do
+    mkdir -p "$dir/$(dirname "$f")"
+    : >"$dir/$f"
+  done
+  git -C "$dir" init -q
+  git -C "$dir" add -A
+  printf '%s\n' "$dir"
+}
+
+run() { # run VAR_OUT VAR_STATUS DIR CMD...
+  local out_var="$1" st_var="$2" dir="$3"
+  shift 3
+  capture_command "$out_var" "$st_var" env -C "$dir" "$@"
+}
+
+test_workflows_prints_every_section() {
+  local out st dir
+  dir="$(mk_project wf)"
+  run out st "$dir" bin/workflows
+  assert_status 0 "$st" "workflows exits 0"
+  local s
+  for s in setup dev test lint deps release deploy troubleshoot; do
+    assert_contains "$out" "== $s ==" "workflows prints section $s"
+  done
+  run out st "$dir" bin/workflows nope
+  assert_status 2 "$st" "unknown workflow exits 2"
+}
+
+test_test_runs_every_detected_group() {
+  local out st dir
+  dir="$(mk_project t1 Gemfile spec/a_spec.rb go.mod package.json pom.xml bin/x.sh)"
+  run out st "$dir" bin/test --dry-run
+  assert_status 0 "$st" "dry run exits 0"
+  assert_contains "$out" "+ bundle exec rspec" "ruby runs rspec when spec/ exists"
+  assert_contains "$out" "+ go test ./... -count=1 -race" "go runs all packages with race"
+  assert_contains "$out" "+ npm run test" "js runs the test script"
+  assert_contains "$out" "+ mvn -B test" "java runs maven"
+  assert_contains "$out" "skipped: no *.test.sh" "bash group says when it has no tests"
+}
+
+test_test_group_flag_and_paths() {
+  local out st dir
+  dir="$(mk_project t2 Gemfile spec/models/a_spec.rb go.mod internal/x/y_test.go package.json)"
+  run out st "$dir" bin/test --dry-run --go
+  assert_not_contains "$out" "rspec" "--go skips ruby"
+  assert_contains "$out" "go test" "--go runs go"
+  run out st "$dir" bin/test --dry-run spec/models/a_spec.rb
+  assert_contains "$out" "+ bundle exec rspec spec/models/a_spec.rb" "spec path goes to rspec"
+  assert_not_contains "$out" "go test" "spec path does not run go"
+  run out st "$dir" bin/test --dry-run internal/x/y_test.go
+  assert_contains "$out" "+ go test ./internal/x -count=1 -race" "go file maps to its package"
+  run out st "$dir" bin/test --dry-run --bogus
+  assert_status 2 "$st" "unknown option exits 2"
+  run out st "$dir" bin/test --dry-run nope.txt
+  assert_status 2 "$st" "missing path exits 2"
+}
+
+test_test_bash_group_runs_colocated_tests() {
+  local out st dir
+  dir="$(mk_project t3 bin/tool.sh)"
+  printf '#!/usr/bin/env bash\necho ran-tool-test\n' >"$dir/bin/tool.test.sh"
+  run out st "$dir" bin/test --bash
+  assert_status 0 "$st" "passing bash test exits 0"
+  assert_contains "$out" "ran-tool-test" "colocated test ran"
+  printf '#!/usr/bin/env bash\nexit 3\n' >"$dir/bin/tool.test.sh"
+  run out st "$dir" bin/test --bash bin/tool.test.sh
+  assert_status 1 "$st" "failing bash test exits 1"
+  assert_contains "$out" "FAIL" "summary names the failure"
+}
+
+test_test_missing_tool_exits_9() {
+  local out st dir
+  dir="$(mk_project t4 go.mod)"
+  run out st "$dir" env PATH="/nonexistent" "$(command -v bash)" bin/test --go
+  assert_status 9 "$st" "missing go exits 9"
+  assert_contains "$out" "MISSING" "summary says MISSING"
+}
+
+test_lint_routes_files_and_autofix() {
+  local out st dir
+  dir="$(mk_project l1 Gemfile a.rb go.mod pkg/b.go package.json biome.json)"
+  run out st "$dir" bin/lint --dry-run
+  assert_contains "$out" "+ bundle exec rubocop" "ruby uses rubocop"
+  assert_contains "$out" "+ go_fmt_check ." "go checks gofmt"
+  assert_contains "$out" "+ go vet ./..." "go runs vet"
+  assert_contains "$out" "+ npx --no-install biome check ." "js uses biome"
+  run out st "$dir" bin/lint --dry-run --autofix a.rb pkg/b.go
+  assert_contains "$out" "+ bundle exec rubocop -a a.rb" "autofix passes -a and the file"
+  assert_contains "$out" "+ gofmt -w pkg/b.go" "autofix formats the go file"
+  assert_contains "$out" "+ go vet ./pkg" "vet gets the package dir"
+  assert_not_contains "$out" "biome" "js is not linted for ruby/go paths"
+  run out st "$dir" bin/lint --dry-run pkg
+  assert_contains "$out" "gofmt -l" "a directory expands to its files"
+}
+
+test_lint_bash_scripts_by_shebang() {
+  local out st dir
+  dir="$(mk_project l2 bin/x.sh)"
+  printf '#!/usr/bin/env bash\n' >"$dir/bin/tool"
+  git -C "$dir" add -A
+  run out st "$dir" bin/lint --dry-run
+  assert_contains "$out" "bin/x.sh" "tracked .sh is linted"
+  assert_contains "$out" "bin/tool" "extensionless bash script is linted by shebang"
+  assert_contains "$out" "shfmt -i 2 -ci -d" "shfmt falls back to -i 2 -ci without .editorconfig"
+}
+
+test_setup_installs_by_lockfile() {
+  local out st dir
+  dir="$(mk_project s1 Gemfile package.json package-lock.json go.mod bin/setup.d/10-x)"
+  chmod +x "$dir/bin/setup.d/10-x"
+  run out st "$dir" bin/setup --dry-run
+  assert_contains "$out" "+ ruby_install" "ruby installs bundle"
+  assert_contains "$out" "+ npm ci" "npm ci with a package-lock"
+  assert_contains "$out" "+ go mod download" "go downloads modules"
+  assert_contains "$out" "+ bin/setup.d/10-x" "setup.d steps run"
+  run out st "$dir" env PATH="/nonexistent" "$(command -v bash)" bin/setup --check
+  assert_status 9 "$st" "--check with no tools exits 9"
+}
+
+test_dev_picks_command() {
+  local out st dir
+  dir="$(mk_project d1 Gemfile config/application.rb bin/rails)"
+  run out st "$dir" bin/dev --dry-run -p 4000
+  assert_contains "$out" "+ bin/rails server -p 4000" "rails server with passthrough args"
+  run out st "$dir" env DEV_CMD="echo hi" bin/dev --dry-run
+  assert_contains "$out" "bash -c" "DEV_CMD wins"
+  dir="$(mk_project d2 README.md)"
+  run out st "$dir" bin/dev --dry-run
+  assert_status 1 "$st" "nothing to start exits 1"
+}
+
+test_deps_levels_and_scopes() {
+  local out st dir
+  dir="$(mk_project p1 Gemfile go.mod pom.xml)"
+  run out st "$dir" bin/deps --dry-run --ruby
+  assert_contains "$out" "+ ruby_list" "no level lists outdated"
+  run out st "$dir" bin/deps --dry-run --patch --ruby
+  assert_contains "$out" "+ bundle update --patch" "ruby patch update"
+  run out st "$dir" bin/deps --dry-run --patch --go
+  assert_contains "$out" "+ go_update -u=patch ./..." "go patch update"
+  run out st "$dir" bin/deps --dry-run --major --go
+  assert_contains "$out" "skipped: a major version changes the import path" "go major is manual"
+  run out st "$dir" bin/deps --dry-run --minor --java
+  assert_contains "$out" "+ java_update mvn -DallowMajorUpdates=false" "maven minor excludes major"
+  run out st "$dir" bin/deps --dry-run --patch --minor
+  assert_status 2 "$st" "two levels exit 2"
+  run out st "$dir" bin/deps --dry-run --patch rails
+  assert_status 2 "$st" "packages without one scope exit 2"
+  run out st "$dir" bin/deps --dry-run --patch --ruby rails
+  assert_contains "$out" "bundle update --patch rails" "named package is passed on"
+}
+
+test_troubleshoot_never_runs_remote() {
+  local out st dir
+  dir="$(mk_project r1 README.md)"
+  run out st "$dir" env PATH="/nonexistent" "$(command -v bash)" bin/troubleshoot production
+  assert_status 0 "$st" "remote target exits 0"
+  assert_contains "$out" "nothing was executed" "remote prints hints"
+  assert_contains "$out" "ssh production" "hint names the target"
+  run out st "$dir" bin/troubleshoot
+  assert_status 2 "$st" "missing target exits 2"
+}
+
+run_tests "$@"

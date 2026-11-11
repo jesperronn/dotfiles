@@ -27,7 +27,7 @@
 | **handoff** | Compacts the current conversation into a handoff doc in the OS temp dir for a fresh agent, referencing artifacts instead of copying them. |
 | **implement** | Implements a spec or tickets using /tdd at agreed seams; typechecks often, runs single tests often and the full suite once at the end. |
 | **improve-codebase-architecture** | Scans for deepening opportunities, presents them as a visual HTML report, then grills through the chosen one. |
-| **maintainer-workflow-commands** | Recipe for maintainer bin/ commands (workflows cheat sheet, troubleshoot, deps, changelog) with safety rules, exit codes and hermetic tests. |
+| **maintainer-workflow-commands** | Copy-in bin/ command templates (setup, dev, test, lint, deps, workflows, troubleshoot) for bash, Ruby/Rails, JS, Go and Java projects, with safety rules, exit codes and hermetic tests. |
 | **memfile** | Creates/updates structured session file: task spec, state, files, workflow, errors, learnings, worklog. |
 | **memory-during-chat** | Keeps running in-session memory of constraints and goals. Consulted before each answer. |
 | **receiving-code-review** | Evaluates code review feedback rigorously before applying changes. |

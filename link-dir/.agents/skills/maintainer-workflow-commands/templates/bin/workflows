@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# workflows — print the commands for each maintainer workflow. Prints only, runs nothing.
+# Template: edit the lines marked PROJECT; where a concept does not exist, say "none".
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/workflows [setup|dev|test|lint|deps|release|deploy|troubleshoot]
+
+Print the commands for a workflow (no argument: all). Only prints; runs nothing.
+Exit: 0 ok, 2 unknown workflow.
+USAGE
+}
+
+setup() {
+  cat <<'EOT'
+== setup ==
+  bin/setup                  # install dependencies, idempotent; bin/setup --check only verifies tools
+  bin/test                   # first check after setup
+EOT
+}
+
+dev() {
+  cat <<'EOT'
+== dev ==
+  bin/dev                    # start the dev server or watcher
+  bin/test [PATH...]         # tests; --ruby --js --go --java --bash pick groups
+  bin/lint [--autofix] [PATH...]
+EOT
+}
+
+test_() {
+  cat <<'EOT'
+== test ==
+  bin/test                   # every detected ecosystem; all groups run even if one fails
+  bin/test PATH              # one file or directory, routed to its group
+  bin/test --dry-run         # print the commands only
+EOT
+}
+
+lint() {
+  cat <<'EOT'
+== lint ==
+  bin/lint                   # whole project, check only
+  bin/lint --autofix PATH    # fix formatting of the given paths
+EOT
+}
+
+deps() {
+  cat <<'EOT'
+== deps ==
+  bin/deps                   # list outdated direct dependencies, changes nothing
+  bin/deps --patch|--minor|--major [--ruby|--js|--go|--java]
+  bin/test && bin/lint       # verify, then commit by hand (bin/deps never commits)
+EOT
+}
+
+release() {
+  cat <<'EOT'
+== release ==
+  PROJECT: none (no release tooling). Or: bin/changelog next|render|due, then tag; see the skill.
+EOT
+}
+
+deploy() {
+  cat <<'EOT'
+== deploy ==
+  PROJECT: none (no deploy). Or list the local rehearsal command, then the real one (user runs it).
+EOT
+}
+
+troubleshoot() {
+  cat <<'EOT'
+== troubleshoot ==
+  bin/troubleshoot local     # runs the local checks
+  bin/troubleshoot <remote>  # runs nothing; prints the commands for you to run and paste back
+EOT
+}
+
+main() {
+  case "${1-all}" in
+    -h | --help) usage ;;
+    setup) setup ;;
+    dev) dev ;;
+    test) test_ ;;
+    lint) lint ;;
+    deps) deps ;;
+    release) release ;;
+    deploy) deploy ;;
+    troubleshoot) troubleshoot ;;
+    all)
+      setup
+      dev
+      test_
+      lint
+      deps
+      release
+      deploy
+      troubleshoot
+      ;;
+    *)
+      usage >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"
