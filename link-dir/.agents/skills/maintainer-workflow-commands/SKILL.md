@@ -43,7 +43,7 @@ rehearsal vs real), troubleshoot (local vs remote).
 
 - No flag: read-only list of outdated packages. `--patch|--minor|--major`
   (mutually exclusive) update up to that level. `--ruby|--js` scope (default
-  both). Named packages need exactly one scope flag. `--dry-run`, `--verbose`.
+  both). Named packages need exactly one scope flag. `--dry-run` (level flags only; listing ignores it with a note), `--verbose`.
 - Never commits. Prints next steps (`bin/test && bin/lint`) and a suggested
   commit message.
 - Outdated listers exit 1 when something is outdated: not a failure.
