@@ -38,7 +38,7 @@ test_workflows_prints_every_section() {
   run out st "$dir" bin/workflows
   assert_status 0 "$st" "workflows exits 0"
   local s
-  for s in setup dev test lint deps release deploy troubleshoot; do
+  for s in commands setup dev test lint deps release deploy troubleshoot; do
     assert_contains "$out" "== $s ==" "workflows prints section $s"
   done
   run out st "$dir" bin/workflows nope

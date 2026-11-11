@@ -46,4 +46,4 @@
 | **writing-plans** | Creates detailed implementation plans from requirements before coding. |
 | **writing-skills** | Creates, improves, and validates reusable agent skills. |
 
-*Last updated: 2026-11-11 · 37 skills*
+*Last updated: 2026-11-12 · 37 skills*

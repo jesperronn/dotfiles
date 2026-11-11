@@ -5,11 +5,26 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: bin/workflows [setup|dev|test|lint|deps|release|deploy|troubleshoot]
+Usage: bin/workflows [commands|setup|dev|test|lint|deps|release|deploy|troubleshoot]
 
 Print the commands for a workflow (no argument: all). Only prints; runs nothing.
 Exit: 0 ok, 2 unknown workflow.
 USAGE
+}
+
+# commands: list every script in bin/ with the description from its "# <name> — <text>" line,
+# so the list cannot go stale. Add that line near the top of each new script.
+commands() {
+  local dir f name desc
+  dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+  echo "== commands =="
+  for f in "$dir"/*; do
+    [[ -f "$f" && -x "$f" && "$(head -c 2 "$f")" == "#!" ]] || continue
+    name="${f##*/}"
+    [[ "$name" == *.test.sh ]] && continue
+    desc="$(grep -m1 "^# $name — " "$f" | cut -d' ' -f4- || true)"
+    printf '  %-16s %s\n' "$name" "${desc:-(no description line)}"
+  done
 }
 
 setup() {
@@ -81,6 +96,7 @@ EOT
 main() {
   case "${1-all}" in
     -h | --help) usage ;;
+    commands) commands ;;
     setup) setup ;;
     dev) dev ;;
     test) test_ ;;
@@ -90,6 +106,7 @@ main() {
     deploy) deploy ;;
     troubleshoot) troubleshoot ;;
     all)
+      commands
       setup
       dev
       test_

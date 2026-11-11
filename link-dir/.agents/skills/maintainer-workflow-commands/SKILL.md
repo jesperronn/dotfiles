@@ -16,7 +16,7 @@ did it in [examples.md](examples.md).
 
 | Verb | Does | Template |
 | --- | --- | --- |
-| `workflows [name]` | print-only cheat sheet | yes |
+| `workflows [name]` | print-only index: every `bin/` script (scraped from its `# name — text` line) plus per-workflow cheat sheets | yes |
 | `setup [--check]` | install what the project needs; idempotent | yes |
 | `dev` | start the dev server | yes |
 | `test [--group] [PATH]` | tests per ecosystem, narrowed by path | yes |
@@ -38,10 +38,27 @@ did it in [examples.md](examples.md).
    `bin/doctor`; edit the `PROJECT` lines in `workflows` and `troubleshoot`.
 4. Wire `bin/test` and `bin/lint` into CI. Add `bin/commands.test.sh` (needs a
    `bin/lib/bash_test.sh` harness; `BASH_TEST_LIB` overrides the path).
-5. Point AGENTS.md at `bin/workflows`.
+5. Give every `bin/` script a `# <name> — <one line>` comment near the top;
+   `bin/workflows commands` scrapes it, so the index cannot go stale.
+6. Shape AGENTS.md (see below) and point it at `bin/workflows`.
 
 A Makefile, `just` or Gradle task project keeps its runner: make the verbs
 thin wrappers or index them in `bin/workflows`.
+
+## AGENTS.md shape
+
+Same sections in every project, each short (apply `concise-docs`: one home
+per fact, only what cannot be found by running the project):
+
+1. One line: what the project is.
+2. **Definition of done**: `bin/workflows` lists the commands; run `bin/lint`
+   then `bin/test`, and show the output before saying "done".
+3. **Conventions**: commits, staging, tests colocated as `bin/*.test.sh`
+   (or the project's one test dir), `gsed` on macOS.
+4. **Hard rules**: what must never be committed, pushed or run.
+5. **Docs**: links to the one home of each kind of fact.
+
+Release, deploy and agent-specific workflows go in `docs/`, linked from here.
 
 ## Template behaviour
 
@@ -88,6 +105,15 @@ Colocated `bin/*.test.sh` with a shared harness (`test_pass`, `assert_*`).
 Hermetic: scratch git repos with explicit `user.name/email`, stubs first on
 `PATH`, waits as env vars set to `0`, `--dry-run` instead of real installs. Every
 assertion prints `[PASS]`.
+
+## Audit checklist
+
+For each project check: `bin/workflows` exists and `AGENTS.md` links it; CI
+runs `bin/lint` and `bin/test`; `lint --autofix` exists; `setup --check`
+exists when tools beyond the language toolchain are needed; changelog and
+release are scripted or explicitly "none"; no handoff or report files in the
+repo root; `docs/README.md` indexes more than a few docs. `dev` and
+`troubleshoot` apply to servers and remote hosts only, so skip them for CLIs.
 
 ## Pitfalls
 
