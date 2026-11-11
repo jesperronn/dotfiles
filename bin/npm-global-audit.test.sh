@@ -2,16 +2,19 @@
 # shellcheck disable=SC1090,SC1091
 set -euo pipefail
 
+# Hermetic: a stub `npm` on PATH serves three canned packages. Nothing here
+# reads the real global npm tree or the network.
+#   alpha-ok@1.0.0     up to date, 0 vulnerabilities
+#   beta-crit@1.0.0    1 critical, outdated (latest 1.1.0)
+#   gamma-multi@1.0.0  1 low + 1 high + 2 critical, up to date
+
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npm-global-audit"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
-# Create stub npm binary once at module level (shared across all tests)
 MODULE_TEMP_DIR=""
 MODULE_STUB_DIR=""
-MODULE_EMPTY_STUB_DIR=""
-FAST_CAPTURE_FILE=""  # Reuse a single temp file for fast captures
 TTY_PID=""
 TTY_TRANSCRIPT=""
 TEST_BG_PIDS=()
@@ -58,16 +61,13 @@ cleanup_test_temps() {
   done
   set -e
   [[ -n "$MODULE_TEMP_DIR" && -d "$MODULE_TEMP_DIR" ]] && rm -rf "$MODULE_TEMP_DIR" || true
-  [[ -n "$FAST_CAPTURE_FILE" && -f "$FAST_CAPTURE_FILE" ]] && rm -f "$FAST_CAPTURE_FILE" || true
+
   find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
 }
 trap cleanup_test_temps EXIT
 
 setup_module() {
   MODULE_TEMP_DIR="$(mktemp -d)"
-  FAST_CAPTURE_FILE="${MODULE_TEMP_DIR}/capture.txt"
-  touch "$FAST_CAPTURE_FILE"
-
   MODULE_STUB_DIR="${MODULE_TEMP_DIR}/stub"
   mkdir -p "$MODULE_STUB_DIR"
   MODULE_CPU_LOG="${MODULE_TEMP_DIR}/cpu.log"
@@ -77,188 +77,104 @@ setup_module() {
   export NPM_STUB_CPU_LOG="$MODULE_CPU_LOG"
   export NPM_STUB_SLEEP_LOG="$MODULE_SLEEP_LOG"
 
-  # Write the npm stub once at module level using heredoc (fast)
+  # One npm stub for every test. Builtins only (no subprocess per call):
+  # process spawning dominates this suite's runtime. `install` records the
+  # spec under --prefix so `audit` can answer for it from canned JSON.
   cat >"${MODULE_STUB_DIR}/npm" <<'NPMSTUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ -n "${NPM_STUB_LOG:-}" ]] && printf '%s\n' "$*" >>"$NPM_STUB_LOG"
-cmd="" i=1 n=$#
-while (( i <= n )); do
-  eval "a=\${$i}"
-  [[ "$a" == --prefix || "$a" == --root ]] && { ((i+=2)); continue; }
-  [[ "$a" == -* ]] && { ((i++)); continue; }
-  cmd="$a"
-  break
-  ((i++))
+[[ -z "${NPM_STUB_LOG:-}" ]] || printf '%s\n' "$*" >>"$NPM_STUB_LOG"
+args=("$@")
+cmd="" prefix="" last=""
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[i]}" in
+    --prefix) prefix="${args[i + 1]}"; ((i++)) || true ;;
+    -*) ;;
+    *) [[ -n "$cmd" ]] || cmd="${args[i]}"; last="${args[i]}" ;;
+  esac
 done
+vulns() { printf '{"metadata":{"vulnerabilities":%s}}\n' "$1"; }
+wait_for() {
+  until [[ -e "$1" ]]; do
+    [[ "${NPM_STUB_POLL_INTERVAL:-0}" == 0 ]] || sleep "$NPM_STUB_POLL_INTERVAL"
+  done
+}
 case "$cmd" in
   ls)
     if [[ -n "${NPM_STUB_LIST_JSON:-}" ]]; then
       printf '%s\n' "$NPM_STUB_LIST_JSON"
     else
-      printf '{"dependencies":{"jumbo-cli":{"version":"3.23.0"},"svgo":{"version":"4.1.0"},"cline":{"version":"3.0.61"}}}\n'
+      printf '%s\n' '{"dependencies":{"alpha-ok":{"version":"1.0.0"},"beta-crit":{"version":"1.0.0"},"gamma-multi":{"version":"1.0.0"}}}'
     fi
     ;;
   install)
-    prefix=""
-    for ((i = 1; i <= $#; i++)); do
-      eval "a=\${$i}"
-      if [[ "$a" == "--prefix" ]]; then
-        ((i++))
-        eval "prefix=\${$i}"
-        break
-      fi
-    done
-    spec="${*: -1}"
-    if [[ -n "$prefix" ]]; then
-      printf '%s\n' "$spec" >"${prefix}/.npm-global-audit-spec"
-    fi
-    [[ -n "${NPM_STUB_SPEC_FILE:-}" ]] && printf '%s\n' "$spec" >"$NPM_STUB_SPEC_FILE"
-    if [[ -n "${NPM_STUB_EVENT_LOG:-}" ]]; then
-      printf 'install-start %s\n' "$spec" >>"$NPM_STUB_EVENT_LOG"
-    fi
+    [[ -z "$prefix" ]] || printf '%s\n' "$last" >"${prefix}/spec"
+    [[ -z "${NPM_STUB_EVENT_LOG:-}" ]] || printf 'install-start %s\n' "$last" >>"$NPM_STUB_EVENT_LOG"
     if [[ -n "${NPM_STUB_BARRIER_DIR:-}" ]]; then
-      safe="${spec//[^[:alnum:]]/_}"
+      safe="${last//[^[:alnum:]]/_}"
       : >"${NPM_STUB_BARRIER_DIR}/started.${safe}"
-      while [[ ! -e "${NPM_STUB_BARRIER_DIR}/release.${safe}" ]]; do
-        if [[ "${NPM_STUB_POLL_INTERVAL:-0}" == "0" ]]; then :; else sleep "$NPM_STUB_POLL_INTERVAL"; fi
-      done
+      wait_for "${NPM_STUB_BARRIER_DIR}/release.${safe}"
     fi
-    [[ -n "${NPM_STUB_EVENT_LOG:-}" ]] && printf 'install-end %s\n' "$spec" >>"$NPM_STUB_EVENT_LOG"
-    :
+    [[ -z "${NPM_STUB_EVENT_LOG:-}" ]] || printf 'install-end %s\n' "$last" >>"$NPM_STUB_EVENT_LOG"
     ;;
   root)
     [[ -n "${NPM_STUB_ROOT:-}" ]] || exit 1
     printf '%s\n' "$NPM_STUB_ROOT"
     ;;
   audit)
-    spec=""
-    prefix=""
-    for ((i = 1; i <= $#; i++)); do
-      eval "a=\${$i}"
-      if [[ "$a" == "--prefix" ]]; then
-        ((i++))
-        eval "prefix=\${$i}"
-        break
-      fi
-    done
     if [[ "$prefix" == */installed ]]; then
-      cp "${prefix}/package-lock.json" "${NPM_STUB_LOCK_COPY:-/dev/null}"
-      printf '{"metadata":{"vulnerabilities":{"total":66,"low":60,"moderate":0,"high":5,"critical":1,"info":0}}}\n'
+      lock="$(<"${prefix}/package-lock.json")"
+      printf '%s' "$lock" >"${NPM_STUB_LOCK_COPY:-/dev/null}"
+      vulns '{"total":7,"low":2,"moderate":1,"high":1,"critical":3,"info":0}'
       exit 0
     fi
-    [[ -n "$prefix" && -f "${prefix}/.npm-global-audit-spec" ]] && spec="$(cat "${prefix}/.npm-global-audit-spec")"
-    [[ -z "$spec" && -n "${NPM_STUB_SPEC_FILE:-}" && -f "$NPM_STUB_SPEC_FILE" ]] && spec="$(cat "$NPM_STUB_SPEC_FILE")"
-    if [[ -z "${NPM_STUB_FIXTURES:-}" ]]; then
-      case "$spec" in
-        jumbo-cli@3.23.0) printf '{"metadata":{"vulnerabilities":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0}}}\n' ;;
-        svgo@4.1.0) printf '{"metadata":{"vulnerabilities":{"total":3,"low":2,"moderate":1,"high":0,"critical":0,"info":0}}}\n' ;;
-        cline@3.0.61) printf '{"metadata":{"vulnerabilities":{"total":33,"low":8,"moderate":16,"high":9,"critical":0,"info":0}}}\n' ;;
-        *) printf 'registry unavailable\n' >&2; exit 1 ;;
-      esac
-    else
-      jq -r --arg spec "$spec" '.[$spec] | if . == null then error("registry unavailable") elif type == "string" then error(.) elif .error then error(.error) else {metadata: {vulnerabilities: .}} end | @json' "$NPM_STUB_FIXTURES" 2>/dev/null || (printf 'registry unavailable\n' >&2; exit 1)
+    spec="$(<"${prefix}/spec")"
+    if [[ "$spec" == "${NPM_STUB_FAIL_SPEC:-}" ]]; then
+      printf 'registry unavailable\n' >&2
+      exit 1
     fi
+    case "$spec" in
+      alpha-ok@1.0.0) vulns '{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0}' ;;
+      beta-crit@1.0.0) vulns '{"total":1,"low":0,"moderate":0,"high":0,"critical":1,"info":0}' ;;
+      gamma-multi@1.0.0) vulns '{"total":4,"low":1,"moderate":0,"high":1,"critical":2,"info":0}' ;;
+      *) printf 'registry unavailable\n' >&2; exit 1 ;;
+    esac
     ;;
   outdated)
     if [[ -n "${NPM_STUB_OUTDATED_BARRIER_DIR:-}" ]]; then
       : >"${NPM_STUB_OUTDATED_BARRIER_DIR}/outdated.started"
-      while [[ ! -e "${NPM_STUB_OUTDATED_BARRIER_DIR}/outdated.release" ]]; do
-        if [[ "${NPM_STUB_POLL_INTERVAL:-0}" == "0" ]]; then :; else sleep "$NPM_STUB_POLL_INTERVAL"; fi
-      done
+      wait_for "${NPM_STUB_OUTDATED_BARRIER_DIR}/outdated.release"
     fi
-    printf '%s\n' '{"jumbo-cli":{"current":"3.23.0","latest":"3.24.0"}}'
+    printf '%s\n' '{"beta-crit":{"current":"1.0.0","latest":"1.1.0"}}'
     ;;
   *) printf 'npm stub: unknown command: %s\n' "$cmd" >&2; exit 1 ;;
 esac
 NPMSTUB
-  chmod +x "${MODULE_STUB_DIR}/npm"
 
-  cat >"${MODULE_STUB_DIR}/getconf" <<'GETCONFSTUB'
+  # Builtin-only stubs for the CPU probes and sleep so they never touch the host.
+  cat >"${MODULE_STUB_DIR}/getconf" <<'STUB'
 #!/usr/bin/env bash
-set -euo pipefail
 printf 'getconf %s\n' "$*" >>"$NPM_STUB_CPU_LOG"
 printf '2\n'
-GETCONFSTUB
-  chmod +x "${MODULE_STUB_DIR}/getconf"
-
-  cat >"${MODULE_STUB_DIR}/sysctl" <<'SYSCTLSTUB'
+STUB
+  cat >"${MODULE_STUB_DIR}/sysctl" <<'STUB'
 #!/usr/bin/env bash
-set -euo pipefail
 printf 'sysctl %s\n' "$*" >>"$NPM_STUB_CPU_LOG"
 printf '2\n'
-SYSCTLSTUB
-  chmod +x "${MODULE_STUB_DIR}/sysctl"
-
-  cat >"${MODULE_STUB_DIR}/sleep" <<'SLEEPSTUB'
+STUB
+  cat >"${MODULE_STUB_DIR}/sleep" <<'STUB'
 #!/usr/bin/env bash
-set -euo pipefail
 printf '%s\n' "${1:-}" >>"$NPM_STUB_SLEEP_LOG"
-SLEEPSTUB
-  chmod +x "${MODULE_STUB_DIR}/sleep"
-
-  # Create empty npm stub at module level for test_empty_packages
-  MODULE_EMPTY_STUB_DIR="${MODULE_TEMP_DIR}/empty"
-  mkdir -p "$MODULE_EMPTY_STUB_DIR"
-  cat >"${MODULE_EMPTY_STUB_DIR}/npm" <<'NPMEMPTY'
-#!/usr/bin/env bash
-set -euo pipefail
-cmd=""
-for a in "$@"; do
-  if [[ "$a" == -* ]]; then continue; fi
-  cmd="$a"
-  break
-done
-if [[ "$cmd" == "ls" ]]; then
-  printf '%s\n' '{"dependencies":{}}'
-fi
-NPMEMPTY
-  chmod +x "${MODULE_EMPTY_STUB_DIR}/npm"
+STUB
+  chmod +x "${MODULE_STUB_DIR}/npm" "${MODULE_STUB_DIR}/getconf" "${MODULE_STUB_DIR}/sysctl" "${MODULE_STUB_DIR}/sleep"
 }
 
-# No longer needed: stub is created once at module level
-make_stub_npm() {
-  :  # Stub creation now done at module load time
-}
-
-# Write a fixture file mapping an installed spec to either a vulnerabilities
-# object or {"error": "<message>"} and echo its path.
-write_fixture() {
-  local file="$1"
-  shift
-  printf '%s' "$@" >"$file"
-  printf '%s\n' "$file"
-}
-
-MANY_SPECS=()
-
-prepare_many_package_data() {
-  local count="$1" list_json='{"dependencies":{' fixture_json='{' separator="" index name spec
-  MANY_SPECS=()
-  for ((index = 1; index <= count; index++)); do
-    printf -v name 'package-%02d' "$index"
-    spec="${name}@1.0.0"
-    MANY_SPECS+=("$spec")
-    list_json+="${separator}\"${name}\":{\"version\":\"1.0.0\"}"
-    fixture_json+="${separator}\"${spec}\":{\"total\":0,\"low\":0,\"moderate\":0,\"high\":0,\"critical\":0,\"info\":0}"
-    separator=","
-  done
-  list_json+='}}'
-  fixture_json+='}'
-  export NPM_STUB_LIST_JSON="$list_json"
-  printf '%s' "$fixture_json" >"${W_DIR}/many-fixtures.json"
-  export NPM_STUB_FIXTURES="${W_DIR}/many-fixtures.json"
-}
-
-# Prepare a scratch dir with a stub npm and an installed-spec file whose path is
-# exported so the script and its npm children share it. Resets fixtures.
+# Scratch dir per test; clears the stub's behaviour switches.
 prepare() {
   W_DIR="$(mktemp -d "${MODULE_TEMP_DIR}/test.XXXXXX")"
   W_STUB="$MODULE_STUB_DIR"
-  W_SPEC="${W_DIR}/spec.txt"
-  rm -f "$W_SPEC"  # Clear spec file from previous test
-  export NPM_STUB_SPEC_FILE="$W_SPEC"
-  unset NPM_STUB_ROOT NPM_STUB_LOCK_COPY NPM_STUB_FIXTURES NPM_STUB_LIST_JSON NPM_STUB_BARRIER_DIR NPM_STUB_OUTDATED_BARRIER_DIR NPM_STUB_EVENT_LOG
+  unset NPM_STUB_ROOT NPM_STUB_LOCK_COPY NPM_STUB_LIST_JSON NPM_STUB_BARRIER_DIR \
+    NPM_STUB_OUTDATED_BARRIER_DIR NPM_STUB_EVENT_LOG NPM_STUB_FAIL_SPEC NPM_STUB_LOG
 }
 
 spec_key() {
@@ -395,82 +311,58 @@ run_script() {
   set -e
 }
 
-test_output_rows_no_color() {
+# One plain run covers rows, severity totals, outdated reporting, the npm calls
+# made, and that the CPU probe and sleeps stay stubbed.
+test_plain_run_rows_totals_and_npm_calls() {
   prepare
+  local log_file="${W_DIR}/npm.log" log="" bad_sleeps=""
+  : >"$MODULE_CPU_LOG"
+  : >"$MODULE_SLEEP_LOG"
+  export NPM_STUB_LOG="$log_file"
   run_script "$W_STUB" "1"
+  log="$(<"$log_file")"
+  bad_sleeps="$(awk '$0 != "0"' "$MODULE_SLEEP_LOG")"
 
-  assert_status "0" "$R_STATUS" "plain run exits 0 with valid metadata"
-  assert_contains "$R_OUTPUT" "jumbo-cli@3.23.0" "output shows jumbo-cli spec"
-  assert_contains "$R_OUTPUT" "0 vulnerabilities" "jumbo-cli reports zero"
-  assert_contains "$R_OUTPUT" "svgo@4.1.0" "output shows svgo spec"
-  assert_contains "$R_OUTPUT" "3 vulnerabilities (2 low, 1 moderate, 0 high)" "svgo breakdown"
-  assert_contains "$R_OUTPUT" "cline@3.0.61" "output shows cline spec"
-  assert_contains "$R_OUTPUT" "33 vulnerabilities (8 low, 16 moderate, 9 high)" "cline breakdown"
+  assert_status "0" "$R_STATUS" "plain run exits 0"
+  assert_contains "$R_OUTPUT" "alpha-ok@1.0.0     0 vulnerabilities" "up-to-date clean package reports zero"
+  assert_not_contains "$R_OUTPUT" "alpha-ok@1.0.0     0 vulnerabilities —" "clean package carries no outdated note"
+  assert_contains "$R_OUTPUT" "beta-crit@1.0.0    1 vulnerability (0 low, 0 moderate, 0 high, 1 critical) — outdated, 1.1.0 available" "single critical is singular and flagged outdated"
+  assert_contains "$R_OUTPUT" "gamma-multi@1.0.0  4 vulnerabilities (1 low, 0 moderate, 1 high, 2 critical)" "mixed severities sum to the total"
+  assert_not_contains "$R_OUTPUT" "gamma-multi@1.0.0  4 vulnerabilities (1 low, 0 moderate, 1 high, 2 critical) —" "up-to-date vulnerable package is not flagged outdated"
+  assert_contains "$R_OUTPUT" "npm update -g beta-crit" "only the outdated package is offered for update"
+  assert_not_contains "$R_OUTPUT" "npm update -g beta-crit alpha-ok" "up-to-date packages are not offered for update"
+  assert_contains "$R_OUTPUT" "already on latest, needs manual review:" "up-to-date vulnerable package needs manual review"
+  assert_contains "$R_OUTPUT" "  gamma-multi@1.0.0" "manual-review list names the vulnerable up-to-date package"
   assert_not_contains "$R_OUTPUT" "pending" "redirected output has no pending rows"
   assert_not_contains "$R_OUTPUT" "Resolving and auditing packages:" "redirected output has no progress status"
   assert_not_contains "$R_OUTPUT" $'\033[' "no ANSI escapes in plain mode"
-}
+  assert_not_contains "$R_OUTPUT" "Installed tree" "no installed line when npm root -g fails"
 
-test_invocation_log_safety() {
-  prepare
-  local log_file="${W_DIR}/log.txt"
-
-  R_STATUS=0
-  set +e
-  R_OUTPUT="$(env PATH="${W_STUB}:${PATH}" NO_COLOR=1 NPM_STUB_LOG="$log_file" \
-    NPM_GLOBAL_AUDIT_POLL_INTERVAL=0 "$SCRIPT_UNDER_TEST" 2>&1)"
-  R_STATUS=$?
-  set -e
-
-  assert_status "0" "$R_STATUS" "safety run exits 0"
-  assert_contains "$(cat "$log_file")" "--no-audit ls -g --depth=0 --json" "discovery uses safe ls flags"
-  assert_contains "$(cat "$log_file")" "install --package-lock-only --ignore-scripts --no-audit jumbo-cli@3.23.0" "install pins spec with safe flags"
-  assert_contains "$(cat "$log_file")" "cline@3.0.61" "install records a literal installed spec"
-  assert_not_contains "$(cat "$log_file")" "update -g" "never runs npm update -g"
-  assert_not_contains "$(cat "$log_file")" "audit fix" "never runs audit fix"
-  assert_not_contains "$(cat "$log_file")" "--global audit" "never runs global audit"
-}
-
-test_critical_breakdown() {
-  prepare
-  local fixture_file
-  fixture_file="$(write_fixture "${W_DIR}/fixture.json" \
-    '{"jumbo-cli@3.23.0":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0},' \
-    '"svgo@4.1.0":{"total":3,"low":2,"moderate":1,"high":0,"critical":0,"info":0},' \
-    '"cline@3.0.61":{"total":3,"low":0,"moderate":0,"high":1,"critical":2,"info":0}}')"
-  export NPM_STUB_FIXTURES="$fixture_file"
-
-  run_script "$W_STUB" "1"
-
-  assert_status "0" "$R_STATUS" "critical fixture exits 0"
-  assert_contains "$R_OUTPUT" "3 vulnerabilities (0 low, 0 moderate, 1 high, 2 critical)" "critical breakdown includes critical"
+  assert_contains "$log" "--no-audit ls -g --depth=0 --json" "discovery uses safe ls flags"
+  assert_contains "$log" "install --package-lock-only --ignore-scripts --no-audit beta-crit@1.0.0" "install pins the literal spec with safe flags"
+  assert_contains "$log" "audit --json" "each package is audited as json"
+  assert_contains "$log" "--no-audit outdated -g --json" "outdated lookup uses safe flags"
+  assert_not_contains "$log" "update -g" "never runs npm update -g"
+  assert_not_contains "$log" "audit fix" "never runs audit fix"
+  assert_not_contains "$log" "--global audit" "never runs global audit"
+  assert_contains "$(<"$MODULE_CPU_LOG")" "getconf _NPROCESSORS_ONLN" "default concurrency uses the PATH-shadowed CPU probe"
+  assert_eq "" "$bad_sleeps" "script polling never performs a nonzero test wait"
 }
 
 test_audit_failure_continues() {
   prepare
-  local fixture_file
-  fixture_file="$(write_fixture "${W_DIR}/fixture.json" \
-    '{"jumbo-cli@3.23.0":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0},' \
-    '"svgo@4.1.0":{"error":"registry unavailable"},' \
-    '"cline@3.0.61":{"total":33,"low":8,"moderate":16,"high":9,"critical":0,"info":0}}')"
-  export NPM_STUB_FIXTURES="$fixture_file"
-
+  export NPM_STUB_FAIL_SPEC="beta-crit@1.0.0"
   run_script "$W_STUB" "1"
 
   assert_status "1" "$R_STATUS" "a package failure exits 1"
-  assert_contains "$R_OUTPUT" "cline@3.0.61" "successful package still renders"
-  assert_contains "$R_OUTPUT" "33 vulnerabilities (8 low, 16 moderate, 9 high)" "successful package row intact"
-  assert_contains "$R_OUTPUT" "svgo@4.1.0" "failed package spec still listed"
-  assert_contains "$R_OUTPUT" "audit failed: registry unavailable" "failure renders a readable row"
+  assert_contains "$R_OUTPUT" "gamma-multi@1.0.0  4 vulnerabilities (1 low, 0 moderate, 1 high, 2 critical)" "successful package still renders"
+  assert_contains "$R_OUTPUT" "beta-crit@1.0.0    audit failed: registry unavailable" "failure renders a readable row"
 }
 
 test_empty_packages() {
-  R_STATUS=0
-  set +e
-  R_OUTPUT="$(env PATH="${MODULE_EMPTY_STUB_DIR}:${MODULE_STUB_DIR}:${PATH}" NO_COLOR=1 \
-    NPM_GLOBAL_AUDIT_POLL_INTERVAL=0 "$SCRIPT_UNDER_TEST" 2>&1)"
-  R_STATUS=$?
-  set -e
+  prepare
+  export NPM_STUB_LIST_JSON='{"dependencies":{}}'
+  run_script "$W_STUB" "1"
 
   assert_status "0" "$R_STATUS" "empty global list exits 0"
   assert_contains "$R_OUTPUT" "No global npm packages found." "empty list emits no-packages message"
@@ -486,16 +378,9 @@ test_installed_tree_line() {
   export NPM_STUB_ROOT="$root" NPM_STUB_LOCK_COPY="${W_DIR}/lock.json"
   run_script "$W_STUB" "1"
 
-  assert_contains "$R_OUTPUT" "Installed tree (3 packages): 66 vulnerabilities (60 low, 0 moderate, 5 high, 1 critical)" "installed tree line shows nested count and severities"
+  assert_contains "$R_OUTPUT" "Installed tree (3 packages): 7 vulnerabilities (2 low, 1 moderate, 1 high, 3 critical)" "installed tree line shows nested count and severities"
   assert_contains "$(<"${W_DIR}/lock.json")" '"node_modules/a/node_modules/b":{"version":"1.2.0"}' "lockfile keeps nested copy"
   assert_contains "$(<"${W_DIR}/lock.json")" '"node_modules/@s/c":{"version":"2.0.0"}' "lockfile keeps scoped package"
-}
-
-test_installed_tree_skipped_without_root() {
-  prepare
-  run_script "$W_STUB" "1"
-
-  assert_not_contains "$R_OUTPUT" "Installed tree" "no installed line when npm root -g fails"
 }
 
 test_help() {
@@ -541,13 +426,13 @@ test_jobs_run_multiple_packages_before_first_install_finishes() {
   track_test_pid "$run_pid"
 
   local first_started=0 second_started=0 initial_events=""
-  wait_for_file "${barrier_dir}/started.$(spec_key 'cline@3.0.61')" && first_started=1
-  wait_for_file "${barrier_dir}/started.$(spec_key 'jumbo-cli@3.23.0')" && second_started=1
+  wait_for_file "${barrier_dir}/started.$(spec_key 'alpha-ok@1.0.0')" && first_started=1
+  wait_for_file "${barrier_dir}/started.$(spec_key 'beta-crit@1.0.0')" && second_started=1
   initial_events="$(<"$event_log")"
-  release_package "$barrier_dir" "cline@3.0.61"
-  release_package "$barrier_dir" "jumbo-cli@3.23.0"
-  wait_for_file "${barrier_dir}/started.$(spec_key 'svgo@4.1.0')"
-  release_package "$barrier_dir" "svgo@4.1.0"
+  release_package "$barrier_dir" "alpha-ok@1.0.0"
+  release_package "$barrier_dir" "beta-crit@1.0.0"
+  wait_for_file "${barrier_dir}/started.$(spec_key 'gamma-multi@1.0.0')"
+  release_package "$barrier_dir" "gamma-multi@1.0.0"
 
   R_STATUS=0
   set +e
@@ -560,232 +445,130 @@ test_jobs_run_multiple_packages_before_first_install_finishes() {
   assert_status "0" "$R_STATUS" "two workers complete valid package audits"
   assert_status "1" "$first_started" "first install reaches the barrier"
   assert_status "1" "$second_started" "second install starts before the first is released"
-  assert_contains "$initial_events" "install-start cline@3.0.61" "first bounded worker starts before release"
-  assert_contains "$initial_events" "install-start jumbo-cli@3.23.0" "second bounded worker starts before release"
+  assert_contains "$initial_events" "install-start alpha-ok@1.0.0" "first bounded worker starts before release"
+  assert_contains "$initial_events" "install-start beta-crit@1.0.0" "second bounded worker starts before release"
   assert_not_contains "$initial_events" "install-end" "neither initial worker completes before release"
-  assert_not_contains "$initial_events" "install-start svgo@4.1.0" "third worker remains queued at the two-job limit"
-  assert_contains "$R_OUTPUT" "cline@3.0.61" "concurrent run retains package output"
-  assert_contains "$R_OUTPUT" "jumbo-cli@3.23.0" "concurrent run retains every package output"
+  assert_not_contains "$initial_events" "install-start gamma-multi@1.0.0" "third worker remains queued at the two-job limit"
+  assert_contains "$R_OUTPUT" "gamma-multi@1.0.0" "concurrent run retains every package output"
 }
 
 # The third sorted worker must be rendered while the first two remain blocked;
 # this catches schedulers that wait for the oldest PID instead of completions.
-test_tty_renders_initial_frame_out_of_order_completion_and_cleanup() {
+# It also checks that the update lookup (held by its own barrier) neither blocks
+# the package workers nor the redraw when its answer arrives late.
+test_tty_out_of_order_completion_delayed_update_and_cleanup() {
   prepare
-  local barrier_dir="${W_DIR}/barrier"
-  mkdir -p "$barrier_dir"
-  start_tty_run "$barrier_dir" ""
+  local package_barrier="${W_DIR}/package-barrier"
+  local outdated_barrier="${W_DIR}/outdated-barrier"
+  mkdir -p "$package_barrier" "$outdated_barrier"
+  start_tty_run "$package_barrier" "$outdated_barrier" 120
 
   local spec
-  for spec in "cline@3.0.61" "jumbo-cli@3.23.0" "svgo@4.1.0"; do
-    wait_for_file "${barrier_dir}/started.$(spec_key "$spec")"
+  wait_for_file "${outdated_barrier}/outdated.started"
+  for spec in "alpha-ok@1.0.0" "beta-crit@1.0.0" "gamma-multi@1.0.0"; do
+    wait_for_file "${package_barrier}/started.$(spec_key "$spec")"
   done
 
-  local initial="" initial_screen="" expected_pending=""
-  initial="$(<"$TTY_TRANSCRIPT")"
-  initial="${initial//$'\r'/}"
-  initial_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
-  expected_pending="$(printf '%-16s  pending\n%-16s  pending\n%-16s  pending' \
-    'cline@3.0.61' 'jumbo-cli@3.23.0' 'svgo@4.1.0')"
+  local initial_screen="" expected_pending="" mid="" before_update="" after_update=""
+  initial_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 120 24)"
+  expected_pending="$(printf '%-17s  pending\n%-17s  pending\n%-17s  pending' \
+    'alpha-ok@1.0.0' 'beta-crit@1.0.0' 'gamma-multi@1.0.0')"
 
-  release_package "$barrier_dir" "svgo@4.1.0"
-  local third_rendered=0
-  wait_for_transcript "svgo@4.1.0        3 vulnerabilities (2 low, 1 moderate, 0 high)" && third_rendered=1
-  local mid=""
+  release_package "$package_barrier" "gamma-multi@1.0.0"
+  wait_for_transcript "Resolving and auditing packages: 1/3 complete"
   mid="$(<"$TTY_TRANSCRIPT")"
   mid="${mid//$'\r'/}"
 
-  release_package "$barrier_dir" "cline@3.0.61"
-  release_package "$barrier_dir" "jumbo-cli@3.23.0"
-  finish_tty_run
-  local final="${R_OUTPUT//$'\r'/}"
+  release_package "$package_barrier" "beta-crit@1.0.0"
+  wait_for_transcript "Resolving and auditing packages: 2/3 complete"
+  before_update="$(<"$TTY_TRANSCRIPT")"
+  before_update="${before_update//$'\r'/}"
 
-  local final_screen=""
-  final_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
+  : >"${outdated_barrier}/outdated.release"
+  wait_for_transcript "— outdated, 1.1.0 available"
+  after_update="$(<"$TTY_TRANSCRIPT")"
+  after_update="${after_update//$'\r'/}"
+
+  release_package "$package_barrier" "alpha-ok@1.0.0"
+  finish_tty_run
+  local final="${R_OUTPUT//$'\r'/}" final_screen=""
+  final_screen="$(render_visible_screen "$TTY_TRANSCRIPT" 120 24)"
 
   assert_status "0" "$R_STATUS" "TTY progress run exits 0"
   assert_contains "$initial_screen" "$expected_pending" "TTY initial frame lists every sorted package as pending"
   assert_eq "1" "$(count_occurrences "$initial_screen" 'Resolving and auditing packages: 0/3 complete')" "TTY initial frame has one primary status row"
-  assert_status "1" "$third_rendered" "third worker replaces its row before earlier workers are released"
-  assert_contains "$mid" "cline@3.0.61      pending" "first row remains pending after third worker finishes"
-  assert_contains "$mid" "jumbo-cli@3.23.0  pending" "second row remains pending after third worker finishes"
-  assert_contains "$mid" "Resolving and auditing packages: 1/3 complete" "out-of-order completion increments progress"
-  assert_contains "$final_screen" "cline@3.0.61      33 vulnerabilities (8 low, 16 moderate, 9 high)" "first result replaces the first sorted row"
-  assert_contains "$final_screen" "jumbo-cli@3.23.0  0 vulnerabilities — outdated, 3.24.0 available" "second result replaces the second sorted row"
-  assert_contains "$final_screen" "svgo@4.1.0        3 vulnerabilities (2 low, 1 moderate, 0 high)" "third result replaces the third sorted row"
+  assert_contains "$initial_screen" "checking for updates..." "update phase renders while lookup is held"
+  assert_contains "$mid" "alpha-ok@1.0.0     pending" "first row stays pending after the third worker finishes"
+  assert_contains "$mid" "gamma-multi@1.0.0  4 vulnerabilities (1 low, 0 moderate, 1 high, 2 critical)" "third row is replaced out of order"
+  assert_contains "$before_update" "beta-crit@1.0.0    1 vulnerability (0 low, 0 moderate, 0 high, 1 critical)" "package completes while update lookup is blocked"
+  assert_not_contains "$before_update" "outdated, 1.1.0 available" "completed row has no update annotation yet"
+  assert_contains "$after_update" "beta-crit@1.0.0    1 vulnerability (0 low, 0 moderate, 0 high, 1 critical) — outdated, 1.1.0 available" "completed row is redrawn when update data arrives"
+  assert_contains "$after_update" "Resolving and auditing packages: 2/3 complete" "annotation redraw preserves completion count"
+  assert_contains "$final_screen" "alpha-ok@1.0.0     0 vulnerabilities" "first result replaces the first sorted row"
   assert_contains "$final" $'\033[1A\033[2KNext:' "the transient status row is erased before Next"
   assert_not_contains "$final" $'Resolving and auditing packages: 3/3 complete\n\nNext:' "visible progress status is cleared before Next"
 }
 
-test_tty_does_not_block_workers_on_update_lookup() {
-  prepare
-  local package_barrier="${W_DIR}/package-barrier"
-  local outdated_barrier="${W_DIR}/outdated-barrier"
+# The full table needs PROGRESS_TOTAL + 2 rows. With three packages, five rows
+# is the smallest terminal that still shows it, four forces the compact status
+# row; a small terminal exercises this without needing dozens of packages.
+tty_small_terminal_run() {
+  local rows="$1" package_barrier="${W_DIR}/package-barrier" outdated_barrier="${W_DIR}/outdated-barrier" spec
   mkdir -p "$package_barrier" "$outdated_barrier"
-  start_tty_run "$package_barrier" "$outdated_barrier"
-
-  local outdated_started=0 pending_rendered=0 install_started=0
-  wait_for_file "${outdated_barrier}/outdated.started" && outdated_started=1
-  wait_for_transcript "checking for updates..." && pending_rendered=1
-  wait_for_file "${package_barrier}/started.$(spec_key 'cline@3.0.61')" && install_started=1
-
-  : >"${outdated_barrier}/outdated.release"
-  local spec
-  for spec in "cline@3.0.61" "jumbo-cli@3.23.0" "svgo@4.1.0"; do
-    wait_for_file "${package_barrier}/started.$(spec_key "$spec")"
-    release_package "$package_barrier" "$spec"
-  done
-  finish_tty_run
-
-  assert_status "0" "$R_STATUS" "TTY run with delayed update lookup exits 0"
-  assert_status "1" "$outdated_started" "update lookup reaches its test-controlled barrier"
-  assert_status "1" "$pending_rendered" "pending rows and update phase render while lookup is held"
-  assert_status "1" "$install_started" "package work starts before update lookup is released"
-  assert_contains "${R_OUTPUT//$'\r'/}" "checking for updates..." "TTY identifies the held update phase"
-}
-
-test_tty_completed_row_gains_delayed_update_annotation() {
-  prepare
-  local package_barrier="${W_DIR}/package-barrier"
-  local outdated_barrier="${W_DIR}/outdated-barrier"
-  local spec before_update="" after_update=""
-  mkdir -p "$package_barrier" "$outdated_barrier"
-  start_tty_run "$package_barrier" "$outdated_barrier"
-
+  start_tty_run "$package_barrier" "$outdated_barrier" 80 "$rows"
   wait_for_file "${outdated_barrier}/outdated.started"
-  for spec in "cline@3.0.61" "jumbo-cli@3.23.0" "svgo@4.1.0"; do
+  for spec in "alpha-ok@1.0.0" "beta-crit@1.0.0" "gamma-multi@1.0.0"; do
     wait_for_file "${package_barrier}/started.$(spec_key "$spec")"
   done
-  release_package "$package_barrier" "jumbo-cli@3.23.0"
+  release_package "$package_barrier" "gamma-multi@1.0.0"
   wait_for_transcript "Resolving and auditing packages: 1/3 complete"
-  before_update="$(<"$TTY_TRANSCRIPT")"
-
+  TTY_SCREEN="$(render_visible_screen "$TTY_TRANSCRIPT" 80 "$rows")"
   : >"${outdated_barrier}/outdated.release"
-  wait_for_transcript "0 vulnerabilities — outdated, 3.24.0 available"
-  after_update="$(<"$TTY_TRANSCRIPT")"
-
-  release_package "$package_barrier" "cline@3.0.61"
-  release_package "$package_barrier" "svgo@4.1.0"
+  release_package "$package_barrier" "alpha-ok@1.0.0"
+  release_package "$package_barrier" "beta-crit@1.0.0"
   finish_tty_run
-
-  assert_contains "${before_update//$'\r'/}" "jumbo-cli@3.23.0  0 vulnerabilities" "package completes while update lookup is blocked"
-  assert_not_contains "$before_update" "outdated, 3.24.0 available" "completed row initially has no unavailable update annotation"
-  assert_contains "${after_update//$'\r'/}" "jumbo-cli@3.23.0  0 vulnerabilities — outdated, 3.24.0 available" "completed row is redrawn when update data arrives"
-  assert_contains "${after_update//$'\r'/}" "Resolving and auditing packages: 1/3 complete" "annotation redraw preserves completion count"
 }
 
-test_tty_twenty_packages_uses_responsive_full_table_on_24_rows() {
+test_tty_full_table_when_rows_just_fit() {
   prepare
-  local package_barrier="${W_DIR}/package-barrier"
-  local outdated_barrier="${W_DIR}/outdated-barrier"
-  local spec screen=""
-  mkdir -p "$package_barrier" "$outdated_barrier"
-  prepare_many_package_data 20
-  start_tty_run "$package_barrier" "$outdated_barrier" 80 24
+  tty_small_terminal_run 5
 
-  wait_for_file "${outdated_barrier}/outdated.started"
-  for spec in "${MANY_SPECS[@]:0:3}"; do
-    wait_for_file "${package_barrier}/started.$(spec_key "$spec")"
-  done
-  release_package "$package_barrier" "${MANY_SPECS[2]}"
-  wait_for_transcript "Resolving and auditing packages: 1/20 complete"
-  screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
-
-  : >"${outdated_barrier}/outdated.release"
-  for spec in "${MANY_SPECS[@]}"; do
-    release_package "$package_barrier" "$spec"
-  done
-  finish_tty_run
-
-  assert_eq "21" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "20-package progress fits as a full table on a 24-row terminal"
-  assert_contains "$screen" "package-01@1.0.0" "first package remains visible"
-  assert_contains "$screen" "package-03@1.0.0" "out-of-order completed package remains visible"
-  assert_contains "$screen" "Resolving and auditing packages: 1/20 complete" "20-package run advances responsively"
-  assert_contains "$screen" "checking for updates..." "20-package run retains its update phase status"
+  assert_status "0" "$R_STATUS" "exact-fit TTY run exits 0"
+  assert_eq "4" "$(printf '%s\n' "$TTY_SCREEN" | awk 'END { print NR }')" "three packages plus status fit as a full table on 5 rows"
+  assert_contains "$TTY_SCREEN" "alpha-ok@1.0.0" "first package remains visible"
+  assert_contains "$TTY_SCREEN" "gamma-multi@1.0.0  4 vulnerabilities" "out-of-order completed package remains visible"
+  assert_contains "$TTY_SCREEN" "Resolving and auditing packages: 1/3 complete" "full-table run advances responsively"
+  assert_contains "$TTY_SCREEN" "checking for updates..." "full-table run retains its update phase status"
 }
 
 test_tty_uses_compact_progress_when_full_table_exceeds_height() {
   prepare
-  local package_barrier="${W_DIR}/package-barrier"
-  local outdated_barrier="${W_DIR}/outdated-barrier"
-  local spec screen="" final=""
-  mkdir -p "$package_barrier" "$outdated_barrier"
-  prepare_many_package_data 23
-  start_tty_run "$package_barrier" "$outdated_barrier" 80 24
+  tty_small_terminal_run 4
+  local final="${R_OUTPUT//$'\r'/}"
 
-  wait_for_file "${outdated_barrier}/outdated.started"
-  for spec in "${MANY_SPECS[@]:0:3}"; do
-    wait_for_file "${package_barrier}/started.$(spec_key "$spec")"
-  done
-  release_package "$package_barrier" "${MANY_SPECS[0]}"
-  wait_for_transcript "Resolving and auditing packages: 1/23 complete"
-  screen="$(render_visible_screen "$TTY_TRANSCRIPT" 80 24)"
-
-  : >"${outdated_barrier}/outdated.release"
-  for spec in "${MANY_SPECS[@]}"; do
-    release_package "$package_barrier" "$spec"
-  done
-  finish_tty_run
-  final="${R_OUTPUT//$'\r'/}"
-
-  assert_eq "1" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "23-package run uses only one bounded progress row on a 24-row terminal"
-  assert_not_contains "$screen" "pending" "compact progress does not render off-screen package rows"
-  assert_contains "$screen" "Resolving and auditing packages: 1/23 complete" "compact status advances after the first completion"
-  assert_contains "$screen" "checking for updates..." "compact mode retains the update phase"
-  assert_contains "$final" "package-01@1.0.0" "compact mode prints sorted final package rows after progress"
-  assert_contains "$final" "package-23@1.0.0" "compact mode prints every final package row"
+  assert_status "0" "$R_STATUS" "compact TTY run exits 0"
+  assert_eq "1" "$(printf '%s\n' "$TTY_SCREEN" | awk 'END { print NR }')" "short terminal uses only one bounded progress row"
+  assert_not_contains "$TTY_SCREEN" "pending" "compact progress does not render off-screen package rows"
+  assert_contains "$TTY_SCREEN" "Resolving and auditing packages: 1/3 complete" "compact status advances after the first completion"
+  assert_contains "$TTY_SCREEN" "checking for updates..." "compact mode retains the update phase"
+  assert_contains "$final" "alpha-ok@1.0.0" "compact mode prints sorted final package rows after progress"
+  assert_contains "$final" "gamma-multi@1.0.0" "compact mode prints every final package row"
 }
 
-test_tty_long_result_keeps_one_physical_row_per_package() {
+# A narrow terminal truncates both columns; the final table must still show
+# exactly one physical row per package rather than wrapping.
+test_tty_narrow_terminal_keeps_one_physical_row_per_package() {
   prepare
-  local barrier_dir="${W_DIR}/barrier"
-  local outdated_barrier="${W_DIR}/outdated-barrier"
-  local first="alpha-short@1.0.0"
-  local second="beta-short@1.0.0"
-  local third="zeta-package-with-an-extremely-long-scoped-result-name@1.0.0"
-  local fixture_file=""
-  mkdir -p "$barrier_dir" "$outdated_barrier"
-  export NPM_STUB_LIST_JSON='{"dependencies":{"zeta-package-with-an-extremely-long-scoped-result-name":{"version":"1.0.0"},"beta-short":{"version":"1.0.0"},"alpha-short":{"version":"1.0.0"}}}'
-  fixture_file="$(write_fixture "${W_DIR}/fixture.json" \
-    '{"alpha-short@1.0.0":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0},' \
-    '"beta-short@1.0.0":{"total":0,"low":0,"moderate":0,"high":0,"critical":0,"info":0},' \
-    '"zeta-package-with-an-extremely-long-scoped-result-name@1.0.0":{"total":333,"low":88,"moderate":166,"high":79,"critical":0,"info":0}}')"
-  export NPM_STUB_FIXTURES="$fixture_file"
-  start_tty_run "$barrier_dir" "$outdated_barrier" 60
-
-  local spec
-  wait_for_file "${outdated_barrier}/outdated.started"
-  for spec in "$first" "$second" "$third"; do
-    wait_for_file "${barrier_dir}/started.$(spec_key "$spec")"
-  done
-  release_package "$barrier_dir" "$third"
-  wait_for_transcript "Resolving and auditing packages: 1/3 complete"
   local screen=""
-  screen="$(render_visible_screen "$TTY_TRANSCRIPT" 60)"
-
-  : >"${outdated_barrier}/outdated.release"
-  release_package "$barrier_dir" "$first"
-  release_package "$barrier_dir" "$second"
+  start_tty_run "" "" 30
   finish_tty_run
+  screen="$(render_visible_screen "$TTY_TRANSCRIPT" 30)"
 
-  assert_eq "4" "$(printf '%s\n' "$screen" | awk 'END { print NR }')" "narrow TTY keeps package and status rows physically separate"
-  assert_contains "$screen" "alpha-short@1.0.0" "first pending package remains on its row"
-  assert_contains "$screen" "beta-short@1.0.0" "second pending package remains on its row"
-  assert_contains "$screen" "zeta-package-with-an-extremely" "long completed package remains on the third row"
-  assert_contains "$screen" "333 vulnerabilities" "long completed result stays visible after truncation"
-  assert_contains "$screen" "Resolving and auditing packages: 1/3 complete" "status remains on its own physical row, unbroken even though it's too narrow to also fit the update-checking suffix"
-}
-
-test_zz_test_harness_stubs_cpu_and_uses_only_zero_polling() {
-  local bad_sleeps=""
-  prepare
-  : >"$MODULE_CPU_LOG"
-  : >"$MODULE_SLEEP_LOG"
-  run_script "$W_STUB" "1"
-  bad_sleeps="$(awk '$0 != "0"' "$MODULE_SLEEP_LOG")"
-  assert_status "0" "$R_STATUS" "ordinary mocked run exits successfully"
-  assert_contains "$(<"$MODULE_CPU_LOG")" "getconf _NPROCESSORS_ONLN" "default concurrency uses the PATH-shadowed CPU probe"
-  assert_eq "" "$bad_sleeps" "script polling never performs a nonzero test wait"
+  assert_status "0" "$R_STATUS" "narrow TTY run exits 0"
+  assert_eq "alp…  0 vulnerabilities" "$(printf '%s\n' "$screen" | head -n 1)" "first package is truncated onto its own row"
+  assert_contains "$(printf '%s\n' "$screen" | head -n 2)" "bet…  1 vulnerability" "second package is truncated onto its own row"
+  assert_contains "$(printf '%s\n' "$screen" | head -n 3)" "gam…  4 vulnerabilities" "long result stays visible after truncation"
+  assert_not_contains "$screen" "Resolving and auditing" "status row is cleared"
 }
 
 # Setup module before running tests
