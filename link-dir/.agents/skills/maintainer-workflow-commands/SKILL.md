@@ -9,6 +9,7 @@ description: Use when adding or auditing maintainer workflow commands in a proje
 
 Generalized from plus-reporter, cancerventetid and bbapprove. Examples use
 their script names; adapt to the project.
+Full command/flag/exit-code catalogue: [workflows.md](workflows.md).
 
 ## 1. Survey, index, fill gaps
 
