@@ -152,10 +152,10 @@ test_verbose_and_debug_link_to_fetched_metadata() {
   local archive_dir="$TEST_TMP_DIR/metadata-archive"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200\n'
-elif [[ "$*" == *"users-28-day/latest"* ]]; then
+elif [ "${*#*users-28-day/latest}" != "$*" ]; then
   printf '{"report_start_day":"2026-06-01","download_links":["https://example.test/shard?signature=secret-value"]}\n200\n'
 else
   printf '{"user_login":"alice","day":"2026-06-01","ai_credits_used":1,"user_initiated_interaction_count":1}\n'
@@ -191,8 +191,8 @@ test_verbose_links_to_metadata_when_json_is_invalid() {
   local archive_dir="$TEST_TMP_DIR/invalid-metadata-archive"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200\n'
 else
   printf '{invalid json\n200\n'
@@ -221,8 +221,8 @@ test_401_reports_authenticated_user_endpoint() {
   local config="$TEST_TMP_DIR/401-config.toml"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200\n'
 else
   printf '{"message":"Bad credentials"}\n401\n'
@@ -255,8 +255,8 @@ test_update_reports_token_permissions() {
   local config="$TEST_TMP_DIR/scopes-config.toml"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200 repo, read:org, manage_billing:copilot\n'
 else
   printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
@@ -277,8 +277,8 @@ TOML
   assert_contains "$output" "Token permissions: repo, read:org, manage_billing:copilot" "token scopes are listed by name"
 
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200\n'
 else
   printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
@@ -295,8 +295,8 @@ test_403_explains_missing_org_permission() {
   local config="$TEST_TMP_DIR/403-config.toml"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200 repo\n'
 else
   printf '{"message":"Resource not accessible by personal access token"}\n403\n'
@@ -328,8 +328,8 @@ test_enterprise_unconfirmed_permissions_lists_requirements() {
   local config="$TEST_TMP_DIR/enterprise-config.toml"
   mkdir -p "$fake_bin"
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200\n'
 else
   printf '{"report_start_day":"2026-06-01","download_links":[]}\n200\n'
@@ -365,8 +365,8 @@ test_backfill_permission_error_shows_help_without_token() {
     : > "$archive_dir/archive/2026-06-$day-1day-meta.json"
   done
   cat > "$fake_bin/curl" <<'CURL'
-#!/usr/bin/env bash
-if [[ "$*" == *"https://api.github.com/user"* ]]; then
+#!/bin/sh
+if [ "${*#*https://api.github.com/user}" != "$*" ]; then
   printf '{"login":"debug-user"}\n200 read:org\n'
 else
   echo "curl: (22) The requested URL returned error: 403" >&2
