@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1090,SC1091,SC2016
+# shellcheck disable=SC1090,SC1091,SC2016,SC2153
 
 set -euo pipefail
 
@@ -187,6 +187,34 @@ esac
 
 # Fixture group 1: Log analysis tests (shared invocation, different log content)
 # Running this fixture sets: FIXTURE1_OUTPUT, FIXTURE1_STATUS
+# Several tests assert on the same scenario. Each scenario runs the script once
+# and later tests reuse the captured result; every run costs ~2s of process spawns.
+declare -A MEMO_OUTPUT=() MEMO_STATUS=() MEMO_EXTRA=()
+
+run_fixture7_fix_force() {
+  local key="fix7:${1:-default}"
+  if [[ -z "${MEMO_STATUS[$key]+x}" ]]; then
+    run_fixture7_fix_force_uncached "$@"
+    MEMO_OUTPUT[$key]="$FIXTURE7_OUTPUT"
+    MEMO_STATUS[$key]="$FIXTURE7_STATUS"
+    MEMO_EXTRA[$key]="${FIXTURE7_START_TMPDIR:-}"
+  fi
+  FIXTURE7_OUTPUT="${MEMO_OUTPUT[$key]}"
+  FIXTURE7_STATUS="${MEMO_STATUS[$key]}"
+  FIXTURE7_START_TMPDIR="${MEMO_EXTRA[$key]}"
+}
+
+run_fixture_vm_aaaa() {
+  local key="vmaaaa:$1"
+  if [[ -z "${MEMO_STATUS[$key]+x}" ]]; then
+    run_fixture_vm_aaaa_uncached "$@"
+    MEMO_OUTPUT[$key]="$VMAAAA_OUTPUT"
+    MEMO_STATUS[$key]="$VMAAAA_STATUS"
+  fi
+  VMAAAA_OUTPUT="${MEMO_OUTPUT[$key]}"
+  VMAAAA_STATUS="${MEMO_STATUS[$key]}"
+}
+
 run_fixture1_log_health_healthy() {
   local work_dir=""
   local stub_dir=""
@@ -528,7 +556,7 @@ run_fixture6_verbose() {
 }
 
 # Fixture group 7: --fix --force mode (starts machine)
-run_fixture7_fix_force() {
+run_fixture7_fix_force_uncached() {
   local mode="${1:-stopped}"
   local work_dir=""
   local stub_dir=""
@@ -957,7 +985,7 @@ test_fix_force_recreates_low_memory_machine() {
   assert_status "0" "$FIXTURE8_STATUS" "podman_troubleshoot --fix --force completes successfully with a low-memory machine"
 }
 
-run_fixture_vm_aaaa() {
+run_fixture_vm_aaaa_uncached() {
   local mode="$1"
   local work_dir="" stub_dir=""
 
