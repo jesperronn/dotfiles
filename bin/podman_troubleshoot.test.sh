@@ -532,11 +532,17 @@ run_fixture7_fix_force() {
   local mode="${1:-stopped}"
   local work_dir=""
   local stub_dir=""
+  local long_tmp=""
 
   work_dir="$(mktemp -d)"
   stub_dir="$work_dir/stub-bin"
   make_stub_dir "$stub_dir"
   mkdir -p "$work_dir/home/.local/share/containers/podman/machine" "$work_dir/state"
+  if [[ "$mode" == "longtmp" ]]; then
+    # healthy running machine, but the caller TMPDIR makes the socket path too long
+    : >"$work_dir/state/running"
+    long_tmp="$work_dir/$(printf 'x%.0s' {1..90})"
+  fi
   if [[ "$mode" == "hung" ]]; then
     # machine reports running, but the API is dead until it is restarted
     : >"$work_dir/state/running"
@@ -576,9 +582,9 @@ case "$1" in
         fi
         ;;
       inspect)
-        if [[ "$4" == "{{.Rootful}}" ]]; then
+        if [[ "${5:-}" == "{{.Rootful}}" ]]; then
           printf "false\n"
-        elif [[ "$4" == "{{.ConnectionInfo.PodmanSocket.Path}}" ]]; then
+        elif [[ "${5:-}" == "{{.ConnectionInfo.PodmanSocket.Path}}" ]]; then
           printf "%s/podman/podman-machine-default-api.sock\n" "${TMPDIR:-/tmp}"
         else
           printf "{\"Name\":\"podman-machine-default\",\"Rootful\":false}\n"
@@ -597,6 +603,7 @@ case "$1" in
         fi
         ;;
       start)
+        printf "%s\n" "${TMPDIR:-}" >"$state_dir/start_tmpdir"
         : >"$running_file"
         rm -f "$state_dir/hung"
         printf "Machine started\n"
@@ -682,7 +689,7 @@ esac
   capture_command FIXTURE7_OUTPUT FIXTURE7_STATUS env \
     NO_COLOR=1 \
     HOME="$work_dir/home" \
-    TMPDIR="$work_dir" \
+    TMPDIR="${long_tmp:-$work_dir}" \
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
@@ -690,6 +697,7 @@ esac
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
+  FIXTURE7_START_TMPDIR="$(cat "$work_dir/state/start_tmpdir" 2>/dev/null || true)"
   rm -rf "$work_dir"
 }
 
@@ -925,6 +933,20 @@ test_fix_force_restarts_machine_with_hung_api() {
   assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman machine restarted" "fix restarts the hung machine"
 }
 
+test_fix_force_restarts_machine_with_short_tmpdir_when_socket_path_too_long() {
+  run_fixture7_fix_force longtmp
+  assert_status "0" "$FIXTURE7_STATUS" "fix completes when the socket path is too long"
+  assert_contains "$FIXTURE7_OUTPUT" "Podman socket path exceeds" "fix detects the too-long socket path"
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman machine restarted with short TMPDIR (/tmp)" "fix restarts the machine under a short TMPDIR"
+  assert_eq "/tmp" "$FIXTURE7_START_TMPDIR" "machine start receives TMPDIR=/tmp"
+}
+
+test_fix_force_skips_restart_when_socket_path_is_short() {
+  run_fixture7_fix_force
+  assert_contains "$FIXTURE7_OUTPUT" "[OK] Podman socket path is within the 100-byte unix socket limit" "short socket path needs no restart"
+  assert_not_contains "$FIXTURE7_OUTPUT" "restarted with short TMPDIR" "no short-TMPDIR restart for a short path"
+}
+
 test_fix_refreshes_missing_stable_socket() {
   run_fixture7_fix_force
   assert_contains "$FIXTURE7_OUTPUT" "[OK] stable Podman socket refreshed" "fix refreshes a missing stable socket"
@@ -955,6 +977,16 @@ if [[ "${1:-}" == machine && "${2:-}" == ssh && "${3:-}" == *AAAA* ]]; then exit
 exec "$(dirname "$0")/podman.real" "$@"
 '
   fi
+  if [[ "$mode" == "longsock" ]]; then
+    mv "$stub_dir/podman" "$stub_dir/podman.real"
+    write_stub "$stub_dir/podman" '
+if [[ "${1:-}" == machine && "${2:-}" == inspect && "${4:-}" == --format ]]; then
+  printf "/private/tmp/%0120d/podman/podman-machine-default-api.sock\n" 0
+  exit 0
+fi
+exec "$(dirname "$0")/podman.real" "$@"
+'
+  fi
   write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command VMAAAA_OUTPUT VMAAAA_STATUS env \
@@ -974,6 +1006,17 @@ test_vm_aaaa_failure_is_reported_with_gvproxy_hint() {
   run_fixture_vm_aaaa broken
   assert_contains "$VMAAAA_OUTPUT" "[TROUBLESHOOT] VM resolver fails AAAA queries" "AAAA failure is surfaced as a troubleshooting issue"
   assert_contains "$VMAAAA_OUTPUT" "GODEBUG" "hint names the GODEBUG netdns cause"
+}
+
+test_long_socket_path_is_reported_with_tmpdir_hint() {
+  run_fixture_vm_aaaa longsock
+  assert_contains "$VMAAAA_OUTPUT" "[TROUBLESHOOT] Podman socket path is" "long socket path is surfaced as a troubleshooting issue"
+  assert_contains "$VMAAAA_OUTPUT" "TMPDIR=/tmp docker compose" "hint shows the one-command TMPDIR workaround"
+}
+
+test_short_socket_path_is_reported_ok() {
+  run_fixture_vm_aaaa healthy
+  assert_contains "$VMAAAA_OUTPUT" "[OK] Podman socket path is within the 100-byte unix socket limit" "short socket path is reported ok"
 }
 
 test_vm_aaaa_success_is_reported_ok() {

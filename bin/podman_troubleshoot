@@ -78,6 +78,11 @@ MACHINE_MEMORY_MB="${PODMAN_TROUBLESHOOT_MACHINE_MEMORY_MB:-8192}"
 MACHINE_CPUS="${PODMAN_TROUBLESHOOT_MACHINE_CPUS:-9}"
 STABILITY_SLEEP_SECONDS="${PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS:-10}"
 DEFAULT_MACHINE_NAME="podman-machine-default"
+# macOS caps unix socket paths at ~104 bytes. Podman puts the machine API socket
+# under $TMPDIR/podman/, so a long TMPDIR (sandboxed agents, CI) breaks compose/docker.
+# Machine commands run with SHORT_TMPDIR so the socket path stays short.
+SHORT_TMPDIR="${PODMAN_TROUBLESHOOT_SHORT_TMPDIR:-/tmp}"
+SOCKET_PATH_MAX="${PODMAN_TROUBLESHOOT_SOCKET_PATH_MAX:-100}"
 
 # Cache for expensive podman calls (reuse within same script invocation)
 CACHE_MACHINE_LIST_JSON=""
@@ -325,10 +330,37 @@ docker() {
 
 podman_control() {
   if [[ -n "$PODMAN_BIN" ]]; then
-    env -u DOCKER_HOST "$PODMAN_BIN" "$@"
+    env -u DOCKER_HOST TMPDIR="$SHORT_TMPDIR" "$PODMAN_BIN" "$@"
   else
-    env -u DOCKER_HOST podman "$@"
+    env -u DOCKER_HOST TMPDIR="$SHORT_TMPDIR" podman "$@"
   fi
+}
+
+# Socket path as a client with the caller's own TMPDIR would see it (not SHORT_TMPDIR).
+podman_client_socket_path() {
+  local machine_name="$1"
+  if [[ -n "$PODMAN_BIN" ]]; then
+    env -u DOCKER_HOST "$PODMAN_BIN" machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true
+  else
+    env -u DOCKER_HOST podman machine inspect "$machine_name" --format '{{.ConnectionInfo.PodmanSocket.Path}}' 2>/dev/null || true
+  fi
+}
+
+# Prints the first too-long socket path (client view or stable symlink target); returns 1 if none.
+long_podman_socket_path() {
+  local machine_name="$1"
+  local candidate
+  local stable_sock
+
+  stable_sock="$(stable_podman_socket_path)"
+  for candidate in "$(podman_client_socket_path "$machine_name")" \
+    "$([[ -L "$stable_sock" ]] && readlink "$stable_sock" || true)"; do
+    if [[ -n "$candidate" ]] && (( ${#candidate} > SOCKET_PATH_MAX )); then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 stable_podman_socket_path() {
@@ -779,6 +811,7 @@ connection: $connection_name"
     connection_name="$machine_name"
   fi
 
+  local machine_started=0
   if ! podman_machine_running "$machine_name"; then
     log_troubleshoot "default Podman machine is not running; attempting to start"
     if ! run_fix_step \
@@ -789,6 +822,7 @@ connection: $connection_name"
       check_machine_log_health
       return 1
     fi
+    machine_started=1
   elif podman_api_responds; then
     log_ok "Podman machine is already running and its API responds"
   else
@@ -801,6 +835,18 @@ connection: $connection_name"
       check_machine_log_health
       return 1
     fi
+    machine_started=1
+  fi
+
+  # A machine started above already ran under SHORT_TMPDIR; only judge one that was already up.
+  if (( machine_started == 0 )) && long_podman_socket_path "$machine_name" >/dev/null; then
+    log_troubleshoot "Podman socket path exceeds ${SOCKET_PATH_MAX} bytes; machine must restart under TMPDIR=$SHORT_TMPDIR"
+    run_fix_step \
+      "Podman machine restarted with short TMPDIR ($SHORT_TMPDIR)" \
+      "restart $machine_name with TMPDIR=$SHORT_TMPDIR so the API socket path fits the unix socket limit" \
+      restart_podman_machine "$machine_name" || return 1
+  else
+    log_ok "Podman socket path is within the ${SOCKET_PATH_MAX}-byte unix socket limit"
   fi
 
   if stable_podman_socket_is_current "$machine_name"; then
@@ -886,6 +932,29 @@ check_podman_socket_connection() {
   fi
   show_detail "$output"
   return 0
+}
+
+check_podman_socket_path_length() {
+  log_section "Podman Socket Path Length"
+
+  local machine_name
+  local long_path
+
+  machine_name="$(podman_current_machine_name || true)"
+  [[ -n "$machine_name" ]] || machine_name="$DEFAULT_MACHINE_NAME"
+
+  if ! long_podman_socket_path "$machine_name" >/dev/null; then
+    log_ok "Podman socket path is within the ${SOCKET_PATH_MAX}-byte unix socket limit"
+    return 0
+  fi
+
+  long_path="$(long_podman_socket_path "$machine_name")"
+  FAILURES=$((FAILURES + 1))
+  log_troubleshoot "Podman socket path is ${#long_path} bytes (limit ~104): $long_path"
+  printf '    next: long TMPDIR makes docker compose fail with a socket path too long error\n'
+  printf '    next: `bin/podman_troubleshoot --fix` restarts the machine with TMPDIR=%s\n' "$SHORT_TMPDIR"
+  printf '    next: or for one command: `TMPDIR=%s docker compose ...`\n' "$SHORT_TMPDIR"
+  printf '    next: point clients at the short stable path: `export DOCKER_HOST="unix://${HOME}/.local/share/containers/podman/machine/podman.sock"`\n'
 }
 
 have_image_name() {
@@ -1993,6 +2062,7 @@ run_main() {
   fi
 
   check_podman_socket_connection
+  check_podman_socket_path_length
   check_local_client_versions
   check_podman_system_container
   check_host_loopback_389
