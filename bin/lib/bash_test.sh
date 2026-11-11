@@ -149,9 +149,9 @@ run_test_function() {
   local start_time="" end_time="" elapsed=""
 
   test_run "$test_name"
-  start_time="$EPOCHREALTIME"
+  start_time="${EPOCHREALTIME/,/.}"
   "$test_name"
-  end_time="$EPOCHREALTIME"
+  end_time="${EPOCHREALTIME/,/.}"
   BASH_TEST_CASES=$((BASH_TEST_CASES + 1))
 
   if [[ "${BASH_TEST_VERBOSE}" == "1" ]]; then
@@ -189,14 +189,14 @@ run_tests() {
     return 1
   fi
 
-  suite_start="$EPOCHREALTIME"
+  suite_start="${EPOCHREALTIME/,/.}"
   for test_name in "${test_names[@]}"; do
     if ! declare -F "$test_name" >/dev/null 2>&1; then
       test_fail "missing test function" "Unknown test: [$test_name]"
     fi
     run_test_function "$test_name"
   done
-  suite_end="$EPOCHREALTIME"
+  suite_end="${EPOCHREALTIME/,/.}"
 
   suite_elapsed="$(awk -v s="$suite_start" -v e="$suite_end" 'BEGIN { printf "%.2f", e - s }')"
   bash_test_color_print "${BASH_TEST_C_BOLD}${BASH_TEST_C_GREEN}" \
