@@ -11,6 +11,7 @@ source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 # Global cleanup: remove any temp directories left behind by interrupted tests
 cleanup_test_temps() {
   find . -maxdepth 1 -type d -name "ptest_*" -exec rm -rf {} + 2>/dev/null || true
+  rm -rf "${SCENARIO_DIR:-}"
 }
 trap cleanup_test_temps EXIT
 
@@ -187,35 +188,79 @@ esac
 
 # Fixture group 1: Log analysis tests (shared invocation, different log content)
 # Running this fixture sets: FIXTURE1_OUTPUT, FIXTURE1_STATUS
-# Several tests assert on the same scenario. Each scenario runs the script once
-# and later tests reuse the captured result; every run costs ~2s of process spawns.
-declare -A MEMO_OUTPUT=() MEMO_STATUS=() MEMO_EXTRA=()
+# Scenario runs: each scenario executes the script once (it costs ~1.5s of process
+# spawns) and every test that asserts on it reuses the captured variables. With no
+# test names on the command line all scenarios are started in parallel up front.
+SCENARIO_DIR="$(mktemp -d)"
+declare -A SCENARIO_PID=() SCENARIO_LOADED=()
 
-run_fixture7_fix_force() {
-  local key="fix7:${1:-default}"
-  if [[ -z "${MEMO_STATUS[$key]+x}" ]]; then
-    run_fixture7_fix_force_uncached "$@"
-    MEMO_OUTPUT[$key]="$FIXTURE7_OUTPUT"
-    MEMO_STATUS[$key]="$FIXTURE7_STATUS"
-    MEMO_EXTRA[$key]="${FIXTURE7_START_TMPDIR:-}"
-  fi
-  FIXTURE7_OUTPUT="${MEMO_OUTPUT[$key]}"
-  FIXTURE7_STATUS="${MEMO_STATUS[$key]}"
-  FIXTURE7_START_TMPDIR="${MEMO_EXTRA[$key]}"
+# scenario_key <fn> [arg]  ->  "<fn>:<arg>"
+scenario_key() { printf '%s:%s' "$1" "${2:-}"; }
+
+# scenario_vars <fn> -> variables the scenario function sets
+scenario_vars() {
+  case "$1" in
+    run_fixture7_fix_force) echo "FIXTURE7_OUTPUT FIXTURE7_STATUS FIXTURE7_START_TMPDIR" ;;
+    run_fixture_vm_aaaa) echo "VMAAAA_OUTPUT VMAAAA_STATUS" ;;
+    run_fixture[0-9]*) local n="${1#run_fixture}"; n="${n%%_*}"; echo "FIXTURE${n}_OUTPUT FIXTURE${n}_STATUS" ;;
+  esac
 }
 
-run_fixture_vm_aaaa() {
-  local key="vmaaaa:$1"
-  if [[ -z "${MEMO_STATUS[$key]+x}" ]]; then
-    run_fixture_vm_aaaa_uncached "$@"
-    MEMO_OUTPUT[$key]="$VMAAAA_OUTPUT"
-    MEMO_STATUS[$key]="$VMAAAA_STATUS"
-  fi
-  VMAAAA_OUTPUT="${MEMO_OUTPUT[$key]}"
-  VMAAAA_STATUS="${MEMO_STATUS[$key]}"
+scenario_run_to_file() {
+  local fn="$1" arg="${2:-}" file="$3" var=""
+  "${fn}_uncached" ${arg:+"$arg"}
+  : >"$file.tmp"
+  for var in $(scenario_vars "$fn"); do
+    printf '%s=%q\n' "$var" "${!var}" >>"$file.tmp"
+  done
+  mv "$file.tmp" "$file"
 }
 
-run_fixture1_log_health_healthy() {
+scenario_file() { printf '%s/%s' "$SCENARIO_DIR" "$(scenario_key "$@" | tr '/:' '__')"; }
+
+# Parallelism is capped: the script has 2s test-mode timeouts, which flake when
+# the machine is oversubscribed.
+SCENARIO_JOBS="${PODMAN_TROUBLESHOOT_TEST_JOBS:-4}"
+
+scenario_start() {
+  local file=""
+  while (( $(jobs -rp | wc -l) >= SCENARIO_JOBS )); do
+    wait -n || true
+  done
+  file="$(scenario_file "$@")"
+  scenario_run_to_file "$1" "${2:-}" "$file" &
+  SCENARIO_PID[$(scenario_key "$@")]=$!
+}
+
+scenario_get() {
+  local key="" file=""
+  key="$(scenario_key "$@")"
+  file="$(scenario_file "$@")"
+  if [[ -z "${SCENARIO_LOADED[$key]+x}" ]]; then
+    if [[ -n "${SCENARIO_PID[$key]+x}" ]]; then
+      wait "${SCENARIO_PID[$key]}" || true
+    else
+      scenario_run_to_file "$1" "${2:-}" "$file"
+    fi
+    SCENARIO_LOADED[$key]=1
+  fi
+  # Re-read on every call: scenarios share variable names, so a later scenario
+  # may have overwritten the values a test is about to assert on.
+  # shellcheck disable=SC1090
+  source "$file"
+}
+
+run_fixture7_fix_force() { scenario_get run_fixture7_fix_force "$@"; }
+run_fixture_vm_aaaa() { scenario_get run_fixture_vm_aaaa "$@"; }
+run_fixture1_log_health_healthy() { scenario_get run_fixture1_log_health_healthy; }
+run_fixture2_log_health_journald() { scenario_get run_fixture2_log_health_journald; }
+run_fixture3_log_health_emergency() { scenario_get run_fixture3_log_health_emergency; }
+run_fixture4_port389_blocked() { scenario_get run_fixture4_port389_blocked; }
+run_fixture5_starting_machine() { scenario_get run_fixture5_starting_machine; }
+run_fixture6_verbose() { scenario_get run_fixture6_verbose; }
+run_fixture8_fix_force_lowmem() { scenario_get run_fixture8_fix_force_lowmem; }
+
+run_fixture1_log_health_healthy_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -251,7 +296,7 @@ EOF
 }
 
 # Fixture group 2: Log analysis - journald I/O errors
-run_fixture2_log_health_journald() {
+run_fixture2_log_health_journald_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -285,7 +330,7 @@ EOF
 }
 
 # Fixture group 3: Log analysis - emergency mode
-run_fixture3_log_health_emergency() {
+run_fixture3_log_health_emergency_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -321,7 +366,7 @@ EOF
 }
 
 # Fixture group 4: Port 389 policy test
-run_fixture4_port389_blocked() {
+run_fixture4_port389_blocked_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -428,7 +473,7 @@ esac
 }
 
 # Fixture group 5: Starting machine
-run_fixture5_starting_machine() {
+run_fixture5_starting_machine_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -528,7 +573,7 @@ esac
 }
 
 # Fixture group 6: Verbose flag
-run_fixture6_verbose() {
+run_fixture6_verbose_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -730,7 +775,7 @@ esac
 }
 
 # Fixture group 8: --fix --force with low memory machine
-run_fixture8_fix_force_lowmem() {
+run_fixture8_fix_force_lowmem_uncached() {
   local work_dir=""
   local stub_dir=""
 
@@ -1052,5 +1097,21 @@ test_vm_aaaa_success_is_reported_ok() {
   assert_contains "$VMAAAA_OUTPUT" "[OK] VM resolver answers AAAA queries" "healthy AAAA is reported ok"
   assert_not_contains "$VMAAAA_OUTPUT" "VM resolver fails AAAA" "healthy AAAA raises no issue"
 }
+
+if (( $# == 0 )); then
+  scenario_start run_fixture1_log_health_healthy
+  scenario_start run_fixture2_log_health_journald
+  scenario_start run_fixture3_log_health_emergency
+  scenario_start run_fixture4_port389_blocked
+  scenario_start run_fixture5_starting_machine
+  scenario_start run_fixture6_verbose
+  scenario_start run_fixture7_fix_force
+  scenario_start run_fixture7_fix_force hung
+  scenario_start run_fixture7_fix_force longtmp
+  scenario_start run_fixture8_fix_force_lowmem
+  scenario_start run_fixture_vm_aaaa healthy
+  scenario_start run_fixture_vm_aaaa broken
+  scenario_start run_fixture_vm_aaaa longsock
+fi
 
 run_tests "$@"
