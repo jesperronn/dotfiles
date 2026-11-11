@@ -357,7 +357,13 @@ test_backfill_permission_error_shows_help_without_token() {
   local fake_bin="$TEST_TMP_DIR/backfill-403-bin"
   local config="$TEST_TMP_DIR/backfill-403-config.toml"
   local archive_dir="$TEST_TMP_DIR/backfill-403-archive"
-  mkdir -p "$fake_bin"
+  mkdir -p "$fake_bin" "$archive_dir/archive"
+  # Backfill skips days that already have a 1day-meta file; cache all but the
+  # first so the stub is exec'd once instead of once per day of the month.
+  local day
+  for day in {02..30}; do
+    : > "$archive_dir/archive/2026-06-$day-1day-meta.json"
+  done
   cat > "$fake_bin/curl" <<'CURL'
 #!/usr/bin/env bash
 if [[ "$*" == *"https://api.github.com/user"* ]]; then
