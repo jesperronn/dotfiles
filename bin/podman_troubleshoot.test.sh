@@ -63,6 +63,9 @@ exit 0
 
   write_stub "$stub_dir/curl" 'exit 0'
 
+  # No listener on host ports; avoids a real, slow lsof scan of the host.
+  write_stub "$stub_dir/lsof" 'exit 1'
+
   write_stub "$stub_dir/strings" 'cat "$1"'
 
   write_stub "$stub_dir/rg" '
