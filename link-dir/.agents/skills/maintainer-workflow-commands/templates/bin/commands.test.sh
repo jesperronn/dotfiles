@@ -180,4 +180,75 @@ test_troubleshoot_never_runs_remote() {
   assert_status 2 "$st" "missing target exits 2"
 }
 
+# commit_at DIR OFFSET SUBJECT [BODY]: commit at 1700000000+OFFSET seconds.
+commit_at() {
+  local dir="$1" when="$2" subject="$3" body="${4-}"
+  GIT_AUTHOR_DATE="$((1700000000 + when)) +0000" GIT_COMMITTER_DATE="$((1700000000 + when)) +0000" \
+    git -C "$dir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "$subject${body:+
+
+$body}"
+}
+
+test_changelog_bumps_from_conventional_commits() {
+  local out st dir
+  dir="$(mk_project c1 README.md)"
+  commit_at "$dir" 1000 "chore: init"
+  run out st "$dir" bin/changelog next
+  assert_status 3 "$st" "nothing releasable exits 3"
+  assert_contains "$out" "nothing releasable" "says why"
+  commit_at "$dir" 1100 "feat(api): add export"
+  run out st "$dir" bin/changelog next
+  assert_eq "v0.1.0" "$out" "first feat without tags gives v0.1.0"
+  git -C "$dir" tag v1.2.3
+  commit_at "$dir" 1200 "docs: typo"
+  run out st "$dir" bin/changelog next
+  assert_status 3 "$st" "docs alone is not releasable"
+  commit_at "$dir" 1300 "fix: crash"
+  run out st "$dir" bin/changelog next
+  assert_eq "v1.2.4" "$out" "fix gives a patch bump"
+  commit_at "$dir" 1400 "feat: more"
+  run out st "$dir" bin/changelog next
+  assert_eq "v1.3.0" "$out" "feat gives a minor bump"
+  commit_at "$dir" 1500 "refactor: x" "BREAKING CHANGE: api removed"
+  run out st "$dir" bin/changelog next
+  assert_eq "v2.0.0" "$out" "BREAKING CHANGE footer gives major"
+}
+
+test_changelog_render_groups_entries() {
+  local out st dir
+  dir="$(mk_project c2 README.md)"
+  git -C "$dir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: init"
+  git -C "$dir" tag v1.0.0
+  commit_at "$dir" 1000 "feat(api): add export"
+  commit_at "$dir" 1100 "fix: crash"
+  commit_at "$dir" 1200 "perf!: drop cache"
+  run out st "$dir" bin/changelog render
+  assert_status 0 "$st" "render exits 0"
+  assert_contains "$out" "## v2.0.0" "heading has the next version"
+  assert_contains "$out" "### Changed (BREAKING)" "breaking section"
+  assert_contains "$out" "### Added" "added section"
+  assert_contains "$out" "- **api:** add export (" "scope and description format"
+  assert_contains "$out" "### Fixed" "fixed section"
+  run out st "$dir" bin/changelog render --repo "$TEST_TMP_DIR/nope"
+  assert_status 1 "$st" "bad repo exits 1"
+  run out st "$dir" bin/changelog bogus
+  assert_status 2 "$st" "unknown subcommand exits 2"
+}
+
+test_changelog_due_uses_quiet_period() {
+  local out st dir
+  dir="$(mk_project c3 README.md)"
+  commit_at "$dir" 10000 "feat: x"
+  run out st "$dir" bin/changelog due --now 1700010600
+  assert_status 4 "$st" "inside the grace period exits 4"
+  assert_eq "1h50m" "$out" "prints the time left"
+  run out st "$dir" bin/changelog due --now 1700017200
+  assert_status 0 "$st" "after the grace period exits 0"
+  assert_eq "due" "$out" "prints due"
+  run out st "$dir" bin/changelog due --grace 90m --now 1700010000
+  assert_eq "1h30m" "$out" "custom grace"
+  run out st "$dir" bin/changelog due --grace nope
+  assert_status 2 "$st" "bad grace exits 2"
+}
+
 run_tests "$@"

@@ -58,7 +58,8 @@ EOT
 release() {
   cat <<'EOT'
 == release ==
-  PROJECT: none (no release tooling). Or: bin/changelog next|render|due, then tag; see the skill.
+  bin/changelog next|render|due   # read-only preview from conventional commits
+  PROJECT: add the tag and publish steps, or say none
 EOT
 }
 

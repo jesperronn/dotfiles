@@ -23,7 +23,8 @@ did it in [examples.md](examples.md).
 | `lint [--autofix] [PATH]` | lint/format per ecosystem | yes |
 | `deps [--patch\|--minor\|--major]` | list or update dependencies | yes |
 | `troubleshoot <target>` | local: run checks; remote: print only | yes |
-| `changelog next\|render\|due`, release, deploy | project specific | see below |
+| `changelog next\|render\|due` | read-only release preview from conventional commits | yes |
+| release, deploy | project specific | see below |
 
 ## Adopt in a project
 
@@ -63,17 +64,19 @@ thin wrappers or index them in `bin/workflows`.
 - Never probe a script with `--help` unless you know it parses it: some `bin/setup`
   scripts ignore args and run everything.
 
-## Release and changelog (no template; write when releases use tags)
+## Release and deploy (no template)
 
-- Prefer the project's existing tool (goreleaser, git-cliff, release-please,
-  semantic-release, JReleaser). Hand-roll only if none exists.
-- `changelog next`: next `vX.Y.Z` from conventional commits since the latest tag
-  (`v0.0.0` if none); `render`: the section; `due --grace 2h`: quiet period
-  left. Exit 0 ok, 3 nothing releasable, 4 not yet due. Read-only.
-- Bump: `!:`/`BREAKING CHANGE` major; `feat` minor; `fix`, `perf` patch; the
-  rest none. Entry format `- **scope:** description (hash)`.
-- Share tag lookup with any `bump_version`: guard its main with
+- `bin/changelog` previews only. Exit 0 ok, 3 nothing releasable, 4 not yet
+  due. Bump: `!:`/`BREAKING CHANGE` major; `feat` minor; `fix`, `perf` patch;
+  the rest none. It reads tags, so tag with `vX.Y.Z`.
+- If the project already has release tooling (goreleaser, git-cliff,
+  release-please, semantic-release, JReleaser), wrap it instead of using
+  `bin/changelog`. Add an `update` subcommand only if a `CHANGELOG.md` is kept.
+- A release script tags locally and pushes only after a prompt. Share tag
+  lookup with any `bump_version`: guard its main with
   `[[ "${BASH_SOURCE[0]}" == "$0" ]]` and `source` it.
+- Deploy: keep a local rehearsal target separate from real stages; real ones are
+  run by the user. Describe them in `bin/workflows`.
 
 ## Tests
 
