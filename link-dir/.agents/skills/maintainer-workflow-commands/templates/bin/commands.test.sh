@@ -251,4 +251,49 @@ test_changelog_due_uses_quiet_period() {
   assert_status 2 "$st" "bad grace exits 2"
 }
 
+test_changelog_update_inserts_section() {
+  local out st dir
+  dir="$(mk_project c4 README.md)"
+  git -C "$dir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: init"
+  git -C "$dir" tag v1.0.0
+  commit_at "$dir" 1000 "feat(api): add export"
+  printf '# Changelog\n\n## [Unreleased]\n\n- hand written\n\n## [1.0.0] - 2026-01-01\n\n- old\n' >"$dir/CHANGELOG.md"
+  run out st "$dir" bin/changelog update --date 2026-02-03
+  assert_status 0 "$st" "update exits 0"
+  local file
+  file="$(cat "$dir/CHANGELOG.md")"
+  assert_contains "$file" "## [1.1.0] - 2026-02-03" "new heading uses Keep a Changelog form"
+  assert_contains "$file" "- **api:** add export (" "entry is inserted"
+  assert_contains "$file" "- hand written" "Unreleased body stays by default"
+  assert_contains "$file" "- old" "older release stays"
+  if [[ "$file" == *"[Unreleased]"*"[1.1.0]"*"[1.0.0]"* ]]; then
+    test_pass "new section sits between Unreleased and the newest release"
+  else
+    test_fail "section order" "$file"
+  fi
+  run out st "$dir" bin/changelog update --date 2026-02-03
+  assert_status 1 "$st" "second update refuses a duplicate version"
+  assert_contains "$out" "already has a section" "says why"
+}
+
+test_changelog_update_replace_unreleased_and_create() {
+  local out st dir file
+  dir="$(mk_project c5 README.md)"
+  git -C "$dir" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "chore: init"
+  git -C "$dir" tag v1.0.0
+  commit_at "$dir" 1000 "fix: crash"
+  printf '# Changelog\n\n## [Unreleased]\n\n- hand written\n\n## [1.0.0] - 2026-01-01\n' >"$dir/CHANGELOG.md"
+  run out st "$dir" bin/changelog update --replace-unreleased --date 2026-02-03
+  file="$(cat "$dir/CHANGELOG.md")"
+  assert_not_contains "$file" "hand written" "--replace-unreleased drops the body"
+  assert_contains "$file" "## [Unreleased]" "...but keeps the heading"
+  assert_contains "$file" "## [1.0.1] - 2026-02-03" "patch section added"
+  rm "$dir/CHANGELOG.md"
+  run out st "$dir" bin/changelog update --date 2026-02-03
+  assert_status 0 "$st" "a missing file is created"
+  assert_contains "$(cat "$dir/CHANGELOG.md")" "## [1.0.1] - 2026-02-03" "created file has the section"
+  run out st "$dir" bin/changelog next --file x.md
+  assert_status 2 "$st" "--file only applies to update"
+}
+
 run_tests "$@"

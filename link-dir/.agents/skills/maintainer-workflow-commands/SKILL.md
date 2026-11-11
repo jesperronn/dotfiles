@@ -23,7 +23,7 @@ did it in [examples.md](examples.md).
 | `lint [--autofix] [PATH]` | lint/format per ecosystem | yes |
 | `deps [--patch\|--minor\|--major]` | list or update dependencies | yes |
 | `troubleshoot <target>` | local: run checks; remote: print only | yes |
-| `changelog next\|render\|due` | read-only release preview from conventional commits | yes |
+| `changelog next\|render\|update\|due` | release preview from conventional commits; `update` writes `CHANGELOG.md` | yes |
 | release, deploy | project specific | see below |
 
 ## Adopt in a project
@@ -66,12 +66,16 @@ thin wrappers or index them in `bin/workflows`.
 
 ## Release and deploy (no template)
 
-- `bin/changelog` previews only. Exit 0 ok, 3 nothing releasable, 4 not yet
+- `bin/changelog next|render|due` preview only; `update` is the one writer (inserts
+  `## [X.Y.Z] - DATE` into `CHANGELOG.md`, `--replace-unreleased`, refuses a
+  duplicate). `update` is not part of a release script: bbapprove's `release`
+  moves the hand-written `[Unreleased]` notes and only calls `next`. Keep
+  one changelog source per project (hand-written or generated). Exit 0 ok, 3 nothing releasable, 4 not yet
   due. Bump: `!:`/`BREAKING CHANGE` major; `feat` minor; `fix`, `perf` patch;
   the rest none. It reads tags, so tag with `vX.Y.Z`.
 - If the project already has release tooling (goreleaser, git-cliff,
   release-please, semantic-release, JReleaser), wrap it instead of using
-  `bin/changelog`. Add an `update` subcommand only if a `CHANGELOG.md` is kept.
+  `bin/changelog`. Drop `update` when the changelog lives in tag messages.
 - A release script tags locally and pushes only after a prompt. Share tag
   lookup with any `bump_version`: guard its main with
   `[[ "${BASH_SOURCE[0]}" == "$0" ]]` and `source` it.
