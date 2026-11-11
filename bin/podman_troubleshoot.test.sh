@@ -35,7 +35,7 @@ write_stub() {
   local file_path="$1"
   shift
   local body="$1"
-  { echo '#!/usr/bin/env bash'; echo 'set -euo pipefail'; echo "$body"; } >"$file_path"
+  { echo '#!/bin/bash'; echo 'set -euo pipefail'; echo "$body"; } >"$file_path"
   chmod +x "$file_path"
 }
 
