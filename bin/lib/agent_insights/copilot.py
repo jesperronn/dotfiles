@@ -128,6 +128,12 @@ def _load_one(path: str, sid: str) -> dict:
             elif etype == "tool.execution_complete":
                 if '"success":false' in line or '"success": false' in line:
                     session["tool_errors"] += 1
+                    if len(session["errors"]) < common.MAX_ERRORS:
+                        try:
+                            err = (json.loads(line).get("data") or {}).get("error")
+                        except ValueError:
+                            err = None
+                        common.add_error(session, err.get("message") if isinstance(err, dict) else err)
             elif etype == "abort":
                 _add_extra(extra, "aborts", 1)
             elif etype == "session.compaction_complete":
@@ -139,6 +145,7 @@ def _load_one(path: str, sid: str) -> dict:
                     continue
                 if etype == "session.error":
                     _add_extra(extra, "session_errors", 1)
+                    common.add_error(session, data.get("message"))
                 elif etype == "session.start":
                     ctx = data.get("context") or {}
                     session["project"] = session["project"] or ctx.get("cwd")

@@ -55,6 +55,8 @@ def session_digest(s) -> str:
     tools = sorted(s["tool_calls"].items(), key=lambda kv: -kv[1])[:5]
     parts.append("tools=" + (",".join(f"{k}:{v}" for k, v in tools) or "none"))
     parts.append(f"tool_errors={s['tool_errors']}")
+    if s.get("errors"):
+        parts.append(f"errors={[_clean(e, common.ERROR_CHARS) for e in s['errors']]!r}")
     if s["models"]:
         parts.append("models=" + ",".join(s["models"][:3]))
     duration = common.duration_seconds(s)
@@ -85,7 +87,7 @@ def map_prompt(harness, batch, index, total) -> str:
     return (
         f"{MAP_MARKER} (batch {index} of {total})\n"
         f"You are analysing usage logs of the coding agent '{harness}'. Below are compact digests of "
-        f"{len(batch)} sessions (date, project, stats, truncated first prompt).\n"
+        f"{len(batch)} sessions (date, project, stats, a few redacted error messages, truncated first prompt).\n"
         f"{RULES}\n"
         'JSON schema: {"themes":[str],"projects":[{"name":str,"what":str}],"wins":[str],'
         '"friction":[str],"notable_prompts":[str]}\n\n'

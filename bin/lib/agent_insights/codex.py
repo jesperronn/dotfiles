@@ -142,6 +142,24 @@ def _output_failed(text):
     return head.startswith(("apply_patch verification failed", "Script failed", "exec_command failed"))
 
 
+def _error_text(item):
+    """Best error message of a failed item/event: command output, error/message fields, MCP result text."""
+    if not isinstance(item, dict):
+        return None
+    for key in ("aggregated_output", "stderr", "error", "message", "stdout"):
+        value = item.get(key)
+        if isinstance(value, dict):
+            value = value.get("message")
+        if isinstance(value, str) and value.strip():
+            return value
+    result = item.get("result")
+    if isinstance(result, dict):
+        text = _text_of(result.get("content"))
+        if text.strip():
+            return text
+    return None
+
+
 def _patch_stats(changes):
     """(files, added, removed) for a FileChange changes dict."""
     added = removed = 0
@@ -198,6 +216,7 @@ def parse_session(path, titles=None):
     patch_paths = set()
     tc_usage = tur_usage = None
     status_errors = output_errors = 0
+    output_failures = {"errors": []}  # fallback messages, used only when no status events exist
     status_seen = False
     compacted_events = compaction_items = 0
     user_events = assistant_msgs = 0
@@ -304,6 +323,7 @@ def parse_session(path, titles=None):
                         output = _text_of(output)
                     if _output_failed(output):
                         output_errors += 1
+                        common.add_error(output_failures, output)
                 elif ptype == "compaction":
                     compaction_items += 1
             elif etype == "event_msg":
@@ -321,6 +341,7 @@ def parse_session(path, titles=None):
                         status_seen = True
                         if item.get("status") == "failed":
                             status_errors += 1
+                            common.add_error(session, _error_text(item) or f"{itype} failed")
                         elif itype == "FileChange":
                             paths, added, removed = _patch_stats(item.get("changes"))
                             extra["patches"] += 1
@@ -336,10 +357,12 @@ def parse_session(path, titles=None):
                     status_seen = True
                     if _num(payload.get("exit_code")) != 0:
                         status_errors += 1
+                        common.add_error(session, _error_text(payload) or "exec_command failed")
                 elif ptype == "patch_apply_end":  # old format
                     status_seen = True
                     if payload.get("success") is False:
                         status_errors += 1
+                        common.add_error(session, _error_text(payload) or "patch apply failed")
                     else:
                         paths, added, removed = _patch_stats(payload.get("changes"))
                         extra["patches"] += 1
@@ -357,6 +380,7 @@ def parse_session(path, titles=None):
                     extra["aborted_turns"] += 1
                 elif ptype == "error":
                     extra["api_errors"] += 1
+                    common.add_error(session, _error_text(payload))
                 elif ptype == "thread_settings_applied":
                     settings = payload.get("thread_settings")
                     if isinstance(settings, dict):
@@ -374,6 +398,9 @@ def parse_session(path, titles=None):
                              "cache_read": cached, "cache_write": written}
         extra["reasoning_tokens"] = _num(usage.get("reasoning_output_tokens"))
     session["tool_errors"] = status_errors if status_seen else output_errors
+    if not status_seen:
+        for message in output_failures["errors"]:
+            common.add_error(session, message)
     session["user_turns"] = user_events or user_fallback
     session["assistant_turns"] = assistant_msgs
     session["first_prompt"] = session["first_prompt"] or first_fallback

@@ -2,7 +2,7 @@
 """agent_insights — /insights-style usage reports for local coding-agent session logs.
 
 Usage: agent_insights <harness> [report|list|analyze] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
-                                [--project SUBSTR] [--top N] [--json]
+                                [--project SUBSTR] [--top N] [--json] [--no-subagents]
 Harnesses: see HARNESSES below. Each reads its own on-disk format; --root overrides the default location.
 """
 import argparse
@@ -57,6 +57,8 @@ def main(argv=None) -> int:
         p.add_argument("--since", help="only sessions started on/after YYYY-MM-DD")
         p.add_argument("--until", help="only sessions started on/before YYYY-MM-DD")
         p.add_argument("--project", help="only sessions whose working directory contains this text")
+        p.add_argument("--no-subagents", action="store_true",
+                       help="exclude subagent sessions (omp task children, codex spawned/guardian agents)")
         p.add_argument("--top", type=int, default=10, help="rows per ranking (default 10)")
         p.add_argument("--json", action="store_true", help="machine-readable output (with per-session rows)")
         p.add_argument("--llm", help="analyze: shell command reading the prompt on stdin, answer on stdout "
@@ -73,6 +75,10 @@ def main(argv=None) -> int:
         print(f"agent_insights: {args.harness}: no such directory: {root}", file=sys.stderr)
         return 1
     sessions = common.filter_sessions(module.load_sessions(root), args.since, args.until, args.project)
+    excluded = 0
+    if args.no_subagents:
+        kept = [s for s in sessions if not s["extra"].get("subagent")]
+        excluded, sessions = len(sessions) - len(kept), kept
     if args.mode == "analyze":
         return run_analyze(args, sessions)
     if args.json:
@@ -80,7 +86,8 @@ def main(argv=None) -> int:
     elif args.mode == "list":
         print(common.render_list(sessions, limit=args.top * 3))
     else:
-        print(common.render_report(args.harness, sessions, top=args.top))
+        print(common.render_report(args.harness, sessions, top=args.top,
+                                   excluded_subagents=excluded if args.no_subagents else None))
     return 0
 
 

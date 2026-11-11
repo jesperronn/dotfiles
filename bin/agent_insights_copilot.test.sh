@@ -177,6 +177,43 @@ test_list_mode() {
   assert_contains "$out" "Task: do the thing" "list shows title"
 }
 
+errors_of() {
+  # errors_of <harness> <root>: prints the errors list of the single session as JSON, one item per line
+  "$SCRIPT_UNDER_TEST" "$1" --root "$2" --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for s in d['sessions']:
+    print(len(s['errors']))
+    for e in s['errors']:
+        print(e)"
+}
+
+test_errors_captured_redacted_and_capped() {
+  local errroot="$TEST_TMP/errroot" out
+  mkdir -p "$errroot"
+  mkdir -p "$errroot/err-1"
+  printf 'id: err-1\ncwd: /work/err\nclient_name: github/cli\ncreated_at: 2026-09-01T10:00:00.000Z\n' >"$errroot/err-1/workspace.yaml"
+  cat >"$errroot/err-1/events.jsonl" <<'JSONL'
+{"type":"user.message","data":{"content":"please fix it"},"id":"1","timestamp":"2026-09-01T10:00:01.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"t1","success":false,"error":{"message":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app","code":"failure"}},"id":"2","timestamp":"2026-09-01T10:00:02.000Z"}
+{"type":"session.error","data":{"errorType":"query","message":"401 key sk-abcdefghijklmnop1234 token ghp_abcdefghijklmnopqrstuvwxyz0123456789 hash 0123456789abcdef0123456789abcdef01234567","statusCode":401},"id":"3","timestamp":"2026-09-01T10:00:03.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"t2","success":false,"error":{"message":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app","code":"failure"}},"id":"4","timestamp":"2026-09-01T10:00:04.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"t3","success":false,"error":{"message":"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word","code":"failure"}},"id":"5","timestamp":"2026-09-01T10:00:05.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"t4","success":false,"error":{"message":"dropped-fourth","code":"failure"}},"id":"6","timestamp":"2026-09-01T10:00:06.000Z"}
+{"type":"tool.execution_complete","data":{"toolCallId":"t5","success":true},"id":"7","timestamp":"2026-09-01T10:00:07.000Z"}
+JSONL
+  out="$(errors_of copilot "$errroot")"
+  assert_eq "3" "$(head -n1 <<<"$out")" "at most 3 distinct errors kept (duplicate and fourth dropped)"
+  assert_contains "$out" "curl failed: Authorization: [redacted] at ~/src/app" "Authorization header redacted and /Users/<name> replaced by ~"
+  assert_contains "$out" "401 key [redacted] token [redacted] hash [redacted]" "sk- and ghp_ keys and 40-char hex redacted"
+  assert_not_contains "$out" "abcdef1234567890" "secret values do not appear"
+  assert_not_contains "$out" "/Users/alice" "home directory never appears"
+  assert_not_contains "$out" "please fix it" "user prompts are never captured as errors"
+  assert_not_contains "$out" "dropped-fourth" "fourth distinct error dropped"
+  assert_contains "$out" "word word…" "long message truncated to 200 chars with ellipsis"
+}
+
+
 test_missing_root_fails() {
   local out status
   capture_command out status "$SCRIPT_UNDER_TEST" copilot --root "$TEST_TMP/nope"

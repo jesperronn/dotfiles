@@ -38,6 +38,10 @@ build_fixture() {
   write_session -src-beta beta0002 /work/beta 2026-09-07 "inject <script>alert(1)</script> here"
   write_session -src-beta beta0003 /work/beta 2026-09-08 "beta task three"
 
+  # One session carries a tool error (with a secret) so digests must show redacted errors=[...].
+  echo '{"type":"message","id":"r1","timestamp":"2026-09-08T10:00:11.000Z","message":{"role":"toolResult","toolName":"bash","isError":true,"content":[{"type":"text","text":"tool exploded Bearer abcdef1234567890XYZ"}]}}' \
+    >>"$ROOT/-src-beta/2026-09-08T10-00-00-000Z_beta0003.jsonl"
+
   # Stub LLM: logs map/reduce, saves the prompt, answers per STUB_MODE.
   cat >"$STUB" <<'STUBEOF'
 #!/usr/bin/env bash
@@ -125,6 +129,13 @@ test_batching_and_digest_content() {
   assert_contains "$prompt" "tools=bash:1" "digest has tool mix"
   assert_contains "$prompt" "first_prompt='alpha task number 1'" "digest has first prompt"
   assert_contains "$(cat "$TEST_TMP"/prompts/reduce.*.txt)" '"sessions": 8' "reduce gets aggregate stats"
+}
+
+test_digest_includes_redacted_errors() {
+  run_analyze ok --dry-run
+  assert_contains "$OUT" "tool_errors=1 | errors=['tool exploded [redacted]']" "digest of the failing session lists its redacted error"
+  assert_not_contains "$OUT" "abcdef1234567890" "secret never reaches the prompt"
+  assert_eq "1" "$(grep -c 'errors=\[' <<<"$OUT")" "only the session with errors gets an errors=[...] field"
 }
 
 test_code_fenced_json_is_parsed() {

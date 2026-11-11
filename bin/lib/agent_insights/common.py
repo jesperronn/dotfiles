@@ -8,11 +8,52 @@ Parsers must be tolerant: skip unreadable/corrupt lines, never raise on a bad fi
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
 MAX_SESSION_SECONDS = 12 * 3600  # resumed/left-open sessions span days; cap each when totalling time
+
+
+MAX_ERRORS = 3
+ERROR_CHARS = 200
+_ERROR_INPUT_CHARS = 2000  # cap work per message before redaction; huge tool outputs are common
+_HOME_RE = re.compile(r"/Users/[^/\s'\"]+")
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*(?:bearer|basic|token)?\s*[^\s'\",;]+"),
+    re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"),
+    re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})"),
+    re.compile(r"\b[0-9a-fA-F]{32,}\b"),
+)
+_BLOB_RE = re.compile(r"[A-Za-z0-9+/=]{32,}")
+
+
+def _redact_blob(match) -> str:
+    text = match.group(0)
+    # Long base64-ish run: redact only when it has a digit and a letter, so plain long paths/words survive.
+    return "[redacted]" if re.search(r"\d", text) and re.search(r"[A-Za-z]", text) else text
+
+
+def clean_error(text) -> str:
+    """Collapse whitespace, replace /Users/<name> with ~, redact secret-looking strings, truncate."""
+    text = re.sub(r"\s+", " ", str(text)[:_ERROR_INPUT_CHARS]).strip()
+    text = _HOME_RE.sub("~", text)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(lambda m: "Authorization: [redacted]" if m.group(0).lower().startswith("authorization")
+                           else "[redacted]", text)
+    text = _BLOB_RE.sub(_redact_blob, text)
+    return text if len(text) <= ERROR_CHARS else text[: ERROR_CHARS - 1] + "…"
+
+
+def add_error(session: dict, text) -> None:
+    """Record one error message on session["errors"] (distinct, at most MAX_ERRORS, redacted)."""
+    if len(session["errors"]) >= MAX_ERRORS or not isinstance(text, str) or not text.strip():
+        return
+    cleaned = clean_error(text)
+    if cleaned and cleaned not in session["errors"]:
+        session["errors"].append(cleaned)
 
 
 def new_session(harness: str, session_id: str) -> dict:
@@ -30,11 +71,39 @@ def new_session(harness: str, session_id: str) -> dict:
         "assistant_turns": 0,
         "tool_calls": {},       # tool name -> count
         "tool_errors": 0,
+        "errors": [],           # up to MAX_ERRORS distinct redacted error messages (tool/API failures only)
         "tokens": dict.fromkeys(TOKEN_KEYS, 0),
         "cost": None,           # float USD if the harness records it, else None
         "extra": {},            # harness-specific facts (premium requests, lines changed, ...)
         "source": None,         # path to the primary session file/dir
     }
+
+
+ROUTING_PREFIXES = ("litellm/", "omlx/", "lm-studio/", "lmstudio/", "lms/", "mtplx/", "ollama/", "openrouter/")
+VENDOR_DASH_PREFIXES = ("ornith-ai-",)
+
+
+def normalize_model(name) -> str:
+    """Collapse spelling/routing variants of one model name (report time only; raw names stay raw).
+
+    Lowercase, strip routing prefixes repeatedly, drop any remaining `<vendor>/` path prefix (keep the
+    last segment), then drop a known `<vendor>-` prefix. Quantization suffixes (4bit vs 6bit) and
+    names like gpt-5.4 or gpt-oss:20b are left alone.
+    """
+    text = str(name).strip().lower()
+    stripped = True
+    while stripped:
+        stripped = False
+        for prefix in ROUTING_PREFIXES:
+            if text.startswith(prefix) and text[len(prefix):] not in ("", "*"):
+                text, stripped = text[len(prefix):], True
+    last = text.rsplit("/", 1)[-1]
+    if last and last != "*":
+        text = last
+    for prefix in VENDOR_DASH_PREFIXES:
+        if text.startswith(prefix) and len(text) > len(prefix):
+            text = text[len(prefix):]
+    return text
 
 
 def parse_ts(value):
@@ -118,7 +187,7 @@ def summarize(sessions) -> dict:
         for key in TOKEN_KEYS:
             tokens[key] += s["tokens"].get(key, 0)
         tools.update(s["tool_calls"])
-        for model in s["models"]:
+        for model in {normalize_model(m) for m in s["models"]}:
             models[model] += 1
         projects[s["project"] or "(unknown)"] += 1
         started = parse_ts(s["started"])
@@ -161,7 +230,7 @@ def summarize(sessions) -> dict:
 
 
 def _bar(value, peak, width=24) -> str:
-    return "█" * max(1, round(width * value / peak)) if peak and value else ""
+    return "▬" * max(1, round(width * value / peak)) if peak and value else ""
 
 
 def _table(title, counter, limit, out, with_bar=True):
@@ -178,13 +247,15 @@ def _table(title, counter, limit, out, with_bar=True):
         out.append(f"  {label:<{label_w}}  {fmt_int(value):>7}{bar}")
 
 
-def render_report(harness: str, sessions, top=10) -> str:
+def render_report(harness: str, sessions, top=10, excluded_subagents=None) -> str:
     if not sessions:
         return f"{harness}: no sessions found."
     s = summarize(sessions)
     t = s["tokens"]
     out = [f"{harness} usage report", "=" * (len(harness) + 13)]
     out.append(f"Sessions: {fmt_int(s['sessions'])}   ({s['first'][:10] if s['first'] else '?'} → {s['last'][:10] if s['last'] else '?'})")
+    if excluded_subagents is not None:
+        out.append(f"Subagent sessions excluded (--no-subagents): {fmt_int(excluded_subagents)}")
     out.append(f"Turns: {fmt_int(s['user_turns'])} user / {fmt_int(s['assistant_turns'])} assistant   "
                f"Tool calls: {fmt_int(s['tool_calls'])} ({fmt_int(s['tool_errors'])} errors)")
     out.append(f"Time: {fmt_duration(s['total_duration_seconds'])} total (sessions capped at 12h), "

@@ -181,6 +181,54 @@ test_report_and_list_modes() {
   assert_contains "$out" "Fix the thing" "list shows title"
 }
 
+test_no_subagents_flag() {
+  assert_eq "3" "$(count_sessions)" "subagents included by default"
+  assert_eq "2" "$(count_sessions --no-subagents)" "--no-subagents drops the subagent session"
+  local out
+  out="$("$SCRIPT_UNDER_TEST" codex --root "$ROOT" --no-subagents 2>&1)"
+  assert_contains "$out" "Sessions: 2" "report counts only non-subagent sessions"
+  assert_contains "$out" "Subagent sessions excluded (--no-subagents): 1" "report says how many were excluded"
+  out="$("$SCRIPT_UNDER_TEST" codex --root "$ROOT" 2>&1)"
+  assert_not_contains "$out" "excluded" "no exclusion line without the flag"
+}
+
+errors_of() {
+  # errors_of <harness> <root>: prints the errors list of the single session as JSON, one item per line
+  "$SCRIPT_UNDER_TEST" "$1" --root "$2" --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for s in d['sessions']:
+    print(len(s['errors']))
+    for e in s['errors']:
+        print(e)"
+}
+
+test_errors_captured_redacted_and_capped() {
+  local errroot="$TEST_TMP/errroot" out
+  mkdir -p "$errroot"
+  mkdir -p "$errroot/2026/09/01"
+  cat >"$errroot/2026/09/01/rollout-2026-09-01T10-00-00-err00001.jsonl" <<'JSONL'
+{"timestamp":"2026-09-01T10:00:00.100Z","type":"session_meta","payload":{"id":"err00001","timestamp":"2026-09-01T10:00:00.000Z","cwd":"/work/err","source":"cli"}}
+{"timestamp":"2026-09-01T10:00:01.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"please fix it"}]}}}
+{"timestamp":"2026-09-01T10:00:02.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","status":"failed","exit_code":1,"command":["bash","-lc","secret-command-text"],"aggregated_output":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app"}}}
+{"timestamp":"2026-09-01T10:00:03.000Z","type":"event_msg","payload":{"type":"error","message":"401 key sk-abcdefghijklmnop1234 token ghp_abcdefghijklmnopqrstuvwxyz0123456789 hash 0123456789abcdef0123456789abcdef01234567"}}
+{"timestamp":"2026-09-01T10:00:04.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","status":"failed","exit_code":1,"aggregated_output":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app"}}}
+{"timestamp":"2026-09-01T10:00:05.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"McpToolCall","status":"failed","result":{"content":[{"type":"text","text":"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"}],"isError":true}}}}
+{"timestamp":"2026-09-01T10:00:06.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","status":"failed","changes":{}}}}
+{"timestamp":"2026-09-01T10:00:07.000Z","type":"event_msg","payload":{"type":"item_completed","item":{"type":"CommandExecution","status":"failed","aggregated_output":"dropped-fourth"}}}
+JSONL
+  out="$(errors_of codex "$errroot")"
+  assert_eq "3" "$(head -n1 <<<"$out")" "at most 3 distinct errors kept (duplicate and fourth dropped)"
+  assert_contains "$out" "curl failed: Authorization: [redacted] at ~/src/app" "Authorization header redacted and /Users/<name> replaced by ~"
+  assert_contains "$out" "401 key [redacted] token [redacted] hash [redacted]" "sk- and ghp_ keys and 40-char hex redacted"
+  assert_not_contains "$out" "abcdef1234567890" "secret values do not appear"
+  assert_not_contains "$out" "/Users/alice" "home directory never appears"
+  assert_not_contains "$out" "please fix it" "user prompts are never captured as errors"
+  assert_not_contains "$out" "dropped-fourth" "fourth distinct error dropped"
+  assert_contains "$out" "word word…" "long message truncated to 200 chars with ellipsis"
+}
+
+
 test_missing_root_fails() {
   local out status
   capture_command out status "$SCRIPT_UNDER_TEST" codex --root "$TEST_TMP/nope"

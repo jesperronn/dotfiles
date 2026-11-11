@@ -165,6 +165,7 @@ def parse_session(path):
                         stops[stop] += 1
                     if stop == "error" or msg.get("errorMessage"):
                         extra["assistant_errors"] += 1
+                        common.add_error(session, msg.get("errorMessage"))
                     content = msg.get("content")
                     if isinstance(content, list):
                         for block in content:
@@ -174,6 +175,7 @@ def parse_session(path):
                 elif role == "toolResult":
                     if msg.get("isError") is True:
                         session["tool_errors"] += 1
+                        common.add_error(session, _text_of(msg.get("content")))
                 elif role == "fileMention":
                     for item in msg.get("files") or []:
                         if isinstance(item, dict) and item.get("path"):

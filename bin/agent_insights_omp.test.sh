@@ -148,6 +148,53 @@ test_report_and_list_modes() {
   assert_contains "$out" "Fix the thing" "list shows title"
 }
 
+test_no_subagents_flag() {
+  assert_eq "3" "$(count_sessions)" "subagents included by default"
+  assert_eq "2" "$(count_sessions --no-subagents)" "--no-subagents drops the subagent session"
+  local out
+  out="$("$SCRIPT_UNDER_TEST" omp --root "$ROOT" --no-subagents 2>&1)"
+  assert_contains "$out" "Sessions: 2" "report counts only non-subagent sessions"
+  assert_contains "$out" "Subagent sessions excluded (--no-subagents): 1" "report says how many were excluded"
+  out="$("$SCRIPT_UNDER_TEST" omp --root "$ROOT" 2>&1)"
+  assert_not_contains "$out" "excluded" "no exclusion line without the flag"
+}
+
+errors_of() {
+  # errors_of <harness> <root>: prints the errors list of the single session as JSON, one item per line
+  "$SCRIPT_UNDER_TEST" "$1" --root "$2" --json | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for s in d['sessions']:
+    print(len(s['errors']))
+    for e in s['errors']:
+        print(e)"
+}
+
+test_errors_captured_redacted_and_capped() {
+  local errroot="$TEST_TMP/errroot" out
+  mkdir -p "$errroot"
+  cat >"$errroot/s.jsonl" <<'JSONL'
+{"type":"session","version":3,"id":"err00001","timestamp":"2026-09-01T10:00:00.000Z","cwd":"/work/err"}
+{"type":"message","id":"u1","timestamp":"2026-09-01T10:00:01.000Z","message":{"role":"user","content":"please fix it"}}
+{"type":"message","id":"r1","timestamp":"2026-09-01T10:00:02.000Z","message":{"role":"toolResult","toolName":"bash","isError":true,"content":[{"type":"text","text":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app"}]}}
+{"type":"message","id":"a1","timestamp":"2026-09-01T10:00:03.000Z","message":{"role":"assistant","model":"Q","provider":"p","stopReason":"error","errorMessage":"401 key sk-abcdefghijklmnop1234 token ghp_abcdefghijklmnopqrstuvwxyz0123456789 hash 0123456789abcdef0123456789abcdef01234567","content":[]}}
+{"type":"message","id":"r2","timestamp":"2026-09-01T10:00:04.000Z","message":{"role":"toolResult","toolName":"bash","isError":true,"content":[{"type":"text","text":"curl failed: Authorization: Bearer abcdef1234567890XYZ at /Users/alice/src/app"}]}}
+{"type":"message","id":"r3","timestamp":"2026-09-01T10:00:05.000Z","message":{"role":"toolResult","toolName":"bash","isError":true,"content":[{"type":"text","text":"word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"}]}}
+{"type":"message","id":"r4","timestamp":"2026-09-01T10:00:06.000Z","message":{"role":"toolResult","toolName":"bash","isError":true,"content":[{"type":"text","text":"dropped-fourth"}]}}
+{"type":"message","id":"r5","timestamp":"2026-09-01T10:00:07.000Z","message":{"role":"toolResult","toolName":"bash","isError":false,"content":[{"type":"text","text":"fine output"}]}}
+JSONL
+  out="$(errors_of omp "$errroot")"
+  assert_eq "3" "$(head -n1 <<<"$out")" "at most 3 distinct errors kept (duplicate and fourth dropped)"
+  assert_contains "$out" "curl failed: Authorization: [redacted] at ~/src/app" "Authorization header redacted and /Users/<name> replaced by ~"
+  assert_contains "$out" "401 key [redacted] token [redacted] hash [redacted]" "sk- and ghp_ keys and 40-char hex redacted"
+  assert_not_contains "$out" "abcdef1234567890" "secret values do not appear"
+  assert_not_contains "$out" "/Users/alice" "home directory never appears"
+  assert_not_contains "$out" "please fix it" "user prompts are never captured as errors"
+  assert_not_contains "$out" "dropped-fourth" "fourth distinct error dropped"
+  assert_contains "$out" "word word…" "long message truncated to 200 chars with ellipsis"
+}
+
+
 test_missing_root_fails() {
   local out status
   capture_command out status "$SCRIPT_UNDER_TEST" omp --root "$TEST_TMP/nope"
