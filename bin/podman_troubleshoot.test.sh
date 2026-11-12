@@ -148,43 +148,6 @@ esac
 '
 }
 
-# Shared fixture setup: jq stub (healthy state)
-setup_basic_jq_stub() {
-  local stub_dir="$1"
-
-  write_stub "$stub_dir/jq" '
-query="${*: -1}"
-case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".Running"*)
-    printf "true\n"
-    ;;
-  *".Starting"*)
-    printf "false\n"
-    ;;
-  *".State // \"unknown\""*)
-    printf "running\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    printf "true\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
-esac
-'
-}
 
 # Fixture group 1: Log analysis tests (shared invocation, different log content)
 # Running this fixture sets: FIXTURE1_OUTPUT, FIXTURE1_STATUS
@@ -271,7 +234,6 @@ run_fixture1_log_health_healthy_uncached() {
 
   setup_basic_podman_stub "$stub_dir"
   setup_common_stubs "$stub_dir"
-  setup_basic_jq_stub "$stub_dir"
 
   cat >"$work_dir/podman/podman-machine-default.log" <<'EOF'
 systemd[1]: Starting coreos-ignition-unique-boot.service - CoreOS Ignition Ensure Unique Boot Filesystem...
@@ -307,7 +269,6 @@ run_fixture2_log_health_journald_uncached() {
 
   setup_basic_podman_stub "$stub_dir"
   setup_common_stubs "$stub_dir"
-  setup_basic_jq_stub "$stub_dir"
 
   cat >"$work_dir/podman/podman-machine-default.log" <<'EOF'
 [435791.625125] systemd-journald[770]: Failed to open /var/log/journal/ad209d968eb84885b8fc2b9f8e277dd3: Input/output error
@@ -341,7 +302,6 @@ run_fixture3_log_health_emergency_uncached() {
 
   setup_basic_podman_stub "$stub_dir"
   setup_common_stubs "$stub_dir"
-  setup_basic_jq_stub "$stub_dir"
 
   cat >"$work_dir/podman/podman-machine-default.log" <<'EOF'
 Ignition has failed. Please ensure your config is valid.
@@ -433,30 +393,6 @@ esac
 
   setup_common_stubs "$stub_dir"
 
-  write_stub "$stub_dir/jq" '
-query="${*: -1}"
-case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    printf "true\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
-esac
-'
-
   write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command FIXTURE4_OUTPUT FIXTURE4_STATUS env \
@@ -533,30 +469,6 @@ esac
 
   setup_common_stubs "$stub_dir"
 
-  write_stub "$stub_dir/jq" '
-query="${*: -1}"
-case "$query" in
-  *"select(.Default == true) | .Name"*)
-    printf "podman-machine-default\n"
-    ;;
-  *"[.[] | select(.Default == true)] | length"*)
-    printf "1\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    printf "true\n"
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "true\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat
-    ;;
-esac
-'
-
   write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command FIXTURE5_OUTPUT FIXTURE5_STATUS env \
@@ -584,7 +496,6 @@ run_fixture6_verbose_uncached() {
 
   setup_basic_podman_stub "$stub_dir"
   setup_common_stubs "$stub_dir"
-  setup_basic_jq_stub "$stub_dir"
   write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command FIXTURE6_OUTPUT FIXTURE6_STATUS env \
@@ -720,43 +631,6 @@ case "$1" in
 esac
 '
 
-  write_stub "$stub_dir/jq" '
-query="${*: -1}"
-input="$(cat)"
-case "$query" in
-  *"select(.Default == true) | .Name"*)
-    if [[ "$input" == *"podman-machine-default-root"* ]]; then
-      printf "podman-machine-default-root\n"
-    else
-      printf "podman-machine-default\n"
-    fi
-    ;;
-  *"select(.Name == \$name and .Running == true) | .Name"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "podman-machine-default\n"
-      exit 0
-    fi
-    exit 1
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "true\n"
-    else
-      printf "false\n"
-    fi
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat <<<"$input"
-    ;;
-esac
-'
-
   write_fast_rootless_test_stub "$stub_dir/docker_socket_rootless_test"
 
   capture_command FIXTURE7_OUTPUT FIXTURE7_STATUS env \
@@ -875,43 +749,6 @@ case "$1" in
     ;;
   *)
     exit 0
-    ;;
-esac
-'
-
-  write_stub "$stub_dir/jq" '
-query="${*: -1}"
-input="$(cat)"
-case "$query" in
-  *"select(.Default == true) | .Name"*)
-    if [[ "$input" == *"podman-machine-default-root"* ]]; then
-      printf "podman-machine-default-root\n"
-    else
-      printf "podman-machine-default\n"
-    fi
-    ;;
-  *"select(.Name == \$name and .Running == true) | .Name"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "podman-machine-default\n"
-      exit 0
-    fi
-    exit 1
-    ;;
-  *".[] | select(.Name == \$name) | .Running"*)
-    if [[ "$input" == *"\"Running\":true"* ]]; then
-      printf "true\n"
-    else
-      printf "false\n"
-    fi
-    ;;
-  *".[] | select(.Name == \$name) | .Starting"*)
-    printf "false\n"
-    ;;
-  *"length"*)
-    printf "1\n"
-    ;;
-  *)
-    cat <<<"$input"
     ;;
 esac
 '
@@ -1041,7 +878,6 @@ run_fixture_vm_aaaa_uncached() {
 
   setup_basic_podman_stub "$stub_dir"
   setup_common_stubs "$stub_dir"
-  setup_basic_jq_stub "$stub_dir"
   if [[ "$mode" == "broken" ]]; then
     # Wrap the stub: VM commands that query AAAA fail (gvproxy SERVFAIL).
     mv "$stub_dir/podman" "$stub_dir/podman.real"
