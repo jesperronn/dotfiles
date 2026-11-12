@@ -24,7 +24,8 @@ the tool before relying on a flag.
 - **Rails:** `setup` runs `db:prepare`; Rails upgrades use `bin/rails app:update`
   by hand, never from `deps`. Never touch credentials or `master.key`.
 - **JS:** package manager from the lockfile. `npm-check-updates` rewrites ranges,
-  including exact pins: review the diff. `npx --yes` downloads code; skip it
+  including exact pins (classic `yarn upgrade` never moves an exact pin, so `deps`
+  runs ncu `-u` first, then `yarn upgrade`): review the diff. `npx --yes` downloads code; skip it
   where that is not allowed.
 - **Go:** `go test -race` needs cgo; `GO_TEST_RACE=0` drops it. Add
   `govulncheck ./...` for audit. Release tooling: goreleaser.

@@ -76,7 +76,8 @@ Release, deploy and agent-specific workflows go in `docs/`, linked from here.
 
 - Remote targets (staging, production, any host): run NOTHING, print the
   commands for the user. Test with `PATH=/nonexistent bash bin/troubleshoot prod`.
-- `deps` never commits; `changelog` never tags; release never pushes without a
+- `deps` never commits and prints a commit message that lists the commands it ran
+  (counts, not per-package versions); `changelog` never tags; release never pushes without a
   prompt. Agents never run deploys, `ssh`, `cap` or `ansible` against remote.
 - Never probe a script with `--help` unless you know it parses it: some `bin/setup`
   scripts ignore args and run everything.
