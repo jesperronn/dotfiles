@@ -38,6 +38,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #                         Timeout for VM registry IP probe (default: 30).
 #   PODMAN_TROUBLESHOOT_PS_TIMEOUT_SECONDS
 #                         Timeout for podman ps checks (default: 30).
+#   PODMAN_TROUBLESHOOT_DOCKER_SOCK
+#                         Path of the global Docker socket to inspect (default: /var/run/docker.sock).
 #   PODMAN_TROUBLESHOOT_CLOCK_DRIFT_THRESHOLD_SECONDS
 #                         Allowed clock drift before reporting (default: 10).
 #   PODMAN_TROUBLESHOOT_MIN_MEMORY_MB
@@ -1238,7 +1240,7 @@ podman_machine_log_health_report() {
 }
 
 docker_sock_report() {
-  local docker_sock="/var/run/docker.sock"
+  local docker_sock="${PODMAN_TROUBLESHOOT_DOCKER_SOCK:-/var/run/docker.sock}"
   local stable_sock
   local resolved_target
   local stable_target

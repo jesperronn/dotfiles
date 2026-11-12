@@ -289,6 +289,7 @@ EOF
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -323,6 +324,7 @@ EOF
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -359,6 +361,7 @@ EOF
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -466,6 +469,7 @@ esac
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -566,6 +570,7 @@ esac
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -594,6 +599,7 @@ run_fixture6_verbose_uncached() {
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --verbose"
 
@@ -767,6 +773,7 @@ esac
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
@@ -926,6 +933,7 @@ esac
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
 
@@ -1069,6 +1077,7 @@ exec "$(dirname "$0")/podman.real" "$@"
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
     PODMAN_TROUBLESHOOT_TEST_MODE=1 \
+    PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
 
@@ -1096,6 +1105,13 @@ test_vm_aaaa_success_is_reported_ok() {
   run_fixture_vm_aaaa healthy
   assert_contains "$VMAAAA_OUTPUT" "[OK] VM resolver answers AAAA queries" "healthy AAAA is reported ok"
   assert_not_contains "$VMAAAA_OUTPUT" "VM resolver fails AAAA" "healthy AAAA raises no issue"
+}
+
+test_global_docker_socket_check_uses_override_not_host_socket() {
+  run_fixture_vm_aaaa healthy
+  assert_contains "$VMAAAA_OUTPUT" "docker sock: " "global docker socket section is reported"
+  assert_contains "$VMAAAA_OUTPUT" "/home/docker.sock" "inspected path is the test override inside the temp HOME"
+  assert_contains "$VMAAAA_OUTPUT" "state: missing" "the missing override path is reported instead of the host socket state"
 }
 
 if (( $# == 0 )); then
