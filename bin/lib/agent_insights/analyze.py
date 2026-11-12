@@ -167,6 +167,9 @@ def reduce_prompt(harness, batch_jsons, stats, config="", span="") -> str:
         "'prompt' the user can paste into the agent to begin.\n"
         "- 'suggestions': paste-ready changes grouped later by target.\n"
         f"{SUGGESTION_RULES}\n"
+        "If one model in stats.per_model clearly stands out (error_rate or length_stop_share far above the "
+        f"others, with at least 3 sessions), end 'Where Things Go Wrong' with one line: run: agent_insights "
+        f"{harness} tune --model <that model>.\n"
         "Local models are often served through omlx, MTPLX, LM Studio or litellm; many fixes belong in "
         "that serving layer or the harness config rather than in AGENTS.md.\n"
         f"{RULES}\n"
@@ -200,6 +203,22 @@ def error_rate(stats) -> float:
     return stats["tool_errors"] / stats["tool_calls"] if stats["tool_calls"] else 0.0
 
 
+def per_model_rates(sessions, top):
+    """{model: {sessions, error_rate, length_stop_share}} for the most-used models (pointer to `tune`)."""
+    groups = {}
+    for x in sessions:
+        for model in {common.normalize_model(m) for m in x["models"]}:
+            groups.setdefault(model, []).append(x)
+    out = {}
+    for model, items in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:top]:
+        calls = sum(sum(x["tool_calls"].values()) for x in items)
+        stops = aggregate_stop_reasons(items)
+        out[model] = {"sessions": len(items),
+                      "error_rate": round(sum(x["tool_errors"] for x in items) / calls, 4) if calls else 0.0,
+                      "length_stop_share": round(stops.get("length", 0) / sum(stops.values()), 4) if stops else 0.0}
+    return out
+
+
 def compact_stats(sessions, top):
     s = common.summarize(sessions)
     for key in ("days", "hours", "weekdays"):
@@ -208,6 +227,7 @@ def compact_stats(sessions, top):
         s[key] = dict(list(s[key].items())[:top])
     s["stop_reasons"] = aggregate_stop_reasons(sessions)
     s["tool_error_rate"] = round(error_rate(s), 4)
+    s["per_model"] = per_model_rates(sessions, top)
     levels = Counter(str(x["extra"]["thinking_level_last"]) for x in sessions
                      if x["extra"].get("thinking_level_last"))
     if levels:
@@ -239,7 +259,15 @@ _KV_INLINE = re.compile(r"""(["']?)([\w.-]+)(["']?\s*[:=]\s*)((?:(?:bearer|basic
 _KV_LINE = re.compile(r"""^(\s*(?:-\s+)?)["']?([\w.-]+)["']?\s*[:=]\s*(?:#.*|[{\[])?$""")
 
 
+_COUNT_TOKENS_RE = re.compile(r"(max|min|budget|limit|count|num|result|chunk|total|size|length|window|context|prefill"
+                              r"|output|input|response|reserved)", re.I)
+
+
 def is_secret_key(name) -> bool:
+    # snake_case counters such as max_tokens / thinking_budget_tokens are numbers, not credentials
+    if name.lower().endswith("tokens") and _COUNT_TOKENS_RE.search(name) \
+            and not re.search(r"(api|auth|access|secret|bearer|refresh)", name, re.I):
+        return False
     return bool(_SECRET_KEY_RE.search(name) or _SECRET_CAMEL_RE.search(name))
 
 
@@ -463,8 +491,8 @@ def grouped_suggestions(suggestions):
             if any(s["target"] == t for s in suggestions)]
 
 
-def render_markdown(harness, report, meta) -> str:
-    out = [f"# {harness} usage insights", "", f"_{meta}_", ""]
+def render_markdown(harness, report, meta, title=None) -> str:
+    out = [f"# {title or f'{harness} usage insights'}", "", f"_{meta}_", ""]
     if report["glance"]:
         out += ["## At a Glance", ""]
         out += [f"- **{label}:** {report['glance'][k]}" for k, label in GLANCE_LABELS if k in report["glance"]]
@@ -537,9 +565,9 @@ def report_id(harness, stats):
     return f"{harness}-{datetime.now().strftime('%Y-%m-%d')}-{hashlib.sha1(key.encode()).hexdigest()[:6]}"
 
 
-def default_out_path(harness):
+def default_out_path(harness, tag=""):
     return os.path.join(os.path.expanduser("~/.cache/agent_insights"),
-                        f"{harness}-{datetime.now().strftime('%Y-%m-%d')}.html")
+                        f"{harness}-{tag}{datetime.now().strftime('%Y-%m-%d')}.html")
 
 
 HTML_CSS = """
@@ -714,10 +742,10 @@ def _glance_html(esc, report):
     return f'<div class="at-a-glance" id="glance"><h2>At a Glance</h2>{rows}</div>'
 
 
-def render_html(harness, report, meta, stats=None) -> str:
+def render_html(harness, report, meta, stats=None, title=None, rid_tag="") -> str:
     esc = html.escape
-    title = f"{harness} usage insights"
-    rid = report_id(harness, stats) if stats else f"{harness}-{datetime.now().strftime('%Y-%m-%d')}"
+    title = title or f"{harness} usage insights"
+    rid = report_id(harness, stats) if stats else f"{harness}-{rid_tag}{datetime.now().strftime('%Y-%m-%d')}"
     toc, parts = [], []
     if stats:
         parts.append('<div class="stats-row" id="stats">' + "".join(
@@ -782,10 +810,10 @@ def render_html(harness, report, meta, stats=None) -> str:
             f'</body></html>\n')
 
 
-def render(fmt, harness, report, meta, stats=None) -> str:
+def render(fmt, harness, report, meta, stats=None, title=None, rid_tag="") -> str:
     if fmt == "html":
-        return render_html(harness, report, meta, stats)
-    return render_markdown(harness, report, meta)
+        return render_html(harness, report, meta, stats, title, rid_tag)
+    return render_markdown(harness, report, meta, title)
 
 
 def meta_line(sessions) -> str:

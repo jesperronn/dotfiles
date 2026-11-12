@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """agent_insights — /insights-style usage reports for local coding-agent session logs.
 
-Usage: agent_insights <harness> [report|list|analyze] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+Usage: agent_insights <harness> [report|list|analyze|tune] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
                                 [--project SUBSTR] [--top N] [--json] [--no-subagents]
                                 [analyze: --llm CMD --format html|md --out FILE|- --open --config FILE --no-config]
+                                [tune: --model SUBSTR --no-llm --no-server (plus the analyze options)]
 Harnesses: see HARNESSES below. Each reads its own on-disk format; --root overrides the default location.
 """
 import argparse
@@ -71,12 +72,18 @@ def run_analyze(args, sessions) -> int:
     return status
 
 
+def run_tune(args, sessions) -> int:
+    from agent_insights import tune
+
+    return tune.run_tune(args, sessions, open_file)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="agent_insights", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="harness", required=True, metavar="HARNESS")
     for name in HARNESSES:
         p = sub.add_parser(name, help=f"usage insights for {name} sessions")
-        p.add_argument("mode", nargs="?", choices=("report", "list", "analyze"), default="report")
+        p.add_argument("mode", nargs="?", choices=("report", "list", "analyze", "tune"), default="report")
         p.add_argument("--root", help="session directory (default: the harness's standard location)")
         p.add_argument("--since", help="only sessions started on/after YYYY-MM-DD")
         p.add_argument("--until", help="only sessions started on/before YYYY-MM-DD")
@@ -98,6 +105,11 @@ def main(argv=None) -> int:
         p.add_argument("--no-config", action="store_true",
                        help="analyze: do not read the harness's default config/instruction files")
         p.add_argument("--dry-run", action="store_true", help="analyze: print prompts, make no LLM call")
+        p.add_argument("--model", help="tune: only models whose normalized name contains this text "
+                                       "(default: every model with at least 3 sessions)")
+        p.add_argument("--no-llm", action="store_true", help="tune: print the local metrics and server evidence, "
+                                                              "no LLM call")
+        p.add_argument("--no-server", action="store_true", help="tune: skip reading local model-server files")
         p.add_argument("--batch-size", type=int, default=40, help="analyze: sessions per map call (default 40)")
     args = parser.parse_args(argv)
 
@@ -113,6 +125,8 @@ def main(argv=None) -> int:
         excluded, sessions = len(sessions) - len(kept), kept
     if args.mode == "analyze":
         return run_analyze(args, sessions)
+    if args.mode == "tune":
+        return run_tune(args, sessions)
     if args.json:
         print(common.render_json(args.harness, sessions, with_sessions=True))
     elif args.mode == "list":
