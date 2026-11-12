@@ -36,14 +36,18 @@ def _redact_blob(match) -> str:
     return "[redacted]" if re.search(r"\d", text) and re.search(r"[A-Za-z]", text) else text
 
 
-def clean_error(text) -> str:
-    """Collapse whitespace, replace /Users/<name> with ~, redact secret-looking strings, truncate."""
-    text = re.sub(r"\s+", " ", str(text)[:_ERROR_INPUT_CHARS]).strip()
+def redact_secrets(text) -> str:
+    """Replace secret-looking strings and /Users/<name> in `text`; whitespace and length are left alone."""
     text = _HOME_RE.sub("~", text)
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(lambda m: "Authorization: [redacted]" if m.group(0).lower().startswith("authorization")
                            else "[redacted]", text)
-    text = _BLOB_RE.sub(_redact_blob, text)
+    return _BLOB_RE.sub(_redact_blob, text)
+
+
+def clean_error(text) -> str:
+    """Collapse whitespace, replace /Users/<name> with ~, redact secret-looking strings, truncate."""
+    text = redact_secrets(re.sub(r"\s+", " ", str(text)[:_ERROR_INPUT_CHARS]).strip())
     return text if len(text) <= ERROR_CHARS else text[: ERROR_CHARS - 1] + "…"
 
 

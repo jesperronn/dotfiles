@@ -3,6 +3,7 @@
 
 Usage: agent_insights <harness> [report|list|analyze] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
                                 [--project SUBSTR] [--top N] [--json] [--no-subagents]
+                                [analyze: --llm CMD --format html|md --out FILE|- --open --config FILE]
 Harnesses: see HARNESSES below. Each reads its own on-disk format; --root overrides the default location.
 """
 import argparse
@@ -17,6 +18,16 @@ from agent_insights import common  # noqa: E402
 HARNESSES = ("omp", "copilot", "codex", "pi")
 
 
+def open_file(path):
+    import subprocess
+
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    try:
+        subprocess.run([opener, path], check=False)
+    except OSError as exc:
+        print(f"agent_insights: could not run {opener}: {exc}", file=sys.stderr)
+
+
 def run_analyze(args, sessions) -> int:
     from agent_insights import analyze
 
@@ -25,25 +36,37 @@ def run_analyze(args, sessions) -> int:
         return 1
     cmd = args.llm or analyze.DEFAULT_LLM
     size = max(1, args.batch_size)
+    try:
+        config_text, included = analyze.load_config_files(args.config or [])
+    except OSError as exc:
+        print(f"agent_insights: cannot read --config file: {exc}", file=sys.stderr)
+        return 1
     if args.dry_run:
-        print(analyze.dry_run_text(args.harness, sessions, cmd, size, args.top))
+        print(analyze.dry_run_text(args.harness, sessions, cmd, size, args.top, config_text))
+        print(f"agent_insights: dry run; {analyze.config_summary(included)}", file=sys.stderr)
         return 0
     digest_bytes = sum(len(d.encode()) + 1 for d in analyze.build_digests(sessions))
     print(f"agent_insights: sending {len(sessions)} sessions ({digest_bytes} digest bytes, no full "
-          f"transcripts) to LLM command: {cmd}", file=sys.stderr)
+          f"transcripts) to LLM command: {cmd}; {analyze.config_summary(included)}", file=sys.stderr)
     status = 0
     try:
-        sections = analyze.analyze(args.harness, sessions, cmd, size, args.top)
+        report = analyze.analyze(args.harness, sessions, cmd, size, args.top, config_text)
     except analyze.AnalyzeError as exc:
         print(f"agent_insights: analyze failed: {exc}; emitting raw LLM output", file=sys.stderr)
-        sections = [{"title": "Raw LLM output (unparsed)", "paragraphs": [exc.raw or "(empty)"], "bullets": []}]
+        report = analyze.raw_report(exc.raw)
         status = 1
-    text = analyze.render(args.format, args.harness, sections, analyze.meta_line(sessions))
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as fh:
-            fh.write(text)
-    else:
+    stats = common.summarize(sessions)
+    text = analyze.render(args.format, args.harness, report, analyze.meta_line(sessions), stats)
+    if args.out == "-" or (args.format == "md" and not args.out):
         sys.stdout.write(text)
+        return status
+    path = os.path.expanduser(args.out) if args.out else analyze.default_out_path(args.harness)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print(f"agent_insights: wrote {path}", file=sys.stderr)
+    if args.open:
+        open_file(path)
     return status
 
 
@@ -63,8 +86,14 @@ def main(argv=None) -> int:
         p.add_argument("--json", action="store_true", help="machine-readable output (with per-session rows)")
         p.add_argument("--llm", help="analyze: shell command reading the prompt on stdin, answer on stdout "
                                      "(default: 'claude -p')")
-        p.add_argument("--format", choices=("md", "html"), default="md", help="analyze: output format")
-        p.add_argument("--out", help="analyze: write the report to this file instead of stdout")
+        p.add_argument("--format", choices=("md", "html"), default="html",
+                       help="analyze: output format (default html; md goes to stdout unless --out is given)")
+        p.add_argument("--out", help="analyze: report file (default ~/.cache/agent_insights/<harness>-<date>.html; "
+                                     "'-' prints to stdout)")
+        p.add_argument("--open", action="store_true", help="analyze: open the written HTML file (open/xdg-open)")
+        p.add_argument("--config", action="append", metavar="FILE",
+                       help="analyze: include this config file, redacted, as read-only context in the reduce "
+                            "prompt (repeatable; default: none)")
         p.add_argument("--dry-run", action="store_true", help="analyze: print prompts, make no LLM call")
         p.add_argument("--batch-size", type=int, default=40, help="analyze: sessions per map call (default 40)")
     args = parser.parse_args(argv)
