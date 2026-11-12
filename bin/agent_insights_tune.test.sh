@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1090,SC1091
+# shellcheck disable=SC1090,SC1091,SC2088
 set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -169,12 +169,20 @@ if [[ "$STUB_MODE" == bad ]]; then echo 'no json here'; exit 0; fi
 if [[ $kind == reduce ]]; then
   echo '{"overview":{"paragraphs":["OVERVIEW-PARA"],"bullets":["OVERVIEW-BULLET"]},"ranking":[{"model":"alpha-model-4bit","decision":"needs tuning","why":"RANK-WHY"}]}'
 else
+  case "$STUB_MODE" in
+    verdict_string) verdict='"verdict":"keep - VSTR-REASON works fine",' ;;
+    verdict_object) verdict='"verdict":{"decision":"switch","reason":"VOBJ-REASON"},' ;;
+    verdict_none) verdict='' ;;
+    verdict_decision_only) verdict='"verdict":{"decision":"keep"},' ;;
+    *) verdict='"verdict":{"decision":"needs tuning","summary":"SUMMARY <script>alert(7)</script>","reasons":["REASON-ONE 25% errors"]},' ;;
+  esac
+  printf '{%s' "$verdict"
   cat <<'JSON'
-{"verdict":{"decision":"needs tuning","summary":"SUMMARY <script>alert(7)</script>","reasons":["REASON-ONE 25% errors"]},
+
  "hotspots":[{"title":"HOTSPOT-TITLE","quantified":"HOTSPOT-NUMBERS","evidence":"boom: bad args"}],
  "suggestions":[{"target":"omlx model settings","title":"Cap tokens <b>x</b>","why":"currently set to 2048","evidence":"length stops","snippet":"max_tokens: 1024","lang":"yaml","confidence":"medium"},
                 {"target":"AGENTS.md","title":"Validate args","why":"w","evidence":"e","snippet":"- Check tool args","lang":"markdown","confidence":"high"}],
- "rules":["- RULE-BULLET one"],
+ "rules":["- RULE-BULLET one","* RULE-STAR two"],
  "retest":[{"measure":"tool error rate","how":"rerun tune","expect":"RETEST-DOWN"}]}
 JSON
 fi
@@ -364,6 +372,48 @@ test_analyze_points_to_tune() {
   out="$(HOME="$HOME_DIR" "$SCRIPT_UNDER_TEST" omp analyze --root "$ROOT" --dry-run --no-config 2>/dev/null)"
   assert_contains "$out" "agent_insights omp tune --model <that model>" "analyze reduce prompt points to tune"
   assert_contains "$out" "per_model" "analyze stats carry per-model rates"
+}
+
+test_verdict_rendering_regression() {
+  STUB_MODE=verdict_string run_tune --model alpha --out - --format md
+  assert_not_contains "$OUT" "UNSPECIFIED" "string verdict: no literal UNSPECIFIED"
+  assert_contains "$OUT" "KEEP: VSTR-REASON works fine" "string verdict: decision + reason on one line"
+  STUB_MODE=verdict_object run_tune --model alpha --out - --format md
+  assert_not_contains "$OUT" "UNSPECIFIED" "object verdict with 'reason': no UNSPECIFIED"
+  assert_contains "$OUT" "SWITCH: VOBJ-REASON" "object verdict {decision, reason} on one line"
+  STUB_MODE=verdict_decision_only run_tune --model alpha --out - --format md
+  assert_contains "$OUT" "KEEP" "decision-only verdict still renders the decision"
+  assert_not_contains "$OUT" "No verdict returned" "decision-only verdict is not 'absent'"
+  STUB_MODE=verdict_none run_tune --model alpha --out - --format md
+  assert_not_contains "$OUT" "UNSPECIFIED" "absent verdict: no UNSPECIFIED"
+  assert_contains "$OUT" "No verdict returned" "absent verdict says so plainly"
+  STUB_MODE=verdict_none run_tune --model alpha --out -
+  assert_contains "$OUT" "No verdict returned" "absent verdict in html"
+  assert_not_contains "$OUT" "UNSPECIFIED" "absent verdict: no UNSPECIFIED in html"
+}
+
+test_rules_have_single_dash() {
+  run_tune --model alpha --out - --format md
+  assert_contains "$OUT" "- RULE-BULLET one" "md rule rendered as a bullet"
+  assert_contains "$OUT" "- RULE-STAR two" "md rule written with '* ' rendered as a '- ' bullet"
+  assert_not_contains "$OUT" "- - " "md: no doubled dash anywhere"
+  assert_not_contains "$OUT" "- * " "md: no '- * ' anywhere"
+  run_tune --model alpha --out -
+  assert_contains "$OUT" "<li>RULE-BULLET one</li>" "html rule item has no leading dash"
+  assert_contains "$OUT" "<li>RULE-STAR two</li>" "html star rule item has no leading marker"
+  assert_contains "$OUT" "- RULE-BULLET one
+- RULE-STAR two" "synthesized AGENTS snippet keeps single-dash markdown bullets"
+  assert_not_contains "$OUT" "- - RULE" "html snippet has no doubled dash"
+  assert_contains "$OUT" "omp-specific rules" "model rules are routed to the harness file group"
+  assert_contains "$OUT" "~/.omp/agent/AGENTS.md" "harness group shows omp's own instruction file"
+}
+
+test_header_counts_sessions_using_the_model() {
+  run_tune --model alpha --out - --format md
+  assert_contains "$OUT" "4 sessions using this model of 8 in range" "single model: model count of sessions in range"
+  assert_not_contains "$OUT" "1 model(s), 8 sessions" "header no longer reports all sessions as the model's"
+  run_tune --out - --format md
+  assert_contains "$OUT" "alpha-model-4bit 4, mtplx-beta-model 3 sessions (8 in range" "several models: per-model counts"
 }
 
 build_fixture

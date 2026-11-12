@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 from collections import Counter
 
-from . import analyze, common, servers
+from . import analyze, common, servers, wiring
 
 MIN_SESSIONS = 3
 DIGEST_SESSIONS = 8
@@ -175,7 +176,7 @@ TUNE_SCHEMA = (
     '{"verdict":{"decision":"keep|switch|needs tuning","summary":str,"reasons":[str]},'
     '"hotspots":[{"title":str,"quantified":str,"evidence":str}],'
     '"suggestions":[{"target":str,"title":str,"why":str,"evidence":str,"snippet":str,"lang":str,'
-    '"confidence":"high|medium|low"}],'
+    '"scope":"general|harness|project","project":str,"confidence":"high|medium|low"}],'
     '"rules":[str],'
     '"retest":[{"measure":str,"how":str,"expect":str}]}'
 )
@@ -189,9 +190,11 @@ TUNE_RULES = (
     "error text in 'evidence'.\n"
     "- 'suggestions': paste-ready settings to change. Put suggestions that cut WASTE first. Targets include "
     "'omlx model settings', 'MTPLX config', 'lm-studio model settings', 'omp config (~/.omp/agent/config.yml)', "
-    "'pi settings (~/.pi/agent/settings.json)', 'litellm config', 'AGENTS.md' and 'shell/prompt'.\n"
-    "- 'rules': AGENTS.md bullets (ready-to-append Markdown, each starting with '- ') that compensate for "
-    "observed weaknesses of THIS model, for example malformed tool arguments, looping or over-long output.\n"
+    "'pi settings (~/.pi/agent/settings.json)', 'litellm config', 'AGENTS.md' (with a scope) and 'shell/prompt'.\n"
+    "- 'rules': instruction-file bullets for the analysed harness's own file (ready-to-append Markdown, each "
+    "starting with '- ') that compensate for observed weaknesses of THIS model in this harness, for example "
+    "malformed tool arguments, looping or over-long output. They have scope 'harness'; do not put general "
+    "rules here.\n"
     "- 'retest': what to measure after changing something, how, and which number should move and in which "
     "direction.\n"
     "Evidence rules: only recommend settings that exist in the settings files shown below or that are "
@@ -210,7 +213,7 @@ def model_prompt(harness, m, digests, records, config, span) -> str:
         f"You are tuning the combination of the coding agent '{harness}' and the local model '{m['model']}' "
         f"(raw names in the sessions: {', '.join(m['raw_names'])}). Sessions span {span}. Sessions that used "
         "several models are counted in full for each model (see 'shared').\n"
-        f"{TUNE_RULES}{analyze.SUGGESTION_RULES}\n{analyze.RULES}\n"
+        f"{TUNE_RULES}{analyze.SUGGESTION_RULES}\n{wiring.wiring_text(harness)}{analyze.RULES}\n"
         f"JSON schema: {TUNE_SCHEMA}\n\n"
         f"{analyze.SNAPSHOT_RULE}Server and config snapshot taken {time.strftime('%Y-%m-%d', time.gmtime())} UTC.\n\n"
         "SESSION METRICS FOR THIS MODEL (computed locally):\n" + metrics_text(m) + "\n\n"
@@ -236,27 +239,54 @@ def reduce_prompt(harness, per_model) -> str:
 
 # ---- LLM run and report assembly ---------------------------------------------------------------
 
-DECISIONS = ("keep", "switch", "needs tuning")
-
-
 def _s(value):
     return analyze._str(value).strip()
 
 
+_DECISION_RE = re.compile(r"\s*(keep|switch|needs[ _-]tuning)\b[\s:.\u2014\u2013-]*(.*)", re.I | re.S)
+
+
+def _norm_decision(text) -> str:
+    text = re.sub(r"[ _-]+", " ", text.strip().lower())
+    return text
+
+
+def parse_verdict(value):
+    """(decision, reason, reasons) from a verdict given as a string or as an object with varying key names."""
+    decision, reason, reasons = "", "", []
+    if isinstance(value, str):
+        m = _DECISION_RE.match(value)
+        decision, reason = (_norm_decision(m.group(1)), m.group(2).strip()) if m else ("", value.strip())
+    elif isinstance(value, dict):
+        raw = next((_s(value[k]) for k in ("decision", "verdict", "recommendation", "call") if _s(value.get(k))), "")
+        m = _DECISION_RE.match(raw)
+        decision, rest = (_norm_decision(m.group(1)), m.group(2).strip()) if m else (_norm_decision(raw), "")
+        reason = next((_s(value[k]) for k in ("summary", "reason", "why", "rationale", "explanation")
+                       if _s(value.get(k))), "") or rest
+        reasons = [r for r in analyze._strs(value.get("reasons")) if r.strip()]
+    return decision, reason, reasons
+
+
+def verdict_line(res) -> str:
+    """One line 'DECISION: reason', or a plain statement when the model returned no usable verdict."""
+    decision, summary = res["decision"], res["summary"]
+    if decision and summary:
+        return f"{decision.upper()}: {summary}"
+    return decision.upper() or summary or ("" if res["reasons"] else "No verdict returned")
+
+
 def model_result(raw, m):
     """Tolerant normalization of one model's JSON answer."""
-    verdict = raw.get("verdict") if isinstance(raw.get("verdict"), dict) else {}
-    decision = _s(verdict.get("decision")).lower()
+    decision, summary, reasons = parse_verdict(raw.get("verdict"))
     hot = raw.get("hotspots") if isinstance(raw.get("hotspots"), list) else []
     retest = raw.get("retest") if isinstance(raw.get("retest"), list) else []
     sugg = raw.get("suggestions") if isinstance(raw.get("suggestions"), list) else []
     return {
         "model": m["model"],
-        "decision": decision if decision in DECISIONS else (decision or "unspecified"),
-        "summary": _s(verdict.get("summary")), "reasons": analyze._strs(verdict.get("reasons")),
+        "decision": decision, "summary": summary, "reasons": reasons,
         "hotspots": [{"title": _s(h.get("title")) or "Hotspot", "quantified": _s(h.get("quantified")),
                       "evidence": _s(h.get("evidence"))} for h in hot if isinstance(h, dict)],
-        "rules": analyze._strs(raw.get("rules")),
+        "rules": [analyze.strip_bullet(r).strip() for r in analyze._strs(raw.get("rules")) if r.strip()],
         "retest": [{"measure": _s(r.get("measure")), "how": _s(r.get("how")), "expect": _s(r.get("expect"))}
                    for r in retest if isinstance(r, dict)],
         "suggestions": [analyze.normalize_suggestion(x) for x in sugg
@@ -264,7 +294,7 @@ def model_result(raw, m):
     }
 
 
-def build_report(results, metrics_by_model, overview=None):
+def build_report(results, metrics_by_model, overview=None, harness=""):
     """Combine per-model results into one analyze-style report dict (sections + suggestions)."""
     multi = len(results) > 1
     sections, suggestions = [], []
@@ -284,7 +314,7 @@ def build_report(results, metrics_by_model, overview=None):
                          "bullets": [f"{k}: {v}" for k, v in metric_rows(m)]
                          + [f"runaway: {ln}" for ln in runaway_lines(m)] + [f"error: {ln}" for ln in error_lines(m)]})
         sections.append({"title": f"Verdict{sfx}",
-                         "paragraphs": [f"{res['decision'].upper()}: {res['summary']}".strip(": ")],
+                         "paragraphs": [p for p in [verdict_line(res)] if p],
                          "bullets": res["reasons"]})
         sections.append({"title": f"Waste hotspots{sfx}", "paragraphs": [],
                          "bullets": [f"{h['title']}: {h['quantified']}" + (f" (evidence: {h['evidence']})" if h["evidence"] else "")
@@ -292,7 +322,7 @@ def build_report(results, metrics_by_model, overview=None):
         sections.append({"title": f"Settings to change{sfx}",
                          "paragraphs": [f"{len(res['suggestions'])} paste-ready suggestions, grouped by where they go, "
                                         "in the Suggestions section below."],
-                         "bullets": [f"[{s['confidence']}] {s['title']} ({analyze.TARGETS[s['target']][0]})"
+                         "bullets": [f"[{s['confidence']}] {s['title']} ({analyze.target_info(s['target'], harness, s['project'])[0]})"
                                      for s in res["suggestions"]]})
         sections.append({"title": f"Rules/prompts for this model{sfx}", "paragraphs": [], "bullets": res["rules"]})
         sections.append({"title": f"Re-test checklist{sfx}", "paragraphs": [],
@@ -303,10 +333,11 @@ def build_report(results, metrics_by_model, overview=None):
                 s["title"] = f"[{res['model']}] {s['title']}"
             suggestions.append(s)
         if res["rules"]:
-            suggestions.append({"target": "AGENTS.md", "title": f"Rules for {res['model']}" ,
+            suggestions.append({"target": analyze.INSTRUCTION_TARGETS["harness"], "scope": "harness", "project": "",
+                                "title": f"Rules for {res['model']}",
                                 "why": "Bullets compensating for weaknesses of this model observed in the sessions.",
-                                "evidence": res["summary"], "snippet": "\n".join(res["rules"]), "lang": "markdown",
-                                "confidence": "medium"})
+                                "evidence": res["summary"], "snippet": "\n".join(f"- {r}" for r in res["rules"]),
+                                "lang": "markdown", "confidence": "medium"})
     return {"glance": {}, "sections": sections, "horizon": [], "suggestions": suggestions}
 
 
@@ -324,7 +355,20 @@ def tune_models(harness, groups, metrics, evidence, digests, config, cmd):
                   "hotspots": [h["title"] + ": " + h["quantified"] for h in r["hotspots"]],
                   "suggestions": [s["title"] for s in r["suggestions"]]} for r in results]
         overview = analyze.ask_json(cmd, reduce_prompt(harness, brief), "tune reduce")
-    return build_report(results, {m["model"]: m for m in metrics}, overview)
+    return build_report(results, {m["model"]: m for m in metrics}, overview, harness)
+
+
+def tune_meta(metrics, total) -> str:
+    """Header line: per-model session counts against the sessions in range (sessions can use several models)."""
+    first = min((m["first"] for m in metrics if m["first"]), default="?")
+    last = max((m["last"] for m in metrics if m["last"]), default="?")
+    if len(metrics) == 1:
+        counts = f"{metrics[0]['sessions']} sessions using this model of {total} in range"
+    else:
+        counts = (", ".join(f"{m['model']} {m['sessions']}" for m in metrics)
+                  + f" sessions ({total} in range; a session using several models counts for each)")
+    return (f"{len(metrics)} model(s): {counts}, {first} to {last}; verdicts by an LLM from local metrics and "
+            "server evidence; verify specifics")
 
 
 def _cfg_summary(included):
@@ -401,8 +445,7 @@ def run_tune(args, sessions, open_file) -> int:
         report = analyze.raw_report(exc.raw)
         status = 1
     title = f"{args.harness} tune: " + ", ".join(m["model"] for m in metrics)
-    meta = (f"{len(groups)} model(s), {len(sessions)} sessions, {metrics[0]['first']} to "
-            f"{max(m['last'] for m in metrics)}; verdicts by an LLM from local metrics and server evidence; verify specifics")
+    meta = tune_meta(metrics, len(sessions))
     text = analyze.render(args.format, args.harness, report, meta, None, title, "tune-")
     if args.out == "-" or (args.format == "md" and not args.out):
         sys.stdout.write(text)

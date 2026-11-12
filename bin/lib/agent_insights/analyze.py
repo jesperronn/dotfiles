@@ -17,7 +17,7 @@ import subprocess
 from collections import Counter
 from datetime import datetime, timezone
 
-from . import common
+from . import common, wiring
 
 DEFAULT_LLM = "claude -p"
 DEFAULT_BATCH_SIZE = 40
@@ -97,9 +97,18 @@ def batches(digests, size):
 
 # ---- suggestion targets -------------------------------------------------------------------------
 
-# Fixed enum the LLM must choose from -> (display name, where the snippet goes).
+# Instruction-file suggestions are routed by scope; the LLM answers target 'AGENTS.md' plus a scope.
+SCOPES = ("general", "harness", "project")
+INSTRUCTION_TARGETS = {"general": "AGENTS.md (general)", "harness": "AGENTS.md (harness)",
+                       "project": "AGENTS.md (project)"}
+SHARED_FILE_WHERE = f"{wiring.SHARED} (shared, all harnesses)"
+
+# Fixed enum the LLM must choose from -> (display name, where the snippet goes). The three AGENTS.md rows are
+# resolved per harness/project by target_info(); their `where` here is only the generic text.
 TARGETS = {
-    "AGENTS.md": ("AGENTS.md", "append to ~/.claude/AGENTS.md (global) or the project's AGENTS.md"),
+    "AGENTS.md (general)": ("General rules", SHARED_FILE_WHERE),
+    "AGENTS.md (harness)": ("Harness-specific rules", "the harness's own user-level instruction file"),
+    "AGENTS.md (project)": ("Project rules", "the project's AGENTS.md"),
     "omp config (~/.omp/agent/config.yml)": ("omp config", "~/.omp/agent/config.yml"),
     "omp models (~/.omp/agent/models.yml)": ("omp models", "~/.omp/agent/models.yml"),
     "pi settings (~/.pi/agent/settings.json)": ("pi settings", "~/.pi/agent/settings.json"),
@@ -110,13 +119,39 @@ TARGETS = {
     "shell/prompt": ("Prompts to paste", "paste into the agent's prompt box or a shell"),
     "other": ("Other", "see the suggestion"),
 }
+LLM_TARGETS = ["AGENTS.md"] + [t for t in TARGETS if not t.startswith("AGENTS.md")]
+
+
+def project_dir_name(project) -> str:
+    return os.path.basename(str(project or "").strip().rstrip("/")) or "unspecified project"
+
+
+def target_info(target, harness, project=""):
+    """(display name, where) of a normalized target for this harness/project."""
+    name, where = TARGETS[target]
+    if target == INSTRUCTION_TARGETS["harness"]:
+        where = wiring.HARNESS_INSTRUCTION_FILE.get(harness, where)
+        name = f"{harness}-specific rules"
+    elif target == INSTRUCTION_TARGETS["project"]:
+        where = f"the project's AGENTS.md ({project_dir_name(project)})"
+        name = f"Project rules ({project_dir_name(project)})"
+    return name, where
+
+
 CONFIDENCE = ("high", "medium", "low")
 GLANCE_LABELS = (("working", "What's working"), ("hindering", "What's hindering you"),
                  ("quick_wins", "Quick wins to try"), ("ambitious", "Ambitious workflows"))
 
 SUGGESTION_RULES = (
     "Suggestions: each is one concrete, copy-paste-ready change. 'target' must be exactly one of: "
-    + "; ".join(f"'{t}'" for t in TARGETS) + ". Only recommend settings that really exist for that "
+    + "; ".join(f"'{t}'" for t in LLM_TARGETS) + ". Every suggestion also declares 'scope': 'general' "
+    "(applies to any agent: git/commit rules, verification, safety, memory-bank, workflow), 'harness' (about "
+    "one harness's tools, quirks, or one model's weaknesses in it, for example a todo tool or an edit tool) or "
+    "'project' (one repository; then set 'project' to its directory name). Pick the narrowest correct scope; "
+    "when unsure choose 'harness'; a rule that names a harness tool or model is never 'general'. With target "
+    "'AGENTS.md' the scope picks the file: general goes to the shared ~/.agents/AGENTS.md read by all harnesses, "
+    "harness to the analysed harness's own user-level instruction file, project to that project's AGENTS.md. "
+    "Only recommend settings that really exist for that "
     "tool; never invent flag or key names. If you do not know the exact key, describe the intent in "
     "prose in 'why' and leave 'snippet' empty. For serving/model settings (context length, max output "
     "tokens, temperature/top_p/repetition penalty, chat template or tool-call parser, thinking/effort "
@@ -151,7 +186,7 @@ def reduce_prompt(harness, batch_jsons, stats, config="", span="") -> str:
         '"sections":[{"title":str,"paragraphs":[str],"bullets":[str]}],'
         '"horizon":[{"title":str,"what":str,"prompt":str}],'
         '"suggestions":[{"target":str,"title":str,"why":str,"evidence":str,"snippet":str,'
-        '"lang":str,"confidence":"high|medium|low"}]}'
+        '"lang":str,"scope":"general|harness|project","project":str,"confidence":"high|medium|low"}]}'
     )
     return (
         f"{REDUCE_MARKER}\n"
@@ -161,17 +196,18 @@ def reduce_prompt(harness, batch_jsons, stats, config="", span="") -> str:
         "quick wins, ambitious workflows.\n"
         "- 'sections': exactly these six, in this order, using these exact titles:\n"
         + "\n".join(f"  {i}. {t}" for i, t in enumerate(titles, 1)) + "\n"
-        f"  Write 'Existing Features to Try' about features of {harness} and of Claude Code that fit the "
-        "observed habits, and 'New Ways to Use It' with concrete workflows suggested by the data.\n"
+        f"  Write 'Existing Features to Try' about features of {harness} itself (and only {harness}) that fit "
+        "the observed habits, and 'New Ways to Use It' with concrete workflows suggested by the data.\n"
         "- 'horizon': 2-3 ambitious ideas ('On the Horizon'); each has a title, what it is, and a starter "
         "'prompt' the user can paste into the agent to begin.\n"
         "- 'suggestions': paste-ready changes grouped later by target.\n"
         f"{SUGGESTION_RULES}\n"
+        f"{wiring.wiring_text(harness)}"
         "If one model in stats.per_model clearly stands out (error_rate or length_stop_share far above the "
         f"others, with at least 3 sessions), end 'Where Things Go Wrong' with one line: run: agent_insights "
         f"{harness} tune --model <that model>.\n"
         "Local models are often served through omlx, MTPLX, LM Studio or litellm; many fixes belong in "
-        "that serving layer or the harness config rather than in AGENTS.md.\n"
+        "that serving layer or the harness config rather than in an instruction file.\n"
         f"{RULES}\n"
         f"JSON schema: {schema}\n\n"
         "AGGREGATE STATS:\n" + json.dumps(stats, indent=1, default=str) + "\n\n"
@@ -436,15 +472,31 @@ def normalize_section(x):
 
 
 def normalize_suggestion(x):
-    target = _str(x.get("target")).strip()
-    if target not in TARGETS:
-        lowered = {t.lower(): t for t in TARGETS}
-        target = lowered.get(target.lower(), "other")
+    raw_target = _str(x.get("target")).strip()
+    low = raw_target.lower()
+    scope = _str(x.get("scope")).strip().lower()
+    if scope not in SCOPES:
+        scope = "harness"  # missing/invalid scope: the safest place for a rule is the harness's own file
+    if "agents.md" in low or "instructions" in low or raw_target in INSTRUCTION_TARGETS.values():
+        target = INSTRUCTION_TARGETS[scope]
+    elif raw_target in TARGETS:
+        target = raw_target
+    else:
+        target = {t.lower(): t for t in TARGETS}.get(low, "other")
     conf = _str(x.get("confidence")).strip().lower()
-    return {"target": target, "title": _str(x.get("title")).strip() or "Untitled suggestion",
+    return {"target": target, "scope": scope, "project": project_dir_name(x.get("project")) if scope == "project" else "",
+            "title": _str(x.get("title")).strip() or "Untitled suggestion",
             "why": _str(x.get("why")).strip(), "evidence": _str(x.get("evidence")).strip(),
             "snippet": _str(x.get("snippet")).strip("\n"), "lang": _str(x.get("lang")).strip(),
             "confidence": conf if conf in CONFIDENCE else "low"}
+
+
+_BULLET_RE = re.compile(r"^\s*[-*\u2022]\s+")
+
+
+def strip_bullet(text) -> str:
+    """Drop one leading '- ' / '* ' so renderers can add their own bullet without doubling it."""
+    return _BULLET_RE.sub("", str(text), count=1)
 
 
 def normalize_report(result):
@@ -485,33 +537,74 @@ def dry_run_text(harness, sessions, cmd, batch_size, top, config="") -> str:
 
 # ---- Markdown -----------------------------------------------------------------------------------
 
-def grouped_suggestions(suggestions):
-    """[(target, [suggestion, ...])] in TARGETS order, empty targets dropped."""
-    return [(t, [s for s in suggestions if s["target"] == t]) for t in TARGETS
-            if any(s["target"] == t for s in suggestions)]
+def grouped_suggestions(harness, suggestions):
+    """[{target, name, where, scope, items}]: instruction files General, Harness, Project first, then other
+    targets in TARGETS order; empty groups dropped."""
+    groups = []
+    for scope in SCOPES:
+        key = INSTRUCTION_TARGETS[scope]
+        items = [s for s in suggestions if s["target"] == key]
+        buckets = {}
+        for s in items:
+            buckets.setdefault(s.get("project", "") if scope == "project" else "", []).append(s)
+        for project, bucket in buckets.items():
+            name, where = target_info(key, harness, project)
+            groups.append({"target": key, "name": name, "where": where, "scope": scope, "items": bucket})
+    for t in TARGETS:
+        if t in INSTRUCTION_TARGETS.values():
+            continue
+        items = [s for s in suggestions if s["target"] == t]
+        if items:
+            name, where = target_info(t, harness)
+            groups.append({"target": t, "name": name, "where": where, "scope": "", "items": items})
+    return groups
+
+
+def general_warning(s, wired) -> str:
+    """Warning for a general-scope instruction suggestion when this harness does not load the shared file."""
+    if s["target"] != INSTRUCTION_TARGETS["general"] or not wired or wired["state"] == "linked-to-shared":
+        return ""
+    return (f"this harness does not currently load {wiring.SHARED} (state: {wired['state']}) \u2014 see Wiring")
+
+
+def wiring_markdown(w) -> list:
+    sh = w["shared"]
+    out = ["## Wiring", "",
+           f"- Shared file {sh['path']}: " + (f"exists, {sh['bytes']} bytes" if sh["exists"] else "missing")]
+    for f in w["files"]:
+        tag = " (loaded: first existing candidate)" if f["winner"] else ""
+        out.append(f"- {f['path']}: **{f['state']}**, {f['bytes']} bytes{tag}")
+    out += [f"- _{w['verified_note']}_", ""]
+    for fix in w["fixes"]:
+        out += [f"Fix for {fix['path']} (display only, nothing was run):", "", "```bash", *fix["commands"], "```", ""]
+    return out
 
 
 def render_markdown(harness, report, meta, title=None) -> str:
+    wired = wiring.wiring_status(harness, os.path.expanduser("~"))
     out = [f"# {title or f'{harness} usage insights'}", "", f"_{meta}_", ""]
     if report["glance"]:
         out += ["## At a Glance", ""]
         out += [f"- **{label}:** {report['glance'][k]}" for k, label in GLANCE_LABELS if k in report["glance"]]
         out.append("")
+    out += wiring_markdown(wired)
     for sec in report["sections"]:
         out += [f"## {sec['title']}", ""]
         for p in sec["paragraphs"]:
             out += [p, ""]
         for b in sec["bullets"]:
-            out.append(f"- {b}")
+            out.append(f"- {strip_bullet(b)}")
         if sec["bullets"]:
             out.append("")
     if report["suggestions"]:
         out += ["## Suggestions", ""]
-        for target, items in grouped_suggestions(report["suggestions"]):
-            name, where = TARGETS[target]
-            out += [f"### {name} ({where})", ""]
-            for s in items:
-                out.append(f"- **{s['title']}** [{s['confidence']}] {s['why']}".rstrip())
+        for group in grouped_suggestions(harness, report["suggestions"]):
+            out += [f"### {group['name']} ({group['where']})", ""]
+            for s in group["items"]:
+                out.append(f"- **{s['title']}** [{s['confidence']}] [scope: {s['scope']}] {s['why']}".rstrip())
+                warning = general_warning(s, wired)
+                if warning:
+                    out.append(f"  - Warning: {warning}")
                 if s["evidence"]:
                     out.append(f"  - Evidence: {s['evidence']}")
                 if s["snippet"]:
@@ -614,7 +707,7 @@ section.report > h2 { font-size:1.3rem; margin:0 0 .4rem; letter-spacing:-.01em;
 .target-group { margin:1.2rem 0; }
 .target-group h3 { margin:0 0 .15rem; font-size:1.02rem; }
 .target-path { color:var(--muted); font-size:.78rem; margin-bottom:.5rem; }
-.claude-md-item, .horizon-card, .pattern-card { background:var(--card); border:1px solid var(--line);
+.sugg-item, .horizon-card, .pattern-card { background:var(--card); border:1px solid var(--line);
   border-radius:12px; padding:.8rem 1rem; margin:.6rem 0; }
 .cmd-row { display:flex; gap:.6rem; align-items:flex-start; }
 .cmd-checkbox { margin-top:.35rem; width:1.05rem; height:1.05rem; }
@@ -633,6 +726,12 @@ pre.cmd-code { flex:1; margin:0; background:var(--code-bg); border:1px solid var
 .copy-btn { cursor:pointer; background:var(--accent-soft); color:var(--accent); border:1px solid var(--line);
   border-radius:8px; padding:.3rem .7rem; font:inherit; font-size:.78rem; white-space:nowrap; }
 .copy-btn:hover { border-color:var(--accent); }
+.badge.scope-general { color:var(--accent); } .badge.scope-harness { color:var(--warn); } .badge.scope-project { color:var(--good); }
+.badge.good { color:var(--good); } .badge.warn { color:var(--warn); } .badge.bad { color:var(--bad); }
+.cmd-warn { color:var(--bad); font-size:.85rem; margin:.25rem 0; }
+.wiring-card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:.8rem 1.2rem; margin-bottom:1.5rem; }
+.wiring-card h2 { margin:.1rem 0 .5rem; font-size:1.05rem; }
+.wiring-row { margin:.2rem 0; font-size:.88rem; }
 .copy-all-bar { display:flex; align-items:center; gap:.75rem; margin:.5rem 0 1rem; }
 .copy-all-bar .copy-btn { background:var(--accent); color:var(--card); }
 .horizon-title, .pattern-title { font-weight:600; }
@@ -668,10 +767,10 @@ HTML_JS = """
   Array.prototype.forEach.call(boxes, function (box) {
     var id = box.getAttribute('data-sid');
     box.checked = !!state[id];
-    box.closest('.claude-md-item').classList.toggle('done', box.checked);
+    box.closest('.sugg-item').classList.toggle('done', box.checked);
     box.addEventListener('change', function () {
       state[id] = box.checked ? 1 : 0;
-      box.closest('.claude-md-item').classList.toggle('done', box.checked);
+      box.closest('.sugg-item').classList.toggle('done', box.checked);
       save(state);
     });
   });
@@ -687,7 +786,7 @@ HTML_JS = """
       var out = [];
       Array.prototype.forEach.call(document.querySelectorAll('.target-group'), function (group) {
         var chunks = [];
-        Array.prototype.forEach.call(group.querySelectorAll('.claude-md-item'), function (item) {
+        Array.prototype.forEach.call(group.querySelectorAll('.sugg-item'), function (item) {
           var box = item.querySelector('.cmd-checkbox');
           var code = item.querySelector('pre.cmd-code');
           if (box && box.checked && code && code.textContent.trim()) { chunks.push(code.textContent.trim()); }
@@ -716,12 +815,16 @@ def _bar_chart(esc, title, items):
     return f'<div class="chart-card"><div class="chart-title">{esc(title)}</div>{body}</div>'
 
 
-def _suggestion_html(esc, rid, n, s):
+def _suggestion_html(esc, rid, n, s, wired=None):
     sid = hashlib.sha1(f"{s['target']}|{s['title']}".encode()).hexdigest()[:10]
-    block = [f'<div class="claude-md-item"><div class="cmd-row">'
+    block = [f'<div class="sugg-item"><div class="cmd-row">'
              f'<input type="checkbox" class="cmd-checkbox" data-sid="{sid}" aria-label="Mark done / include in copy all">'
              f'<div class="cmd-body"><div><span class="cmd-title">{esc(s["title"])}</span>'
-             f'<span class="badge {esc(s["confidence"])}">{esc(s["confidence"])}</span></div>']
+             f'<span class="badge {esc(s["confidence"])}">{esc(s["confidence"])}</span>'
+             f'<span class="badge scope-{esc(s["scope"])}">{esc(s["scope"])}</span></div>']
+    warning = general_warning(s, wired)
+    if warning:
+        block.append(f'<div class="cmd-warn">{esc(warning)}</div>')
     if s["why"]:
         block.append(f'<div class="cmd-why">{esc(s["why"])}</div>')
     if s["evidence"]:
@@ -742,11 +845,35 @@ def _glance_html(esc, report):
     return f'<div class="at-a-glance" id="glance"><h2>At a Glance</h2>{rows}</div>'
 
 
+STATE_CLASS = {"linked-to-shared": "good", "separate-copy": "warn", "empty": "bad", "missing": "bad"}
+
+
+def _wiring_html(esc, w, start=1):
+    sh = w["shared"]
+    rows = [f'<div class="wiring-row">Shared file <code>{esc(sh["path"])}</code>: '
+            + (f'exists, {sh["bytes"]:,} bytes' if sh["exists"] else "<b>missing</b>") + "</div>"]
+    for f in w["files"]:
+        tag = " (loaded: first existing candidate)" if f["winner"] else ""
+        rows.append(f'<div class="wiring-row"><code>{esc(f["path"])}</code>: '
+                    f'<span class="badge {STATE_CLASS[f["state"]]}">{esc(f["state"])}</span> '
+                    f'{f["bytes"]:,} bytes{esc(tag)}</div>')
+    rows.append(f'<div class="cmd-why">{esc(w["verified_note"])}</div>')
+    n = start
+    for fix in w["fixes"]:
+        pid = f"wiring-fix-{n}"
+        n += 1
+        rows.append(f'<div class="prompt-label">Fix for {esc(fix["path"])} (display only, nothing is run)</div>'
+                    f'<div class="code-row"><pre class="cmd-code" id="{pid}">{esc(chr(10).join(fix["commands"]))}</pre>'
+                    f'<button type="button" class="copy-btn" data-copy="{pid}">Copy</button></div>')
+    return f'<div class="wiring-card" id="wiring"><h2>Wiring</h2>{"".join(rows)}</div>'
+
+
 def render_html(harness, report, meta, stats=None, title=None, rid_tag="") -> str:
     esc = html.escape
+    wired = wiring.wiring_status(harness, os.path.expanduser("~"))
     title = title or f"{harness} usage insights"
     rid = report_id(harness, stats) if stats else f"{harness}-{rid_tag}{datetime.now().strftime('%Y-%m-%d')}"
-    toc, parts = [], []
+    toc, parts = [("wiring", "Wiring")], []
     if stats:
         parts.append('<div class="stats-row" id="stats">' + "".join(
             f'<div class="stat"><div class="stat-value">{esc(v)}</div><div class="stat-label">{esc(l)}</div></div>'
@@ -763,20 +890,21 @@ def render_html(harness, report, meta, stats=None, title=None, rid_tag="") -> st
         if rest or sec["bullets"]:
             block.append('<div class="narrative">' + "".join(f"<p>{esc(p)}</p>" for p in rest))
             if sec["bullets"]:
-                block.append("<ul>" + "".join(f"<li>{esc(b)}</li>" for b in sec["bullets"]) + "</ul>")
+                block.append("<ul>" + "".join(f"<li>{esc(strip_bullet(b))}</li>" for b in sec["bullets"]) + "</ul>")
             block.append("</div>")
         block.append("</section>")
         parts.append("".join(block))
     if report["suggestions"]:
         toc.append(("suggestions", "Suggestions"))
         groups, n = [], 0
-        for target, items in grouped_suggestions(report["suggestions"]):
-            name, where = TARGETS[target]
+        for group in grouped_suggestions(harness, report["suggestions"]):
+            name, where = group["name"], group["where"]
             cards = []
-            for s in items:
+            for s in group["items"]:
                 n += 1
-                cards.append(_suggestion_html(esc, rid, n, s))
-            groups.append(f'<div class="target-group" data-target="{esc(name)}" data-where="{esc(where)}">'
+                cards.append(_suggestion_html(esc, rid, n, s, wired))
+            groups.append(f'<div class="target-group" data-target="{esc(name)}" data-where="{esc(where)}" '
+                          f'data-scope="{esc(group["scope"])}">'
                           f'<h3>{esc(name)}</h3><div class="target-path">{esc(where)}</div>{"".join(cards)}</div>')
         parts.append('<section class="report" id="suggestions"><h2>Suggestions, grouped by where they go</h2>'
                      '<p class="section-intro">Tick the ones you applied (remembered in this browser) or want to '
@@ -804,7 +932,7 @@ def render_html(harness, report, meta, stats=None, title=None, rid_tag="") -> st
             f'<title>{esc(title)}</title>\n<style>{HTML_CSS}</style></head>\n'
             f'<body data-report-id="{esc(rid)}"><div class="wrap">\n'
             f'<header><h1>{esc(title)}</h1><p class="subtitle">{esc(meta)}</p></header>\n'
-            f'{_glance_html(esc, report)}\n<nav class="toc">{nav}</nav>\n' + "\n".join(parts) +
+            f'{_glance_html(esc, report)}\n{_wiring_html(esc, wired)}\n<nav class="toc">{nav}</nav>\n' + "\n".join(parts) +
             f'\n<footer>Charts are computed locally from session logs; narrative and suggestions come from an '
             f'LLM and may be wrong. Report id {esc(rid)}.</footer>\n</div>\n<script>{HTML_JS}</script>\n'
             f'</body></html>\n')

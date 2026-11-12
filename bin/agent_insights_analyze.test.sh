@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1090,SC1091,SC2089,SC2090
+# shellcheck disable=SC1090,SC1091,SC2088,SC2089,SC2090
 set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -85,7 +85,7 @@ STUBEOF
 SECTIONS='"sections":[{"title":"What You Work On","paragraphs":["alpha and beta <b>x</b>","second para"],"bullets":["one"]},{"title":"How You Use omp","paragraphs":["p"],"bullets":[]},{"title":"Impressive Things You Did","paragraphs":[],"bullets":["w"]},{"title":"Where Things Go Wrong","paragraphs":["f"],"bullets":[]},{"title":"Existing Features to Try","paragraphs":[],"bullets":["e"]},{"title":"New Ways to Use It","paragraphs":["n"],"bullets":[]}]'
 GLANCE='"glance":{"working":"GLANCE-WORKING","hindering":"GLANCE-HINDER","quick_wins":"GLANCE-QUICK","ambitious":"GLANCE-AMBIT"}'
 HORIZON='"horizon":[{"title":"Overnight refactor","what":"HORIZON-WHAT","prompt":"HORIZON-STARTER-PROMPT"}]'
-SUGGESTIONS='"suggestions":[{"target":"AGENTS.md","title":"Run tests <script>alert(3)</script>","why":"why-agents","evidence":"EVID-agents 3 aborted turns","snippet":"- Always run <script>alert(2)</script> tests","lang":"markdown","confidence":"high"},{"target":"omlx model settings","title":"Raise max output tokens","why":"why-omlx verify against the tool docs","evidence":"stopReason length x4","snippet":"","lang":"","confidence":"medium"},{"target":"omp config (~/.omp/agent/config.yml)","title":"Lower thinking","why":"why-omp","evidence":"thinking high","snippet":"thinkingLevel: low","lang":"yaml","confidence":"bogus"},{"target":"pasta","title":"Odd target","why":"w","evidence":"e","snippet":"SNIP-ODD","lang":"text","confidence":"low"}]'
+SUGGESTIONS='"suggestions":[{"target":"AGENTS.md","title":"Run tests <script>alert(3)</script>","why":"why-agents","evidence":"EVID-agents 3 aborted turns","snippet":"- Always run <script>alert(2)</script> tests","lang":"markdown","confidence":"high","scope":"general"},{"target":"AGENTS.md","title":"Use edit tool carefully","why":"why-harness","evidence":"e","snippet":"- SNIP-HARNESS-RULE","lang":"markdown","confidence":"medium","scope":"harness"},{"target":"AGENTS.md","title":"Repo layout","why":"why-project","evidence":"e","snippet":"- SNIP-PROJECT-RULE","lang":"markdown","confidence":"medium","scope":"project","project":"/work/alpha"},{"target":"omlx model settings","title":"Raise max output tokens","why":"why-omlx verify against the tool docs","evidence":"stopReason length x4","snippet":"","lang":"","confidence":"medium"},{"target":"omp config (~/.omp/agent/config.yml)","title":"Lower thinking","why":"why-omp","evidence":"thinking high","snippet":"thinkingLevel: low","lang":"yaml","confidence":"bogus"},{"target":"pasta","title":"Odd target","why":"w","evidence":"e","snippet":"SNIP-ODD","lang":"text","confidence":"low"}]'
 REDUCE_JSON="{$GLANCE,$SECTIONS,$HORIZON,$SUGGESTIONS}"
 MIN_JSON="{$SECTIONS}"
 export REDUCE_JSON MARKER CALLS
@@ -204,18 +204,21 @@ test_html_default_path_charts_and_suggestions() {
   assert_contains "$page" "execCommand" "textarea fallback copy"
   assert_contains "$page" "Copy all checked" "copy all checked button"
   assert_contains "$page" 'class="cmd-checkbox"' "done checkboxes"
-  assert_eq "3" "$(grep -o 'data-copy="snip-' <<<"$page" | wc -l | tr -d ' ')" "copy button only for suggestions with a snippet (3)"
+  assert_eq "5" "$(grep -o 'data-copy="snip-' <<<"$page" | wc -l | tr -d ' ')" "copy button only for suggestions with a snippet (5)"
   assert_contains "$page" 'data-copy="hz-1"' "horizon starter prompt has copy button"
-  local a b c d
-  a="${page%%data-target=\"AGENTS.md\"*}"; b="${page%%data-target=\"omp config*}"
-  c="${page%%data-target=\"omlx model settings\"*}"; d="${page%%data-target=\"Other\"*}"
-  assert_contains "$page" 'data-target="AGENTS.md"' "AGENTS.md group"
+  local a b c d e f
+  a="${page%%data-target=\"General rules\"*}"; b="${page%%data-target=\"omp-specific rules\"*}"
+  c="${page%%data-target=\"Project rules (alpha)\"*}"; d="${page%%data-target=\"omp config*}"
+  e="${page%%data-target=\"omlx model settings\"*}"; f="${page%%data-target=\"Other\"*}"
+  assert_contains "$page" 'data-target="General rules"' "general group"
+  assert_contains "$page" 'data-target="omp-specific rules"' "harness group"
+  assert_contains "$page" 'data-target="Project rules (alpha)"' "project group"
   assert_contains "$page" 'data-target="omlx model settings"' "omlx group"
   assert_contains "$page" 'data-target="Other"' "unknown target mapped to Other"
   local ordered=no
-  if ((${#a} < ${#b} && ${#b} < ${#c} && ${#c} < ${#d})); then ordered=yes; fi
-  assert_eq "yes" "$ordered" "groups in target-table order"
-  assert_contains "$page" '<span class="badge low">low</span></div><div class="cmd-why">w</div>' "bogus confidence falls back to low (Other item)"
+  if ((${#a} < ${#b} && ${#b} < ${#c} && ${#c} < ${#d} && ${#d} < ${#e} && ${#e} < ${#f})); then ordered=yes; fi
+  assert_eq "yes" "$ordered" "groups: General, Harness, Project, then other targets in table order"
+  assert_contains "$page" '<span class="badge low">low</span><span class="badge scope-harness">harness</span></div><div class="cmd-why">w</div>' "bogus confidence falls back to low (Other item)"
 
   run_analyze ok --out -
   assert_contains "$OUT" "<!doctype html>" "--out - prints html to stdout"
@@ -223,6 +226,31 @@ test_html_default_path_charts_and_suggestions() {
 
   run_analyze ok --out "$TEST_TMP/nested/dir/r.html"
   assert_contains "$(<"$TEST_TMP/nested/dir/r.html")" "On the Horizon" "--out writes (creating dirs)"
+}
+
+test_scope_routing_badges_and_fallback() {
+  run_analyze ok --out -
+  assert_contains "$OUT" '~/.agents/AGENTS.md (shared, all harnesses)' "general routes to the shared file"
+  assert_contains "$OUT" 'data-where="~/.omp/agent/AGENTS.md"' "harness scope routes to omp's own file"
+  assert_contains "$OUT" "the project&#x27;s AGENTS.md (alpha)" "project scope names the project dir"
+  assert_contains "$OUT" '<span class="badge scope-general">general</span>' "scope badge: general"
+  assert_contains "$OUT" '<span class="badge scope-harness">harness</span>' "scope badge: harness"
+  assert_contains "$OUT" '<span class="badge scope-project">project</span>' "scope badge: project"
+  assert_not_contains "$OUT" 'data-target="AGENTS.md"' "old single AGENTS.md target is gone"
+
+  # Missing scope with an old-style 'AGENTS.md' target, and an invalid scope, both fall back to harness.
+  REDUCE_JSON="{$SECTIONS,\"suggestions\":[{\"target\":\"AGENTS.md\",\"title\":\"No scope\",\"snippet\":\"- NOSCOPE\"},{\"target\":\"AGENTS.md\",\"scope\":\"galaxy\",\"title\":\"Bad scope\",\"snippet\":\"- BADSCOPE\"}]}" \
+    run_analyze ok --out -
+  assert_contains "$OUT" 'data-target="omp-specific rules"' "missing/invalid scope lands in the harness group"
+  assert_not_contains "$OUT" 'data-target="General rules"' "no general group for fallback suggestions"
+  assert_not_contains "$OUT" "does not currently load" "no warning for harness-scope suggestions"
+
+  run_analyze ok --format md --out -
+  local reduce
+  reduce="$(cat "$TEST_TMP"/prompts/reduce.*.txt)"
+  assert_contains "$reduce" '"scope":"general|harness|project"' "reduce schema declares scope"
+  assert_contains "$reduce" "Pick the narrowest correct scope" "reduce prompt asks for the narrowest scope"
+  assert_contains "$reduce" "never 'general'" "reduce prompt: rules naming a harness tool are never general"
 }
 
 test_html_without_suggestions_and_open() {
