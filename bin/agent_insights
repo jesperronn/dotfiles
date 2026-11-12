@@ -3,7 +3,7 @@
 
 Usage: agent_insights <harness> [report|list|analyze] [--root DIR] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
                                 [--project SUBSTR] [--top N] [--json] [--no-subagents]
-                                [analyze: --llm CMD --format html|md --out FILE|- --open --config FILE]
+                                [analyze: --llm CMD --format html|md --out FILE|- --open --config FILE --no-config]
 Harnesses: see HARNESSES below. Each reads its own on-disk format; --root overrides the default location.
 """
 import argparse
@@ -37,7 +37,8 @@ def run_analyze(args, sessions) -> int:
     cmd = args.llm or analyze.DEFAULT_LLM
     size = max(1, args.batch_size)
     try:
-        config_text, included = analyze.load_config_files(args.config or [])
+        config_text, included = analyze.load_config_files(
+            analyze.config_candidates(args.harness, args.config or [], not args.no_config))
     except OSError as exc:
         print(f"agent_insights: cannot read --config file: {exc}", file=sys.stderr)
         return 1
@@ -92,8 +93,10 @@ def main(argv=None) -> int:
                                      "'-' prints to stdout)")
         p.add_argument("--open", action="store_true", help="analyze: open the written HTML file (open/xdg-open)")
         p.add_argument("--config", action="append", metavar="FILE",
-                       help="analyze: include this config file, redacted, as read-only context in the reduce "
-                            "prompt (repeatable; default: none)")
+                       help="analyze: also include this config file, redacted, as read-only context in the "
+                            "reduce prompt (repeatable; added to the harness's default config files)")
+        p.add_argument("--no-config", action="store_true",
+                       help="analyze: do not read the harness's default config/instruction files")
         p.add_argument("--dry-run", action="store_true", help="analyze: print prompts, make no LLM call")
         p.add_argument("--batch-size", type=int, default=40, help="analyze: sessions per map call (default 40)")
     args = parser.parse_args(argv)

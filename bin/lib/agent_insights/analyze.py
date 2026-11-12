@@ -15,7 +15,7 @@ import re
 import sys
 import subprocess
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import common
 
@@ -144,7 +144,7 @@ def map_prompt(harness, batch, index, total) -> str:
     )
 
 
-def reduce_prompt(harness, batch_jsons, stats, config="") -> str:
+def reduce_prompt(harness, batch_jsons, stats, config="", span="") -> str:
     titles = section_titles(harness)
     schema = (
         '{"glance":{"working":str,"hindering":str,"quick_wins":str,"ambitious":str},'
@@ -172,7 +172,9 @@ def reduce_prompt(harness, batch_jsons, stats, config="") -> str:
         f"{RULES}\n"
         f"JSON schema: {schema}\n\n"
         "AGGREGATE STATS:\n" + json.dumps(stats, indent=1, default=str) + "\n\n"
-        + (f"CONFIG FILES (read-only context, secrets redacted; do not echo them back):\n{config}\n\n"
+        + (f"{SNAPSHOT_RULE}Config snapshot taken {datetime.now(timezone.utc):%Y-%m-%d} UTC; analyzed sessions "
+           f"span {span or 'unknown dates'}.\n"
+           f"CONFIG FILES (read-only context, secrets redacted; do not echo them back):\n{config}\n\n"
            if config else "")
         + "BATCH SUMMARIES:\n" + "\n".join(json.dumps(b, ensure_ascii=False) for b in batch_jsons) + "\n"
     )
@@ -216,10 +218,35 @@ def compact_stats(sessions, top):
 # ---- config context -----------------------------------------------------------------------------
 
 CONFIG_CHARS = 6000
-_SECRET_KEY = r"[\w.-]*(?:key|token|secret|password|authorization|api)[\w.-]*"
-_KV_INLINE = re.compile(r"""(["']?""" + _SECRET_KEY + r"""["']?\s*[:=]\s*)((?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s,}\]#"']+))""",
+
+# harness -> files read by default as read-only context (settings/models, then global instruction files).
+# Missing or empty files are skipped silently. Disable with --no-config.
+DEFAULT_CONFIGS = {
+    "omp": ("~/.omp/agent/config.yml", "~/.omp/agent/models.yml", "~/.omp/agent/AGENTS.md"),
+    "pi": ("~/.pi/agent/settings.json", "~/.pi/agent/models.json", "~/.pi/agent/AGENTS.md"),
+    "codex": ("~/.codex/config.toml", "~/.codex/AGENTS.md"),
+    "copilot": ("~/.copilot/config.json", "~/.copilot/AGENTS.md", "~/.copilot/copilot-instructions.md"),
+}
+
+# A key is a secret when its name ENDS in one of these words (so maxTokens, idleThresholdTokens and
+# magicKeywords are not secrets). camelCase names like githubToken are caught by _SECRET_CAMEL.
+_SECRET_KEY_RE = re.compile(
+    r"(^|_|-)(api[_-]?key|token|secret|password|passwd|authorization|auth[_-]?token|access[_-]?token"
+    r"|bearer|credential)s?$", re.I)
+_SECRET_CAMEL_RE = re.compile(r"[a-z0-9](?:Token|Secret|Password|ApiKey|Credential)$")
+_KV_INLINE = re.compile(r"""(["']?)([\w.-]+)(["']?\s*[:=]\s*)((?:(?:bearer|basic|token)\s+)?(?:"[^"]*"|'[^']*'|[^\s,}\]#"']+))""",
                         re.I)
-_KV_LINE = re.compile(r"""^(\s*(?:-\s+)?)["']?(""" + _SECRET_KEY + r""")["']?\s*[:=]\s*(?:#.*)?$""", re.I)
+_KV_LINE = re.compile(r"""^(\s*(?:-\s+)?)["']?([\w.-]+)["']?\s*[:=]\s*(?:#.*|[{\[])?$""")
+
+
+def is_secret_key(name) -> bool:
+    return bool(_SECRET_KEY_RE.search(name) or _SECRET_CAMEL_RE.search(name))
+
+
+def _redact_inline(match) -> str:
+    if not is_secret_key(match.group(2)):
+        return match.group(0)
+    return match.group(1) + match.group(2) + match.group(3) + '"[redacted]"'
 
 
 def redact_config(text) -> str:
@@ -232,36 +259,76 @@ def redact_config(text) -> str:
                 out.append(line[:indent] + "[redacted]")
                 continue
             skip_indent = None
-        if _KV_LINE.match(line):  # `apiKeys:` with the value on following lines
+        m = _KV_LINE.match(line)
+        if m and is_secret_key(m.group(2)):  # `apiKeys:` with the value on following lines
             skip_indent = indent
             out.append(line)
             continue
-        out.append(_KV_INLINE.sub(lambda m: m.group(1) + '"[redacted]"', line))
+        out.append(_KV_INLINE.sub(_redact_inline, line))
     return common.redact_secrets("\n".join(out))
 
 
-def load_config_files(paths):
-    """Return (prompt_text, [(display_path, bytes_included)]). Raises OSError on unreadable files."""
+def config_candidates(harness, explicit=(), use_defaults=True):
+    """[(full_path, 'default'|'explicit')]: existing non-empty default files, then explicit ones, de-duplicated."""
+    found, seen = [], set()
+    if use_defaults:
+        for path in DEFAULT_CONFIGS.get(harness, ()):
+            full = os.path.expanduser(path)
+            if os.path.isfile(full) and os.path.getsize(full) > 0 and os.path.realpath(full) not in seen:
+                seen.add(os.path.realpath(full))
+                found.append((full, "default"))
+    for path in explicit:
+        full = os.path.expanduser(path)
+        if os.path.realpath(full) not in seen:
+            seen.add(os.path.realpath(full))
+            found.append((full, "explicit"))
+    return found
+
+
+def load_config_files(candidates):
+    """Return (prompt_text, [(display_path, bytes_included, origin)]). Raises OSError on unreadable files.
+
+    `candidates` is [(path, origin)] (see config_candidates); plain path strings count as explicit.
+    """
     blocks, included = [], []
-    for path in paths:
+    home = os.path.expanduser("~")
+    for item in candidates:
+        path, origin = (item, "explicit") if isinstance(item, str) else item
         full = os.path.expanduser(path)
         with open(full, encoding="utf-8", errors="replace") as fh:
             text = redact_config(fh.read())
         if len(text) > CONFIG_CHARS:
             text = text[:CONFIG_CHARS] + "\n[truncated]"
         shown = common.redact_secrets(os.path.abspath(full))
-        home = os.path.expanduser("~")
         shown = "~" + shown[len(home):] if shown.startswith(home) else shown
-        blocks.append(f"--- {shown} ---\n{text}")
-        included.append((shown, len(text.encode())))
+        modified = datetime.fromtimestamp(os.path.getmtime(full), timezone.utc).strftime("%Y-%m-%d")
+        blocks.append(f"--- {shown} (modified {modified} UTC) ---\n{text}")
+        included.append((shown, len(text.encode()), origin))
     return "\n\n".join(blocks), included
 
 
 def config_summary(included) -> str:
     if not included:
         return "no config files"
-    return (f"config files: {', '.join(f'{p} ({n} bytes)' for p, n in included)}; "
-            f"{sum(n for _, n in included)} config bytes")
+    return (f"config files: {', '.join(f'{p} ({n} bytes) ({o})' for p, n, o in included)}; "
+            f"{sum(n for _, n, _ in included)} config bytes")
+
+
+def session_span(sessions) -> str:
+    """'YYYY-MM-DD to YYYY-MM-DD' (UTC start dates) of the analyzed sessions."""
+    days = sorted(s["started"][:10] for s in sessions if s.get("started"))
+    return f"{days[0]} to {days[-1]}" if days else "unknown dates"
+
+
+SNAPSHOT_RULE = (
+    "CONFIG SNAPSHOT RULE: the config files below are a snapshot read at analysis time (today), not what "
+    "the sessions ran with. Each header shows the file's last-modified date. If a file was modified after "
+    "a session, or may have changed since the sessions ran, treat it as possibly different from what that "
+    "session used and hedge accordingly. Never claim a past session misbehaved BECAUSE of a setting unless "
+    "the session data shows it. When a suggestion depends on a config key that is already present, say "
+    "'currently set to X in <file> (modified <date>)'. Files named AGENTS.md or *instructions* are the "
+    "user's existing global instructions: do not recommend rules that are already there.\n"
+)
 
 
 # ---- LLM plumbing -------------------------------------------------------------------------------
@@ -314,7 +381,8 @@ def analyze(harness, sessions, cmd, batch_size, top, config=""):
     groups = batches(build_digests(sessions), batch_size)
     summaries = [ask_json(cmd, map_prompt(harness, g, i, len(groups)), f"batch {i}/{len(groups)}")
                  for i, g in enumerate(groups, 1)]
-    result = ask_json(cmd, reduce_prompt(harness, summaries, compact_stats(sessions, top), config), "reduce")
+    result = ask_json(cmd, reduce_prompt(harness, summaries, compact_stats(sessions, top), config,
+                                                 session_span(sessions)), "reduce")
     sections = result.get("sections")
     if not isinstance(sections, list) or not sections:
         raise AnalyzeError("reduce: JSON had no 'sections' list", json.dumps(result, indent=1))
@@ -379,7 +447,8 @@ def raw_report(raw):
 def dry_run_text(harness, sessions, cmd, batch_size, top, config="") -> str:
     groups = batches(build_digests(sessions), batch_size)
     placeholder = reduce_prompt(harness, ["<JSON summary of each batch, from the map calls>"],
-                                {"note": "aggregate common.summarize() stats go here"}, config)
+                                {"note": "aggregate common.summarize() stats go here"}, config,
+                                session_span(sessions))
     return (f"=== MAP PROMPT (batch 1 of {len(groups)}; {len(groups)} map call(s) total) ===\n"
             f"{map_prompt(harness, groups[0], 1, len(groups))}\n"
             f"=== REDUCE PROMPT (placeholder; 1 call) ===\n{placeholder}\n"

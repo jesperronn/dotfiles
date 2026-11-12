@@ -109,7 +109,7 @@ call_count() {
 }
 
 test_dry_run_and_config_redaction() {
-  run_analyze ok --dry-run
+  run_analyze ok --dry-run --no-config
   assert_status "0" "$STATUS" "dry-run exits 0"
   assert_eq "no" "$([[ -e $MARKER ]] && echo yes || echo no)" "stub never invoked on dry-run"
   assert_contains "$OUT" "TASK: MAP" "dry-run shows map prompt"
@@ -126,7 +126,7 @@ test_dry_run_and_config_redaction() {
   assert_not_contains "$OUT" "CONFIG FILES (read-only" "no config context by default"
   assert_contains "$ERR" "no config files" "dry-run says no config sent"
 
-  run_analyze ok --dry-run --config "$TEST_TMP/cfg.yml"
+  run_analyze ok --dry-run --no-config --config "$TEST_TMP/cfg.yml"
   assert_contains "$OUT" "CONFIG FILES (read-only" "config context included when asked"
   assert_contains "$OUT" "default_model: qwen3-coder" "safe key survives"
   assert_contains "$OUT" "base_url: http://localhost:1234" "other safe key survives"
@@ -141,7 +141,7 @@ test_dry_run_and_config_redaction() {
 }
 
 test_markdown_run_with_config_and_privacy_line() {
-  run_analyze ok --format md --config "$TEST_TMP/cfg.yml"
+  run_analyze ok --format md --no-config --config "$TEST_TMP/cfg.yml"
   assert_status "0" "$STATUS" "analyze exits 0"
   local title
   for title in "At a Glance" "What You Work On" "How You Use omp" "Impressive Things You Did" \
@@ -166,7 +166,7 @@ test_markdown_run_with_config_and_privacy_line() {
   assert_not_contains "$reduce" "abcdefghijklmnop123456" "stub never received the Bearer token"
   assert_not_contains "$reduce" "tok-one-secret" "stub never received nested token"
 
-  run_analyze ok --format md
+  run_analyze ok --format md --no-config
   assert_contains "$ERR" "no config files" "privacy line: nothing sent by default"
   assert_not_contains "$(cat "$TEST_TMP"/prompts/reduce.*.txt)" "CONFIG FILES (read-only" "no config context by default"
 }
@@ -286,5 +286,108 @@ test_project_filter_narrows_digest() {
   assert_contains "$(<"$TEST_TMP/report.md")" "## What You Work On" "--out file has report"
 }
 
+# HOME with fake config + instruction files for every harness (secrets inside must never reach the stub).
+build_home() {
+  local h="$TEST_TMP/home"
+  mkdir -p "$h/.omp/agent" "$h/.pi/agent" "$h/.codex" "$h/.copilot"
+  cat >"$h/.omp/agent/config.yml" <<'CFG'
+apiKey: sk-omp1234567890abcdef
+maxTokens: 8192
+contextWindow: 131072
+idleThresholdTokens: 5
+magicKeywords:
+  - ultrawork
+githubToken: plainsecretvalue
+CFG
+  printf 'models:\n  - name: qwen-omp\n    api_key: sk-models1234567890abc\n' >"$h/.omp/agent/models.yml"
+  printf '{"defaultModel":"pi-model","apiKey":"sk-pi1234567890abcdef","maxTokens":4096}\n' >"$h/.pi/agent/settings.json"
+  printf 'model = "codex-model"\nopenai_api_key = "sk-codex1234567890abc"\n' >"$h/.codex/config.toml"
+  printf '{"model":"copilot-model","token":"ghp_0123456789abcdefghijklmnop"}\n' >"$h/.copilot/config.json"
+  : >"$h/.codex/AGENTS.md"
+  printf -- '- Always run lint before done RULE-ALREADY-THERE\n' >"$h/.copilot/copilot-instructions.md"
+  touch -t 202608151200 "$h/.omp/agent/config.yml"
+}
+
+test_redaction_is_key_precise() {
+  local out
+  out="$(python3 -I - "$DOTFILES_ROOT/bin/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from agent_insights.analyze import redact_config
+print(redact_config("apiKey: sk-abcdefghijklmnop\nmaxTokens: 8192\nidleThresholdTokens: 5\ncontextWindow: 4096\nmagicKeywords: [a]\nauth_token: hunter2\n"))
+PY
+)"
+  assert_contains "$out" 'apiKey: "[redacted]"' "secret apiKey redacted"
+  assert_contains "$out" 'auth_token: "[redacted]"' "auth_token redacted"
+  assert_not_contains "$out" "hunter2" "plain secret value gone"
+  assert_contains "$out" "maxTokens: 8192" "maxTokens count preserved"
+  assert_contains "$out" "idleThresholdTokens: 5" "idleThresholdTokens preserved"
+  assert_contains "$out" "contextWindow: 4096" "contextWindow preserved"
+  assert_contains "$out" "magicKeywords: [a]" "magicKeywords preserved"
+}
+
+test_default_configs_and_snapshot() {
+  run_analyze ok --dry-run
+  assert_contains "$ERR" "config.yml (" "omp default config listed"
+  assert_contains "$ERR" "(default)" "default files flagged (default)"
+  assert_not_contains "$ERR" "(explicit)" "no explicit flag without --config"
+  assert_contains "$ERR" "models.yml" "omp models.yml listed"
+  assert_not_contains "$ERR" "AGENTS.md" "missing omp AGENTS.md skipped silently"
+  assert_contains "$OUT" "maxTokens: 8192" "maxTokens survives into prompt"
+  assert_contains "$OUT" "idleThresholdTokens: 5" "idleThresholdTokens survives into prompt"
+  assert_contains "$OUT" "magicKeywords:" "magicKeywords survives into prompt"
+  assert_contains "$OUT" "config.yml (modified 2026-08-15 UTC)" "mtime in block header"
+  assert_contains "$OUT" "CONFIG SNAPSHOT RULE" "snapshot rule in reduce prompt"
+  assert_contains "$OUT" "Never claim a past session misbehaved BECAUSE of a setting" "rule: no blaming settings"
+  assert_contains "$OUT" "currently set to X in <file> (modified <date>)" "rule: phrasing for existing keys"
+  assert_contains "$OUT" "span 2026-09-01 to 2026-09-08" "session date range in prompt"
+  local leak
+  for leak in sk-omp1234 sk-models1234 plainsecretvalue; do
+    assert_not_contains "$OUT" "$leak" "default config secret not in prompt: $leak"
+  done
+
+  run_analyze ok --dry-run --no-config
+  assert_contains "$ERR" "no config files" "--no-config reads nothing"
+  assert_not_contains "$OUT" "CONFIG FILES (read-only" "--no-config: no config block"
+
+  run_analyze ok --dry-run --config "$HOME_DIR/.omp/agent/config.yml" --config "$TEST_TMP/cfg.yml"
+  assert_eq "1" "$(grep -o 'agent/config.yml (' <<<"$ERR" | wc -l | tr -d ' ')" "explicit duplicate of a default listed once"
+  assert_contains "$ERR" "cfg.yml (" "extra explicit file listed"
+  assert_contains "$ERR" "(explicit)" "explicit file flagged (explicit)"
+  assert_contains "$OUT" "default_model: qwen3-coder" "explicit file content added"
+
+  run_analyze ok --format md
+  assert_not_contains "$(cat "$TEST_TMP"/prompts/reduce.*.txt)" "sk-omp1234" "stub never receives default-config secret"
+  assert_contains "$(cat "$TEST_TMP"/prompts/reduce.*.txt)" "idleThresholdTokens: 5" "stub receives preserved setting"
+}
+
+test_other_harness_defaults() {
+  local out leak
+  out="$(HOME="$HOME_DIR" python3 -I - "$DOTFILES_ROOT/bin/lib" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from agent_insights.analyze import config_candidates, load_config_files
+for h in ("omp", "pi", "codex", "copilot"):
+    text, inc = load_config_files(config_candidates(h))
+    print(h, [(p, o) for p, _, o in inc])
+    if h != "omp":
+        print(text)
+PY
+)"
+  assert_contains "$out" "('~/.pi/agent/settings.json', 'default')" "pi settings read by default"
+  assert_contains "$out" "pi-model" "pi content present"
+  assert_not_contains "$out" "pi/agent/models.json" "pi missing models.json skipped silently"
+  assert_contains "$out" "('~/.codex/config.toml', 'default')" "codex config read by default"
+  assert_not_contains "$out" "codex/AGENTS.md" "empty codex AGENTS.md skipped"
+  assert_contains "$out" "('~/.copilot/config.json', 'default')" "copilot config read by default"
+  assert_contains "$out" "('~/.copilot/copilot-instructions.md', 'default')" "copilot instructions read when present"
+  assert_contains "$out" "RULE-ALREADY-THERE" "instruction content present"
+  for leak in sk-pi1234 sk-codex1234 ghp_0123456789; do
+    assert_not_contains "$out" "$leak" "secret redacted: $leak"
+  done
+}
+
+HOME_DIR="$TEST_TMP/home"
 build_fixture
+build_home
 run_tests "$@"
