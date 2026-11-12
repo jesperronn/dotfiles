@@ -15,8 +15,7 @@ cleanup_test_temps() {
 }
 trap cleanup_test_temps EXIT
 
-# Test-mode env vars: reduce all timeouts to sub-second execution
-export PODMAN_TROUBLESHOOT_TEST_MODE=1
+# The stability probe sleeps 10s by default; stubs need no settle time
 export PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0
 
 make_stub_dir() {
@@ -289,7 +288,6 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
@@ -324,7 +322,6 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
@@ -361,7 +358,6 @@ EOF
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
@@ -469,7 +465,6 @@ esac
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
@@ -570,7 +565,6 @@ esac
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
@@ -599,7 +593,6 @@ run_fixture6_verbose_uncached() {
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --verbose"
@@ -773,7 +766,6 @@ esac
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
@@ -933,7 +925,6 @@ esac
     PODMAN_TEST_STATE_DIR="$work_dir/state" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST' --fix --force"
@@ -1077,7 +1068,6 @@ exec "$(dirname "$0")/podman.real" "$@"
     TMPDIR="$work_dir" \
     PATH="$stub_dir:$PATH" \
     PODMAN_TROUBLESHOOT_STABILITY_SLEEP_SECONDS=0 \
-    PODMAN_TROUBLESHOOT_TEST_MODE=1 \
     PODMAN_TROUBLESHOOT_DOCKER_SOCK="$work_dir/home/docker.sock" \
     PODMAN_TROUBLESHOOT_DOCKER_SOCKET_TEST_BIN="$stub_dir/docker_socket_rootless_test" \
     bash --noprofile --norc -c "cd '$work_dir' && '$SCRIPT_UNDER_TEST'"
