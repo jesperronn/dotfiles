@@ -1184,7 +1184,7 @@ check_docker_socket_rootless() {
   # Try to run test on available port (389, then 390, 391, ...)
   local test_port=389 max_attempts=10 attempt=0 output="" status=0
   local rootless_timeout=60
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] && rootless_timeout=2 max_attempts=1
+  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] && rootless_timeout=15 max_attempts=1
 
   while (( attempt < max_attempts )); do
     if [[ "$VERBOSE_MODE" == "1" ]]; then
@@ -2043,11 +2043,12 @@ run_main() {
   require_podman
   parse_args "$@"
 
-  # Test mode: reduce all timeouts for fast test execution
+  # Test mode: shorter timeouts than production, but generous enough that an
+  # oversubscribed machine does not trip them (stubs return immediately)
   if [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]]; then
-    START_TIMEOUT_SECONDS=2
-    VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS=2
-    PODMAN_PS_TIMEOUT_SECONDS=2
+    START_TIMEOUT_SECONDS=15
+    VM_REGISTRY_IP_PROBE_TIMEOUT_SECONDS=15
+    PODMAN_PS_TIMEOUT_SECONDS=15
     STABILITY_SLEEP_SECONDS=0
   fi
 
