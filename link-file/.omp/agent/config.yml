@@ -2,7 +2,7 @@ symbolPreset: unicode
 theme:
   dark: titanium
   light: light
-setupVersion: 2
+setupVersion: 3
 modelRoles:
   web: openai-codex/gpt-5.6-luna
   tiny: omlx/Ornith-1.5-9B-MLX-4bit
@@ -37,7 +37,7 @@ compaction:
   handoffSaveToDisk: true
   remoteStreamingV2Enabled: true
   idleEnabled: true
-  idleThresholdTokens: 100000
+  idleThresholdTokens: 60000
 extendedContext: false
 branchSummary:
   enabled: false
@@ -56,6 +56,7 @@ lsp:
 bash:
   autoBackground:
     enabled: true
+  allowCompoundCommands: true
 bashInterceptor:
   enabled: false
 shellMinimizer:
@@ -73,6 +74,7 @@ security:
 todo:
   remindersMax: 5
   eager: preferred
+  enabled: false
 github:
   cache:
     enabled: true
@@ -81,7 +83,9 @@ dev:
 retry:
   fallbackChains: {}
 prewalk:
-  enabled: true
+  enabled: false
+  into: "@default"
+  autoTarget: "@default"
 startup:
   checkUpdate: false
   quiet: true
@@ -90,3 +94,5 @@ web_search:
   enabled: true
 tasks:
   todoClearDelay: -1
+update:
+  auto: false
