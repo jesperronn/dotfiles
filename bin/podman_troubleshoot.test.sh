@@ -118,6 +118,7 @@ case "$1" in
       ssh)
         case "$3" in
           *"registry-1.docker.io"*) printf "resolved\n"; exit 0 ;;
+          *"date +%s"*) printf "%s %s\n" "$(date +%s)" "$(date)"; exit 0 ;;
           *) exit 0 ;;
         esac
         ;;
@@ -1112,6 +1113,14 @@ test_global_docker_socket_check_uses_override_not_host_socket() {
   assert_contains "$VMAAAA_OUTPUT" "docker sock: " "global docker socket section is reported"
   assert_contains "$VMAAAA_OUTPUT" "/home/docker.sock" "inspected path is the test override inside the temp HOME"
   assert_contains "$VMAAAA_OUTPUT" "state: missing" "the missing override path is reported instead of the host socket state"
+}
+
+test_vm_clock_runtime_auth_and_pull_checks_run_against_stubs() {
+  run_fixture_vm_aaaa healthy
+  assert_contains "$VMAAAA_OUTPUT" "[OK] VM clock is in sync with host" "clock sync check runs against the stubbed VM clock"
+  assert_contains "$VMAAAA_OUTPUT" "[OK] VM boot ID is readable" "VM runtime state check runs"
+  assert_contains "$VMAAAA_OUTPUT" "no Docker auth override to inspect" "registry auth check runs against the temp HOME"
+  assert_contains "$VMAAAA_OUTPUT" "[OK] \`podman pull docker.io/library/alpine:latest\`" "image pull check runs against the stub"
 }
 
 if (( $# == 0 )); then

@@ -2076,7 +2076,7 @@ run_main() {
   check_podman_machine_alignment
   check_podman_machine_running_state
   check_machine_stability
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_clock_sync
+  check_vm_clock_sync
   check_rootless_privileged_port_policy
   check_machine_start_lock
   check_machine_log_health
@@ -2086,9 +2086,9 @@ run_main() {
   check_vm_dns_and_registry
   check_container_https_egress
   check_vm_registry_ips
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_vm_runtime_state
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_registry_auth_state
-  [[ -n "${PODMAN_TROUBLESHOOT_TEST_MODE:-}" ]] || check_pull_target_image
+  check_vm_runtime_state
+  check_registry_auth_state
+  check_pull_target_image
   print_recovery_hints
 }
 
