@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Summarize a string from stdin or the macOS clipboard."""
+
+import argparse
+import re
+import subprocess
+import sys
+
+
+def code_span(value):
+    if "`" not in value:
+        return f"`{value}`"
+    longest_run = max(len(run) for run in re.findall(r"`+", value))
+    delimiter = "`" * (longest_run + 1)
+    return f"{delimiter} {value} {delimiter}"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Show character insights and a masked string. Reads stdin when "
+        "piped, otherwise the macOS clipboard. Whitespace (including final newlines) "
+        "counts toward length. Requires Python 3."
+    )
+    parser.add_argument(
+        "--clipboard", action="store_true", help="read clipboard even when stdin is redirected"
+    )
+    args = parser.parse_args()
+    try:
+        if args.clipboard or sys.stdin.isatty():
+            value = subprocess.run(
+                ["pbpaste"], check=True, capture_output=True
+            ).stdout.decode("utf-8")
+        else:
+            value = sys.stdin.buffer.read().decode("utf-8")
+    except (OSError, subprocess.CalledProcessError, UnicodeError) as error:
+        parser.exit(1, f"text-insights: cannot read input: {error}\n")
+
+    alpha = "".join(sorted({c for c in value if c.isalpha()}, key=lambda c: (c.casefold(), c.isupper(), c)))
+    numeric = "".join(sorted({c for c in value if c.isdecimal()}))
+    special_chars = "".join(sorted({c for c in value if not c.isalnum() and not c.isspace()}))
+    special = code_span(special_chars) if special_chars else "no"
+    whitespace = "yes" if any(c.isspace() for c in value) else "no"
+    print(
+        f"length: {len(value)}, alpha: `{alpha}`, numeric: `{numeric}`, "
+        f"special: {special}, whitespace: {whitespace}"
+    )
+    tail = 1 if len(value) <= 8 else 4
+    masked = value if len(value) <= 2 else value[0] + "*" * (len(value) - tail - 1) + value[-tail:]
+    # Escape control characters so multiline input cannot break the report layout.
+    masked = masked.replace("\r", r"\r").replace("\n", r"\n").replace("\t", r"\t")
+    print(code_span(masked))
+
+
+if __name__ == "__main__":
+    main()
