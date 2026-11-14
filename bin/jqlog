@@ -26,7 +26,8 @@
 
 jqlog() {
   JQ_FLAGS=("--raw-output" "--raw-output" "-a" "$@")
-  jq ${JQ_FLAGS} '"\(.level)  \(.sequence)  \(.message) \(.stackTrace) \(."@timeStamp")"'
+  # Only the first element is passed (existing behaviour; was unquoted ${JQ_FLAGS}).
+  jq "${JQ_FLAGS[0]}" '"\(.level)  \(.sequence)  \(.message) \(.stackTrace) \(."@timeStamp")"'
 }
 
 # Check if a file is provided as an argument or if input is from stdin

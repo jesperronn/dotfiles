@@ -126,6 +126,7 @@ format_symlink_target() {
   if [[ "$resolved" == "$repo_root/"* ]]; then
     printf '%s' "${resolved#"$repo_root"/}"
   elif [[ "$resolved" == "$home_root/"* ]]; then
+    # shellcheck disable=SC2088 # literal tilde for display
     printf '~/%s' "${resolved#"$home_root"/}"
   else
     printf '%s' "$resolved"
@@ -218,6 +219,7 @@ run_main() {
   local n_managed=${#managed[@]} n_cand=${#candidates[@]} n_other=${#others[@]}
   printf '\n'
   printf "Dotfile scan: %s\n" "$(
+    # shellcheck disable=SC2088 # literal tilde for display
     [[ "$scan_dir" == "$home_root" ]] && printf '~/' || printf '%s' "$scan_dir"
   )"
   printf '%s managed  %s candidates  %s other\n\n' \

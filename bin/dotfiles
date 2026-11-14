@@ -260,12 +260,13 @@ function __array_filter() {
   __mode__=$1; shift; __arr__=$1; shift
   for __i__ in $(eval echo "\${!$__arr__"'[@]'"}"); do
     __val__="$(eval echo "\${$__arr__"'[__i__]'"}")"
-    if [[ "$1" ]]; then
-      "$@" "$__val__" "$__i__" >/dev/null
-    else
-      [[ "$__val__" ]]
-    fi
-    if [[ "$?" == 0 ]]; then
+    if {
+      if [[ "$1" ]]; then
+        "$@" "$__val__" "$__i__" >/dev/null
+      else
+        [[ "$__val__" ]]
+      fi
+    }; then
       if [[ $__mode__ == 1 ]]; then
         eval echo "\"\${$__arr__"'[__i__]'"}\""
       else
@@ -315,7 +316,10 @@ function setdiff() {
   if [[ "$1" == 1 ]]; then debug=1; shift; fi
   if [[ "$1" ]]; then
     local setdiff_new setdiff_cur setdiff_out
-    setdiff_new=($1); setdiff_cur=($2)
+    # shellcheck disable=SC2206 # intentional word splitting of space-separated list args
+    setdiff_new=($1)
+    # shellcheck disable=SC2206 # intentional word splitting of space-separated list args
+    setdiff_cur=($2)
   fi
   setdiff_out=()
   for a in "${setdiff_new[@]}"; do
@@ -358,7 +362,8 @@ function init_files() {
     IFS=$'\n' read -d '' -r -a menu_selects < "$init_file"
   else
     # Otherwise default to all scripts not specifically for other OSes
-    oses=($(get_os 1))
+    oses=()
+    while IFS= read -r os; do oses+=("$os"); done < <(get_os 1)
     for opt in "${menu_options[@]}"; do
       remove=
       for os in "${oses[@]}"; do
@@ -523,7 +528,9 @@ function link_file_do() {
 function do_stuff() {
   local source_dir=${2:-$1}
   local base dest skip backup_dest
+  # shellcheck disable=SC2206 # intentional glob expansion (and word splitting of $DOTFILES path)
   local files=($DOTFILES/$source_dir/*)
+  # shellcheck disable=SC2207 # intentional word splitting of the _files function output
   [[ $(declare -f "$1_files") ]] && files=($("$1"_files "${files[@]}"))
   # No files? abort.
   if (( ${#files[@]} == 0 )); then return; fi
