@@ -1,0 +1,4 @@
+# @section detect
+    ruby) has_file Gemfile ;;
+# @section functions
+is_rails() { has_file config/application.rb && has_file bin/rails; }

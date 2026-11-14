@@ -1,0 +1,24 @@
+# @section functions
+setup_js() {
+  case "$(js_pm)" in
+    pnpm) run_step "js pnpm install" pnpm install --frozen-lockfile ;;
+    yarn)
+      if has_file .yarnrc.yml; then
+        run_step "js yarn install" yarn install --immutable
+      else
+        run_step "js yarn install" yarn install --frozen-lockfile
+      fi
+      ;;
+    *)
+      if has_file package-lock.json; then
+        run_step "js npm ci" npm ci
+      else
+        run_step "js npm install" npm install
+      fi
+      ;;
+  esac
+}
+# @section help
+  js     npm ci | yarn install --immutable | pnpm install --frozen-lockfile (by lockfile)
+# @section tools
+    js) echo "node $(js_pm)" ;;

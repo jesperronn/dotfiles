@@ -3,12 +3,14 @@
 # shellcheck disable=SC1090,SC1091
 set -euo pipefail
 
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-source "${BASH_TEST_LIB:-$BIN_DIR/lib/bash_test.sh}"
-
+SCRIPT_DIR="$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)"
+source "${BASH_TEST_LIB:-$SCRIPT_DIR/../../../../../bin/lib/bash_test.sh}"
 TEST_TMP_DIR="$(mktemp -d)"
 cleanup_test_tmp() { rm -rf "$TEST_TMP_DIR"; }
-trap cleanup_test_tmp EXIT
+trap 'cleanup_test_tmp' EXIT
+"$SCRIPT_DIR/bootstrap" --files=setup,dev,test,lint,deps,workflows,troubleshoot,changelog,release \
+  --lang=bash,ruby,js,go,java --output="$TEST_TMP_DIR/generated" >/dev/null
+BIN_DIR="$TEST_TMP_DIR/generated/bin"
 
 # mk_project NAME FILES...: scratch git repo with a copy of bin/ and the given files.
 mk_project() {
@@ -38,9 +40,10 @@ test_workflows_prints_every_section() {
   run out st "$dir" bin/workflows
   assert_status 0 "$st" "workflows exits 0"
   local s
-  for s in commands setup dev test lint deps release deploy troubleshoot; do
-    assert_contains "$out" "== $s ==" "workflows prints section $s"
+  for s in setup dev test lint deps release troubleshoot changelog; do
+    assert_contains "$out" "bin/$s" "workflows lists generated $s"
   done
+  assert_not_contains "$out" "deploy" "index does not invent a deploy command"
   run out st "$dir" bin/workflows nope
   assert_status 2 "$st" "unknown workflow exits 2"
 }
@@ -72,6 +75,33 @@ test_test_group_flag_and_paths() {
   assert_status 2 "$st" "unknown option exits 2"
   run out st "$dir" bin/test --dry-run nope.txt
   assert_status 2 "$st" "missing path exits 2"
+}
+
+test_java_paths_and_language_selection() {
+  local out st dir
+  dir="$(mk_project java-paths pom.xml src/test/java/a/OneTest.java src/test/java/b/TwoTests.java src/test/java/a/Helper.java package.json other.test.js)"
+  run out st "$dir" bin/test --dry-run --java src/test/java
+  assert_status 0 "$st" "Java directory is accepted"
+  assert_contains "$out" '-Dtest=OneTest\,TwoTests' "Java directory selects test classes recursively"
+  assert_not_contains "$out" "Helper" "directory excludes helper classes"
+  run out st "$dir" bin/test --dry-run src/test/java
+  assert_status 0 "$st" "Java directory is detected without a language flag"
+  assert_contains "$out" '-Dtest=OneTest\,TwoTests' "directory detection selects Java classes"
+  run out st "$dir" bin/test --dry-run --java other.test.js src/test/java/a/OneTest.java
+  assert_not_contains "$out" "npm run test" "language flag filters paths"
+  assert_contains "$out" "-Dtest=OneTest" "Java file selects its class"
+  mkdir -p "$dir/empty"
+  run out st "$dir" bin/test --dry-run --java empty
+  assert_status 2 "$st" "empty Java directory is a usage error"
+  assert_not_contains "$out" "+ mvn" "empty directory never runs the whole suite"
+  rm "$dir/pom.xml"
+  : >"$dir/build.gradle"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/gradlew"
+  chmod +x "$dir/gradlew"
+  run out st "$dir" bin/test --dry-run --java src/test/java
+  assert_contains "$out" "+ ./gradlew test --tests OneTest --tests TwoTests" "Java selector prefers Gradle wrapper"
+  run out st "$dir" bin/test --dry-run --maven
+  assert_status 2 "$st" "build tool names are not language flags"
 }
 
 test_test_bash_group_runs_colocated_tests() {
@@ -174,8 +204,8 @@ test_troubleshoot_never_runs_remote() {
   dir="$(mk_project r1 README.md)"
   run out st "$dir" env PATH="/nonexistent" "$(command -v bash)" bin/troubleshoot production
   assert_status 0 "$st" "remote target exits 0"
-  assert_contains "$out" "nothing was executed" "remote prints hints"
-  assert_contains "$out" "ssh production" "hint names the target"
+  assert_contains "$out" "empty for now" "remote target stays a placeholder"
+  assert_not_contains "$out" "ssh" "placeholder has no remote implementation"
   run out st "$dir" bin/troubleshoot
   assert_status 2 "$st" "missing target exits 2"
 }

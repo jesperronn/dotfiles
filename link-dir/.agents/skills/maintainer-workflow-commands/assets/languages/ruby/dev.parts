@@ -1,0 +1,5 @@
+# @section help
+  Rails                               bin/rails server
+# @section branches
+  elif is_rails; then
+    cmds=(bin/rails server)

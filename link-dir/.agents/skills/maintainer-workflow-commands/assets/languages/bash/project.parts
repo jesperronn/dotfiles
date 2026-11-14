@@ -1,0 +1,2 @@
+# @section detect
+    bash) compgen -G "$PROJECT_ROOT/bin/*.sh" >/dev/null || compgen -G "$PROJECT_ROOT/test/*.sh" >/dev/null ;;

@@ -1,0 +1,54 @@
+# @section functions
+go_pkgs() {
+  local f d seen=" "
+  if [[ $# -eq 0 ]]; then
+    echo "./..."
+    return
+  fi
+  for f in "$@"; do
+    d="$(dirname "$f")"
+    [[ "$d" == . ]] && d="." || d="./$d"
+    case "$seen" in *" $d "*) continue ;; esac
+    seen+="$d "
+    echo "$d"
+  done
+}
+
+go_fmt_check() {
+  local out
+  out="$(gofmt -l "$@")" || return $?
+  [[ -z "$out" ]] || {
+    printf 'not gofmt-formatted:\n%s\n' "$out"
+    return 1
+  }
+}
+
+lint_go() {
+  local files=(".") pkgs=()
+  [[ ${#F_go[@]} -gt 0 ]] && files=("${F_go[@]}")
+  while IFS= read -r p; do pkgs+=("$p"); done < <(go_pkgs ${F_go[@]+"${F_go[@]}"})
+  if [[ "$AUTOFIX" == 1 ]]; then
+    run_step "go gofmt -w" gofmt -w "${files[@]}"
+  else
+    run_step "go gofmt -l" go_fmt_check "${files[@]}"
+  fi
+  run_step "go vet" go vet "${pkgs[@]}"
+  if has_file .golangci.yml || has_file .golangci.yaml || has_file .golangci.toml; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "go golangci-lint --fix" golangci-lint run --fix "${pkgs[@]}"
+    else
+      run_step "go golangci-lint" golangci-lint run "${pkgs[@]}"
+    fi
+  fi
+}
+# @section help
+  go     gofmt -l, go vet, golangci-lint when configured      --autofix: gofmt -w
+# @section classify
+    *.go)
+      echo go
+      return
+      ;;
+# @section add
+    go) F_go+=("$2") ;;
+# @section groups
+        go) [[ ${#F_go[@]} -gt 0 ]] && groups+=(go) ;;

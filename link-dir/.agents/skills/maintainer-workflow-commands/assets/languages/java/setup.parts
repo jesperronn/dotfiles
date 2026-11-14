@@ -1,0 +1,14 @@
+# @section functions
+setup_java() {
+  local tool
+  tool="$(java_tool)"
+  if is_maven; then
+    run_step "java $tool dependency:go-offline" "$tool" -B -q dependency:go-offline
+  else
+    run_step "java $tool assemble" "$tool" assemble
+  fi
+}
+# @section help
+  java   mvn dependency:go-offline | gradle assemble (wrapper preferred)
+# @section tools
+    java) echo "java $(java_tool)" ;;

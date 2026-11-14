@@ -1,0 +1,18 @@
+# @section functions
+js_update() {
+  local filter=()
+  local target="$1"
+  [[ "$target" == major ]] && target=latest
+  [[ ${#POSITIONAL[@]} -gt 0 ]] && filter=(--filter "$(join_csv "${POSITIONAL[@]}")")
+  npx --yes npm-check-updates --target "$target" -u ${filter[@]+"${filter[@]}"} && "$(js_pm)" install
+}
+
+deps_js() {
+  if [[ -z "$LEVEL" ]]; then
+    run_step "js outdated" npx --yes npm-check-updates
+    return
+  fi
+  run_step "js update $LEVEL" js_update "$LEVEL"
+}
+# @section help
+  js     npx npm-check-updates [--target L -u], then <pm> install

@@ -1,0 +1,12 @@
+# @section setup
+      --check) [[ "$mode" == setup ]] || die_usage "unknown option: $arg"; CHECK=1 ;;
+# @section lint
+      -a | --autofix) [[ "$mode" == lint ]] || die_usage "unknown option: $arg"; AUTOFIX=1 ;;
+# @section deps
+      --patch | --minor | --major)
+        [[ "$mode" == deps ]] || die_usage "unknown option: $arg"
+        [[ -z "$LEVEL" || "$LEVEL" == "${arg#--}" ]] || die_usage "--patch, --minor and --major are mutually exclusive"
+        LEVEL="${arg#--}"
+        ;;
+# @section verbose
+      -v | --verbose) [[ "$mode" == test ]] || die_usage "unknown option: $arg"; VERBOSE=1 ;;

@@ -1,0 +1,7 @@
+# @section help
+  Go main.go or one cmd/<name>/       go run
+# @section branches
+  elif has_file go.mod && has_file main.go; then
+    cmds=(go run .)
+  elif has_file go.mod && [[ $(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) -eq 1 ]]; then
+    cmds=(go run "./cmd/$(basename "$(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d)")")

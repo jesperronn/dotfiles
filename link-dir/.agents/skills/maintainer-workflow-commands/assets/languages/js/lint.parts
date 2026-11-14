@@ -1,0 +1,36 @@
+# @section functions
+lint_js() {
+  local targets=(.) pm
+  pm="$(js_pm)"
+  [[ ${#F_js[@]} -gt 0 ]] && targets=("${F_js[@]}")
+  if has_file biome.json || has_file biome.jsonc; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "js biome check --write" npx --no-install biome check --write "${targets[@]}"
+    else
+      run_step "js biome check" npx --no-install biome check "${targets[@]}"
+    fi
+  elif compgen -G "$PROJECT_ROOT/eslint.config.*" >/dev/null || compgen -G "$PROJECT_ROOT/.eslintrc*" >/dev/null; then
+    if [[ "$AUTOFIX" == 1 ]]; then
+      run_step "js eslint --fix" npx --no-install eslint --fix "${targets[@]}"
+    else
+      run_step "js eslint" npx --no-install eslint "${targets[@]}"
+    fi
+  elif grep -q '"lint"' "$PROJECT_ROOT/package.json" 2>/dev/null; then
+    run_step "js $pm run lint" "$pm" run lint
+  else
+    skip_step "js" "no biome, eslint or lint script configured"
+  fi
+}
+# @section help
+  js     biome | eslint | package.json "lint" script          --autofix: --write / --fix
+# @section classify
+    *.js | *.mjs | *.cjs | *.jsx | *.ts | *.tsx)
+      echo js
+      return
+      ;;
+# @section add
+    js) F_js+=("$2") ;;
+# @section groups
+        js) [[ ${#F_js[@]} -gt 0 ]] && groups+=(js) ;;
+# @section shebang
+    '#!'*node*) echo js ;;

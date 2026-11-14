@@ -1,0 +1,6 @@
+# @section functions
+setup_go() { run_step "go mod download" go mod download; }
+# @section help
+  go     go mod download
+# @section tools
+    go) echo "go" ;;

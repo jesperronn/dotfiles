@@ -1,0 +1,7 @@
+# @section help
+  Spring Boot (maven | gradle)        mvn spring-boot:run | gradle bootRun
+# @section branches
+  elif (is_maven || is_gradle) && build_file_mentions spring-boot; then
+    local tool
+    tool="$(java_tool)"
+    if is_maven; then cmds=("$tool" spring-boot:run); else cmds=("$tool" bootRun); fi

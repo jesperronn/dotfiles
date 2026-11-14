@@ -1,0 +1,34 @@
+# @section functions
+test_java() {
+  local tool p names="" args=()
+  tool="$(java_tool)"
+  for p in ${P_java[@]+"${P_java[@]}"}; do
+    p="$(basename "$p" .java)"
+    names="${names:+$names,}$p"
+    args+=(--tests "$p")
+  done
+  if is_maven; then
+    run_step "java $tool test" "$tool" -B test ${names:+-Dtest="$names"}
+  else
+    run_step "java $tool test" "$tool" test ${args[@]+"${args[@]}"}
+  fi
+}
+# @section help
+  *Test.java, *Tests.java, *IT.java or a directory containing them: java
+                           Maven -Dtest / Gradle --tests, class names only
+# @section classify
+    *Test.java | *Tests.java | *IT.java) echo java ;;
+# @section directories
+        if [[ -n "$(find "$PROJECT_ROOT/$p" -type f \( -name '*Test.java' -o -name '*Tests.java' -o -name '*IT.java' \) -print -quit)" ]]; then echo java; return; fi
+# @section add
+    java) P_java+=("$2") ;;
+# @section expand
+    if [[ "$g" == java && -d "$PROJECT_ROOT/$rel" ]]; then
+      local f count=0
+      while IFS= read -r f; do
+        add_path java "${f#"$PROJECT_ROOT"/}"
+        count=$((count + 1))
+      done < <(find "$PROJECT_ROOT/$rel" -type f \( -name '*Test.java' -o -name '*Tests.java' -o -name '*IT.java' \) | LC_ALL=C sort)
+      [[ "$count" -gt 0 ]] || die_usage "no Java test classes in '$p'"
+      continue_path=1
+    fi

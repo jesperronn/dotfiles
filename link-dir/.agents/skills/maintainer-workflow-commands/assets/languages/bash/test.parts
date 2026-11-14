@@ -1,0 +1,32 @@
+# @section functions
+bash_test_files() {
+  local p f
+  if [[ $# -eq 0 ]]; then
+    set -- bin test
+  fi
+  for p in "$@"; do
+    if [[ -d "$PROJECT_ROOT/$p" ]]; then
+      for f in "$PROJECT_ROOT/$p"/*.test.sh "$PROJECT_ROOT/$p"/*_test.sh; do [[ -f "$f" ]] && echo "${f#"$PROJECT_ROOT"/}"; done
+    elif [[ -f "$PROJECT_ROOT/$p" ]]; then
+      echo "$p"
+    fi
+  done
+}
+
+test_bash() {
+  local f flags=() files=()
+  [[ "$VERBOSE" == 1 ]] && flags+=(--verbose)
+  while IFS= read -r f; do files+=("$f"); done < <(bash_test_files ${P_bash[@]+"${P_bash[@]}"})
+  [[ ${#files[@]} -eq 0 ]] && skip_step "bash" "no *.test.sh in bin/ or test/" && return
+  for f in "${files[@]}"; do
+    run_step "bash $f" bash "$f" ${flags[@]+"${flags[@]}"}
+  done
+}
+# @section help
+  *.test.sh, *_test.sh      bash
+# @section classify
+    *.test.sh | *_test.sh) echo bash ;;
+# @section directories
+        if compgen -G "$PROJECT_ROOT/$p/*.test.sh" >/dev/null || compgen -G "$PROJECT_ROOT/$p/*_test.sh" >/dev/null; then echo bash; return; fi
+# @section add
+    bash) P_bash+=("$2") ;;

@@ -1,0 +1,7 @@
+# @section help
+  package.json "dev" script           <pm> run dev
+# @section branches
+  elif has_file package.json && grep -q '"dev"' "$PROJECT_ROOT/package.json"; then
+    local pm
+    pm="$(js_pm)"
+    cmds=("$pm" run dev)
