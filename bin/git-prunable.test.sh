@@ -137,10 +137,39 @@ test_dry_run() {
   assert_branch_exists squashed "dry run: nothing deleted"
 }
 
+make_fzf_stub() {
+  FZF_STUB="$TEST_TMP_DIR/fzf-stub"
+  cat > "$FZF_STUB" <<'EOS'
+#!/usr/bin/env bash
+# fake fzf: print stdin lines whose first field matches $FZF_STUB_PICK
+[[ -n "${FZF_STUB_PICK:-}" ]] || exit 1
+grep -E "^($FZF_STUB_PICK)"$'\t' || true
+EOS
+  chmod +x "$FZF_STUB"
+}
+
+test_interactive() {
+  local out status=0
+  (cd "$REPO" && GIT_PRUNABLE_FZF=nonexistent-fzf "$SCRIPT" --no-fetch --base main -i > /dev/null 2>&1) || status=$?
+  if [[ $status -ne 0 ]]; then test_pass "interactive without fzf fails"; else test_fail "interactive without fzf fails"; fi
+  assert_branch_exists squashed "interactive without fzf: nothing deleted"
+
+  make_fzf_stub
+  out=$(cd "$REPO" && GIT_PRUNABLE_FZF="$FZF_STUB" FZF_STUB_PICK='' "$SCRIPT" --no-fetch --base main -i 2>&1)
+  assert_contains "interactive: empty selection reported" "$out" "nothing selected"
+  assert_branch_exists squashed "interactive: empty selection deletes nothing"
+
+  out=$(cd "$REPO" && GIT_PRUNABLE_FZF="$FZF_STUB" FZF_STUB_PICK='squashed|wt_clean' "$SCRIPT" --no-fetch --base main -i 2>&1)
+  assert_contains "interactive: selected branch deleted" "$out" "DEL   squashed"
+  assert_branch_missing squashed "interactive: squashed gone"
+  assert_branch_missing wt_clean "interactive: multi-select deletes second branch and its worktree"
+  assert_branch_exists merged "interactive: unselected branch kept"
+}
+
 test_apply() {
   local out
   out=$(run --yes)
-  assert_contains "apply: deletion reported" "$out" "DEL   squashed"
+  assert_contains "apply: deletion reported" "$out" "DEL   merged"
   assert_branch_missing merged "apply: merged branch deleted"
   assert_branch_missing squashed "apply: squash-merged branch deleted"
   assert_branch_missing rebased "apply: rebased branch deleted"
@@ -179,6 +208,7 @@ test_bad_base() {
 main() {
   build_repo
   test_dry_run
+  test_interactive
   test_apply
   test_gone_unmerged
   test_bad_base

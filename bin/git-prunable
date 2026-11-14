@@ -18,6 +18,9 @@ set -euo pipefail
 BASE=""
 DO_FETCH=1
 APPLY=0
+INTERACTIVE=0
+FZF_CMD="${GIT_PRUNABLE_FZF:-fzf}"
+CANDIDATES=()
 
 usage() {
   cat <<EOF
@@ -26,6 +29,8 @@ Options:
   --base REF     Base to compare against (default: origin/HEAD, else main/master)
   --no-fetch     Do not run 'git fetch --prune' first
   -y, --yes      Delete prunable branches (and their clean worktrees); default is dry run
+  -i, --interactive
+                 Pick branches to delete with fzf (multi-select: Tab); requires fzf
   -h, --help     Show this help
 EOF
 }
@@ -46,6 +51,7 @@ parse_args() {
         ;;
       --no-fetch) DO_FETCH=0 ;;
       -y | --yes) APPLY=1 ;;
+      -i | --interactive) INTERACTIVE=1 ;;
       -h | --help)
         usage
         exit 0
@@ -166,12 +172,24 @@ process_branch() {
     fi
   fi
 
+  if [[ $INTERACTIVE -eq 1 ]]
+  then
+    CANDIDATES+=("$br"$'\t'"$reason$gone"$'\t'"${wt:--}"$'\t'"$tip")
+    return 0
+  fi
+
   if [[ $APPLY -eq 0 ]]
   then
     echo "WOULD $br  [$reason]$gone${wt:+ + worktree $wt}"
     return 0
   fi
 
+  delete_branch "$br" "$wt" "$tip" "[$reason]$gone"
+}
+
+# delete_branch BRANCH WORKTREE(or empty) TIP LABEL
+delete_branch() {
+  local br="$1" wt="$2" tip="$3" label="$4"
   if [[ -n "$wt" ]] && ! git worktree remove "$wt" 2> /dev/null
   then
     echo "SKIP  $br  cannot remove worktree $wt"
@@ -179,11 +197,30 @@ process_branch() {
   fi
   log_deletion "$br" "$tip"
   git branch -D "$br" > /dev/null
-  echo "DEL   $br  [$reason]$gone ($tip)"
+  echo "DEL   $br  $label ($tip)"
+}
+
+# pick candidates with fzf (multi-select) and delete the chosen ones
+select_and_delete() {
+  [[ ${#CANDIDATES[@]} -gt 0 ]] || { echo "nothing prunable"; return 0; }
+  local picked br label wt tip
+  picked=$(printf '%s\n' "${CANDIDATES[@]}" | "$FZF_CMD" --multi --delimiter=$'\t' \
+    --header 'Tab: toggle  Enter: delete selected  Esc: cancel' \
+    --preview 'git log --oneline -10 {1}' || true)
+  [[ -n "$picked" ]] || { echo "nothing selected"; return 0; }
+  while IFS=$'\t' read -r br label wt tip
+  do
+    [[ "$wt" == "-" ]] && wt=""
+    delete_branch "$br" "$wt" "$tip" "[$label]"
+  done <<< "$picked"
 }
 
 main() {
   parse_args "$@"
+  if [[ $INTERACTIVE -eq 1 ]] && ! command -v "$FZF_CMD" > /dev/null 2>&1
+  then
+    die "--interactive requires fzf (not found: $FZF_CMD)"
+  fi
   git rev-parse --git-dir > /dev/null 2>&1 || die "not a git repository"
 
   [[ $DO_FETCH -eq 1 ]] && { git fetch -q --prune 2> /dev/null || echo "warn: fetch failed, using local refs" >&2; }
@@ -196,7 +233,7 @@ main() {
   CUR_WT=$(git rev-parse --show-toplevel)
   LOG_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/prunable.log"
 
-  echo "base: $BASE$([[ $APPLY -eq 0 ]] && echo '  (dry run, use --yes to delete)')"
+  echo "base: $BASE$([[ $APPLY -eq 0 && $INTERACTIVE -eq 0 ]] && echo '  (dry run, use --yes to delete)')"
 
   local br wt track
   while IFS=$'\037' read -r br wt track
@@ -205,6 +242,7 @@ main() {
     process_branch "$br" "$wt" "$track"
   done < <(git for-each-ref --format='%(refname:short)%1f%(worktreepath)%1f%(upstream:track)' refs/heads)
 
+  [[ $INTERACTIVE -eq 1 ]] && select_and_delete
   report_detached_worktrees
 }
 
