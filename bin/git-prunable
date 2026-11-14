@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# git-prunable: find (and optionally delete) local branches whose work is already on the base branch.
+#
+# Works as `git prunable` because bin/ is on PATH (git runs any `git-<name>` executable).
+#
+# A branch is prunable when one of these holds against <base>:
+#   merged             tip is an ancestor of base (merge / fast-forward)
+#   content-in-base    merging the branch into base changes nothing (squash, rebase, cherry-pick)
+#   cherry-equivalent  every commit has a patch-id match on base (rebase merge, cherry-pick)
+# Branches with a worktree are only pruned if that worktree is clean, unlocked and not the
+# main/current one; the worktree is removed first, then the branch.
+#
+# Default is a dry run. Pass --yes to delete. Deleted tips are appended to
+# <git-common-dir>/prunable.log so they can be restored with `git branch <name> <sha>`.
+
+set -euo pipefail
+
+BASE=""
+DO_FETCH=1
+APPLY=0
+
+usage() {
+  cat <<EOF
+Usage: git prunable [options]
+Options:
+  --base REF     Base to compare against (default: origin/HEAD, else main/master)
+  --no-fetch     Do not run 'git fetch --prune' first
+  -y, --yes      Delete prunable branches (and their clean worktrees); default is dry run
+  -h, --help     Show this help
+EOF
+}
+
+die() {
+  echo "git-prunable: $*" >&2
+  exit 1
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]
+  do
+    case "$1" in
+      --base)
+        [[ $# -ge 2 ]] || die "--base needs a value"
+        BASE="$2"
+        shift
+        ;;
+      --no-fetch) DO_FETCH=0 ;;
+      -y | --yes) APPLY=1 ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+    shift
+  done
+}
+
+resolve_base() {
+  if [[ -n "$BASE" ]]
+  then
+    git rev-parse --verify --quiet "$BASE^{commit}" > /dev/null || die "unknown base: $BASE"
+    return
+  fi
+  local ref
+  if ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null)
+  then
+    BASE="$ref"
+    return
+  fi
+  for ref in origin/main origin/master main master
+  do
+    if git rev-parse --verify --quiet "$ref^{commit}" > /dev/null
+    then
+      BASE="$ref"
+      return
+    fi
+  done
+  die "cannot determine base branch; use --base"
+}
+
+# why_prunable BRANCH -> prints reason, returns 0 if the branch's work is on base
+why_prunable() {
+  local br="$1" merged_tree
+  if git merge-base --is-ancestor "$br" "$BASE"
+  then
+    echo merged
+    return 0
+  fi
+  if merged_tree=$(git merge-tree --write-tree "$BASE" "$br" 2> /dev/null) \
+    && [[ "${merged_tree%%$'\n'*}" == "$BASE_TREE" ]]
+  then
+    echo content-in-base
+    return 0
+  fi
+  if [[ -z "$(git cherry "$BASE" "$br" | grep '^+' || true)" ]]
+  then
+    echo cherry-equivalent
+    return 0
+  fi
+  return 1
+}
+
+# is_locked WORKTREE_PATH
+is_locked() {
+  git worktree list --porcelain | awk -v p="$1" '
+    $1 == "worktree" { cur = substr($0, 10) }
+    $1 == "locked" && cur == p { found = 1 }
+    END { exit !found }'
+}
+
+report_detached_worktrees() {
+  git worktree list --porcelain | awk -v main="$MAIN_WT" '
+    $1 == "worktree" { cur = substr($0, 10); sha = "" }
+    $1 == "HEAD" { sha = substr($2, 1, 9) }
+    $1 == "detached" && cur != main { printf "NOTE  detached worktree %s (HEAD %s) - check by hand\n", cur, sha }'
+}
+
+log_deletion() {
+  local br="$1" sha="$2"
+  printf '%s %s %s\n' "$(date +%Y-%m-%dT%H:%M:%S)" "$br" "$sha" >> "$LOG_FILE"
+}
+
+process_branch() {
+  local br="$1" wt="$2" track="$3"
+  local tip reason gone=""
+  [[ "$br" == "${BASE#origin/}" ]] && return 0
+  tip=$(git rev-parse "$br")
+  [[ "$track" == *gone* ]] && gone=" (upstream gone)"
+
+  if ! reason=$(why_prunable "$br")
+  then
+    if [[ -n "$gone" ]]
+    then
+      echo "KEEP  $br  upstream gone but has work not on $BASE: $(git rev-list --count "$BASE..$br") commit(s)"
+    fi
+    return 0
+  fi
+
+  if [[ "$tip" == "$BASE_TIP" && -z "$gone" ]]
+  then
+    echo "SKIP  $br  points at $BASE itself (new branch?)"
+    return 0
+  fi
+
+  if [[ -n "$wt" ]]
+  then
+    if [[ "$wt" == "$MAIN_WT" || "$wt" == "$CUR_WT" ]]
+    then
+      echo "SKIP  $br  checked out in $wt"
+      return 0
+    fi
+    if is_locked "$wt"
+    then
+      echo "SKIP  $br  locked worktree $wt"
+      return 0
+    fi
+    if [[ -n "$(git -C "$wt" status --porcelain 2> /dev/null)" ]]
+    then
+      echo "SKIP  $br  dirty worktree $wt"
+      return 0
+    fi
+  fi
+
+  if [[ $APPLY -eq 0 ]]
+  then
+    echo "WOULD $br  [$reason]$gone${wt:+ + worktree $wt}"
+    return 0
+  fi
+
+  if [[ -n "$wt" ]] && ! git worktree remove "$wt" 2> /dev/null
+  then
+    echo "SKIP  $br  cannot remove worktree $wt"
+    return 0
+  fi
+  log_deletion "$br" "$tip"
+  git branch -D "$br" > /dev/null
+  echo "DEL   $br  [$reason]$gone ($tip)"
+}
+
+main() {
+  parse_args "$@"
+  git rev-parse --git-dir > /dev/null 2>&1 || die "not a git repository"
+
+  [[ $DO_FETCH -eq 1 ]] && { git fetch -q --prune 2> /dev/null || echo "warn: fetch failed, using local refs" >&2; }
+  git worktree prune
+  resolve_base
+
+  BASE_TREE=$(git rev-parse "$BASE^{tree}")
+  BASE_TIP=$(git rev-parse "$BASE^{commit}")
+  MAIN_WT=$(git worktree list --porcelain | awk 'NR == 1 { print substr($0, 10) }')
+  CUR_WT=$(git rev-parse --show-toplevel)
+  LOG_FILE="$(git rev-parse --path-format=absolute --git-common-dir)/prunable.log"
+
+  echo "base: $BASE$([[ $APPLY -eq 0 ]] && echo '  (dry run, use --yes to delete)')"
+
+  local br wt track
+  while IFS=$'\037' read -r br wt track
+  do
+    [[ -n "$br" ]] || continue
+    process_branch "$br" "$wt" "$track"
+  done < <(git for-each-ref --format='%(refname:short)%1f%(worktreepath)%1f%(upstream:track)' refs/heads)
+
+  report_detached_worktrees
+}
+
+main "$@"
