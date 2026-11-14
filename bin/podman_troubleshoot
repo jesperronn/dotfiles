@@ -1684,6 +1684,7 @@ check_container_https_egress() {
 
   # Run all three probes in parallel for faster execution
   temp_dir="$(mktemp -d)"
+  # shellcheck disable=SC2064 # expand now on purpose: temp_dir is function-local and gone when RETURN fires
   trap "rm -rf '$temp_dir'" RETURN
 
   # Host probe: silent HTTPS connection test (background)

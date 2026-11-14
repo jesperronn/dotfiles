@@ -13,6 +13,7 @@
 # section #3. Specific functions
 # section #4. Main: run_main function
 
+# shellcheck disable=SC2034 # template: unused color variables are intentional
 # start section #1 - euo pipefail, pushd, fixed variables
 set -euo pipefail
 

@@ -168,7 +168,7 @@ cmd_runtime_start() {
       if lms_up 2>/dev/null; then info "lms: already running"; return; fi
       command -v lms >/dev/null 2>&1 || die "lms CLI not found on PATH"
       info "starting LM Studio server..."
-      lms server start && ok "lms: started" || die "lms server start failed"
+      if lms server start; then ok "lms: started"; else die "lms server start failed"; fi
       ;;
     ollama)
       if ollama_up 2>/dev/null; then info "ollama: already running"; return; fi
@@ -356,6 +356,7 @@ _cmd_runtime_logs_all() {
   # Create a temp file for lms logs since we can't use tail directly
   tmpdir="${TMPDIR%/}"; tmpdir="${tmpdir:-/tmp}"
   lms_tmplog="$tmpdir/llmrun-all-logs-lms-$$.txt"
+  # shellcheck disable=SC2064 # expand now on purpose: lms_tmplog is function-local and gone when RETURN fires
   trap "rm -f '$lms_tmplog'" RETURN
 
   # Start background lms capture if available
@@ -514,9 +515,9 @@ cmd_model_load() {
   case "$rt" in
     lms)    command -v lms >/dev/null 2>&1 || die "lms CLI not found"; lms load "$id" && ok "loaded: $id";;
     ollama) ollama_up 2>/dev/null || die "ollama not running — llmrun runtime start ollama"
-            curl -fsS -X POST http://localhost:11434/api/generate \
-              -d "$(python3 -c "import json,sys; print(json.dumps({'model':sys.argv[1]}))" "$id")" >/dev/null \
-              && ok "loaded: $id" || die "load failed for $id";;
+            if curl -fsS -X POST http://localhost:11434/api/generate \
+              -d "$(python3 -c "import json,sys; print(json.dumps({'model':sys.argv[1]}))" "$id")" >/dev/null
+            then ok "loaded: $id"; else die "load failed for $id"; fi;;
     mlx)    cmd_runtime_start mlx "$id";;
     mtplx)  cmd_runtime_start mtplx "$id";;
     *) die "unknown runtime: $rt";;
@@ -747,7 +748,7 @@ while [ $# -gt 0 ]; do
     -h|--help)
       awk 'NR>1 && /^[^#]/{exit} NR>1{print}' "$0"
       printf '\n%s\n' "${C_BLD}Available agents:${C_RST}"
-      ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh | sed -E 's/-(lms|ollama|mlx|omlx|mtplx)$//' | sort -u | sed 's/^/  /'
+      for _f in "$_ADAPTERS"/*.sh; do [[ -e "$_f" ]] && basename "$_f" .sh; done | sed -E 's/-(lms|ollama|mlx|omlx|mtplx)$//' | sort -u | sed 's/^/  /'
       printf '\n%s\n' "${C_BLD}Available models per runtime:${C_RST}"
       printf '\n  %s\n' "${C_YEL}LM Studio (lms):${C_RST}"
       if lms_up 2>/dev/null; then
@@ -841,7 +842,13 @@ proxy_models() {
 }
 
 # ── Phase 1: Select ───────────────────────────────────────────────────────────
-all_adapters() { ls "$_ADAPTERS"/*.sh 2>/dev/null | xargs -I{} basename {} .sh; }
+all_adapters() {
+  local f
+  for f in "$_ADAPTERS"/*.sh; do
+    [[ -e "$f" ]] && basename "$f" .sh
+  done
+  return 0
+}
 all_tools()    { all_adapters; }
 
 if [ -z "$TOOL" ]; then

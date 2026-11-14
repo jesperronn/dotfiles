@@ -196,7 +196,11 @@ ff_print_summary() {
   local fail_count=0
 
   for result in "${FF_RUN_RESULTS[@]}"; do
-    [[ "$result" == "pass" ]] && (( pass_count += 1 )) || (( fail_count += 1 ))
+    if [[ "$result" == "pass" ]]; then
+      (( pass_count += 1 ))
+    else
+      (( fail_count += 1 ))
+    fi
   done
 
   printf '\n'
@@ -204,7 +208,11 @@ ff_print_summary() {
   printf '%s runs completed  ' "$total_runs"
   ff_color "$FF_C_GREEN" "${pass_count} passed"
   printf '  '
-  (( fail_count > 0 )) && ff_color "$FF_C_RED" "${fail_count} failed" || ff_color "$FF_C_DIM" "0 failed"
+  if (( fail_count > 0 )); then
+    ff_color "$FF_C_RED" "${fail_count} failed"
+  else
+    ff_color "$FF_C_DIM" "0 failed"
+  fi
   printf '\n'
 
   if [[ ${#FF_FAILURES[@]} -eq 0 ]]; then
