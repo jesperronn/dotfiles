@@ -199,6 +199,15 @@ test_gone_unmerged() {
   assert_contains "gone but unmerged: flagged KEEP" "$out" "KEEP  gonework"
 }
 
+test_dangling_origin_head() {
+  # origin/HEAD points at origin/master, which does not exist: must fall back to main
+  g symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/master
+  local out
+  out=$(cd "$REPO" && "$SCRIPT" --no-fetch 2>&1)
+  assert_contains "dangling origin/HEAD falls back to main" "$out" "base: main"
+  g symbolic-ref --delete refs/remotes/origin/HEAD
+}
+
 test_bad_base() {
   local status=0
   (cd "$REPO" && "$SCRIPT" --no-fetch --base nope > /dev/null 2>&1) || status=$?
@@ -211,6 +220,7 @@ main() {
   test_interactive
   test_apply
   test_gone_unmerged
+  test_dangling_origin_head
   test_bad_base
 
   printf '%bResults: %s passed, %s failed%s\n' "$TEST_C_GREEN" "$TEST_PASS" "$TEST_FAIL" "$TEST_C_RESET"

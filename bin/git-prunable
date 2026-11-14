@@ -73,7 +73,8 @@ resolve_base() {
     return
   fi
   local ref
-  if ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null)
+  if ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2> /dev/null) \
+    && git rev-parse --verify --quiet "$ref^{commit}" > /dev/null
   then
     BASE="$ref"
     return
