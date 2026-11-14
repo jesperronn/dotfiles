@@ -241,11 +241,17 @@ parse_opts() {
       --full) BBPR_FULL=1; shift ;;
       -i|--interactive) BBPR_INTERACTIVE=1; shift ;;
       --help|-h) BBPR_SHOW_HELP=1; shift ;;
-      --base-url) [[ $# -ge 2 ]] && { BBPR_BASE_URL="$2"; shift 2; } || shift ;;
+      --base-url)
+        if [[ $# -ge 2 ]]; then BBPR_BASE_URL="$2"; shift 2; else shift; fi
+        ;;
       --base-url=*) BBPR_BASE_URL="${1#--base-url=}"; shift ;;
-      --token) [[ $# -ge 2 ]] && { BBPR_TOKEN="$2"; shift 2; } || shift ;;
+      --token)
+        if [[ $# -ge 2 ]]; then BBPR_TOKEN="$2"; shift 2; else shift; fi
+        ;;
       --token=*) BBPR_TOKEN="${1#--token=}"; shift ;;
-      --me) [[ $# -ge 2 ]] && { BBPR_ME="$2"; shift 2; } || shift ;;
+      --me)
+        if [[ $# -ge 2 ]]; then BBPR_ME="$2"; shift 2; else shift; fi
+        ;;
       --me=*) BBPR_ME="${1#--me=}"; shift ;;
       *) temp_args+=("$1"); shift ;;
     esac
@@ -295,8 +301,6 @@ bbpr_fetch_token() {
   printf '%s' "$token"
 }
 
-bbpr_last_http_code=""
-
 bbpr_fetch() {
   local method="${1:-GET}" endpoint="$2" data="${3:-}"
   local token url curl_output http_code body
@@ -328,7 +332,6 @@ bbpr_fetch() {
 
   http_code="$(printf '%s' "$curl_output" | tail -n1)"
   body="$(printf '%s' "$curl_output" | sed '$d')"
-  bbpr_last_http_code="$http_code"
   [[ -z "$body" ]] && body="null"
 
   # Verbose logging: print response summary
