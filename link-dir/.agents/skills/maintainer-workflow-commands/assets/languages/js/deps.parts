@@ -3,7 +3,7 @@ js_update() {
   local filter=()
   local target="$1"
   [[ "$target" == major ]] && target=latest
-  [[ ${#PKGS[@]} -gt 0 ]] && filter=(--filter "$(join_csv "${PKGS[@]}")")
+  [[ ${#POSITIONAL[@]} -gt 0 ]] && filter=(--filter "$(join_csv "${POSITIONAL[@]}")")
   npx --yes npm-check-updates --target "$target" -u ${filter[@]+"${filter[@]}"} && "$(js_pm)" install
 }
 

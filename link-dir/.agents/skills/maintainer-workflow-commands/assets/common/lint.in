@@ -53,41 +53,22 @@ queue_path() {
 @@functions@@
 
 main() {
-  local arg g p rel
-  local paths=() groups=()
-  while [[ $# -gt 0 ]]; do
-    arg="$1"
-    shift
-    case "$arg" in
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      --dry-run) export DRY_RUN=1 ;;
-      -a | --autofix) AUTOFIX=1 ;;
-      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
-      -*) die_usage "unknown option: $arg" ;;
-      *) paths+=("$arg") ;;
-    esac
-  done
+  local g p rel
+  local groups=()
+  parse_args lint "$@"
 
-  if [[ ${#paths[@]} -gt 0 ]]; then
-    for p in "${paths[@]}"; do
+  if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
+    for p in "${POSITIONAL[@]}"; do
       rel="$(root_rel "$p")" || die_usage "no such path: $p"
       queue_path "$rel"
     done
     for g in $ALL_GROUPS; do
+      group_selected "$g" || continue
       case "$g" in
 @@groups@@
       esac
     done
-    if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
-      local keep=()
-      for g in ${groups[@]+"${groups[@]}"}; do
-        case " ${SELECTED_GROUPS[*]} " in *" $g "*) keep+=("$g") ;; esac
-      done
-      groups=(${keep[@]+"${keep[@]}"})
-    fi
+
   else
     while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
 @@queue@@

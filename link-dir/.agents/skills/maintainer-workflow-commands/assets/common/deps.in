@@ -16,32 +16,14 @@ USAGE
 }
 
 LEVEL=""
-PKGS=()
 
 @@functions@@
 
 main() {
-  local arg g
+  local g
   local groups=()
-  while [[ $# -gt 0 ]]; do
-    arg="$1"
-    shift
-    case "$arg" in
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      --dry-run) export DRY_RUN=1 ;;
-      --patch | --minor | --major)
-        [[ -z "$LEVEL" || "$LEVEL" == "${arg#--}" ]] || die_usage "--patch, --minor and --major are mutually exclusive"
-        LEVEL="${arg#--}"
-        ;;
-      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
-      -*) die_usage "unknown option: $arg" ;;
-      *) PKGS+=("$arg") ;;
-    esac
-  done
-  if [[ ${#PKGS[@]} -gt 0 ]]; then
+  parse_args deps "$@"
+  if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
     [[ -n "$LEVEL" ]] || die_usage "named packages need a level (--patch, --minor or --major)"
     [[ ${#SELECTED_GROUPS[@]} -eq 1 ]] || die_usage "named packages need exactly one language flag"
   fi

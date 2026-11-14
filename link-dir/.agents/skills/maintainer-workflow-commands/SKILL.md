@@ -27,7 +27,8 @@ Preserve existing names, runners, CI, and project conventions.
    scratch directory and adapt the result. Keep names such as `bin/runtests`;
    update companion scripts to call the project's actual entrypoints.
 4. Generated scripts contain only selected language sections, including help,
-   flags, routing, and helpers. Bash is their interpreter regardless of which
+   flags, routing, and helpers. Commands share argument parsing and step results
+   in `bin/lib/project.sh`. Bash is their interpreter regardless of which
    test languages were selected. They have no runtime dependency on this skill.
 5. Adapt tool choices and paths. Remove unused steps; replace project-specific
    assumptions. `bin/workflows` indexes executable commands from their

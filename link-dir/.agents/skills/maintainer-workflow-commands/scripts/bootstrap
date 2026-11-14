@@ -18,33 +18,45 @@ def selection(value, allowed, parser):
     return [x for x in allowed if x in items]
 
 
+def sections_from_file(path):
+    result = defaultdict(list)
+    section = None
+    for line in path.read_text().splitlines(keepends=True):
+        if line.startswith('# @section '):
+            section = line.strip().split()[-1]
+        elif section:
+            result[section].append(line)
+    return {key: ''.join(value).rstrip('\n') for key, value in result.items()}
+
+
 def sections(command, languages):
     result = defaultdict(list)
     for language in languages:
         path = ASSETS / 'languages' / language / (command + '.parts')
-        if not path.exists():
-            continue
-        section = None
-        for line in path.read_text().splitlines(keepends=True):
-            if line.startswith('# @section '):
-                section = line.strip().split()[-1]
-                if section == 'functions' and result[section]:
-                    result[section].append('\n')
-            elif section:
-                result[section].append(line)
-    return {key: ''.join(value).rstrip('\n') for key, value in result.items()}
+        if path.exists():
+            for key, value in sections_from_file(path).items():
+                result[key].append(value)
+    return {key: ('\n\n' if key == 'functions' else '\n').join(value)
+            for key, value in result.items()}
 
 
-def render(command, languages):
+def render(command, languages, commands):
     template = (ASSETS / 'common' / (command + '.in')).read_text()
     values = sections(command, languages)
+    if command == 'project' and set(commands) & {'setup', 'test', 'lint', 'deps'}:
+        options = sections_from_file(ASSETS / 'common/options.parts')
+        selected = [options.get(name, '') for name in commands]
+        if 'test' in commands and set(languages) & {'bash', 'go'}:
+            selected.append(options['verbose'])
+        parser = (ASSETS / 'common/args.in').read_text().rstrip()
+        values['parser'] = parser.replace('@@options@@', '\n'.join(x for x in selected if x))
     prefix = 'P' if command == 'test' else 'F'
     flag_languages = [x for x in languages if command != 'deps' or x != 'bash']
     values.update(languages=', '.join(languages) if command != 'project' else ' '.join(languages),
+                  language_patterns=' | '.join(languages),
                   flags=' '.join('[--' + x + ']' for x in flag_languages),
                   verbose_init='VERBOSE="${VERBOSE:-0}"' if set(languages) & {'bash', 'go'} else '',
                   verbose_usage='[-v]' if set(languages) & {'bash', 'go'} else '',
-                  verbose_option='      -v | --verbose) VERBOSE=1 ;;' if set(languages) & {'bash', 'go'} else '',
                   arrays=' '.join(prefix + '_' + x + '=()' for x in languages),
                   dependency_filter='    [[ "$g" != bash ]] || continue' if 'bash' in languages else '')
     if not values.get('directories'):
@@ -72,9 +84,9 @@ def main():
     args.output = args.output.resolve()
     commands = selection(args.files, COMMANDS, parser)
     languages = selection(args.lang, LANGUAGES, parser)
-    generated = {Path('bin') / name: render(name, languages) for name in commands}
+    generated = {Path('bin') / name: render(name, languages, commands) for name in commands}
     if set(commands) & {'setup', 'dev', 'test', 'lint', 'deps', 'changelog'}:
-        generated[Path('bin/lib/project.sh')] = render('project', languages)
+        generated[Path('bin/lib/project.sh')] = render('project', languages, commands)
     # Validate every destination before writing any file. Never replace project scripts.
     for relative in generated:
         target = args.output / relative

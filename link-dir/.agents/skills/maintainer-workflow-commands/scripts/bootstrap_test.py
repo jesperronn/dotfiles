@@ -137,6 +137,31 @@ class BootstrapTests(unittest.TestCase):
         self.assertIn('versions:display-dependency-updates', result.stdout)
         self.assertNotIn('deps_bash', result.stdout + result.stderr)
 
+    def test_workflow_flags_do_not_leak_between_commands(self):
+        self.assertEqual(0, self.generate('java,js', 'setup,test,lint,deps').returncode)
+        for command, flag in [('setup', '--java'), ('setup', '--autofix'), ('test', '--check'),
+                              ('lint', '--patch'), ('deps', '--autofix'), ('deps', '--verbose')]:
+            result = self.run_script(command, flag)
+            self.assertEqual(2, result.returncode, (command, flag, result.stdout, result.stderr))
+        for command in ('setup', 'test', 'lint', 'deps'):
+            self.assertEqual(0, self.run_script(command, '--help').returncode)
+
+    def test_batch_failure_precedence_and_continuation(self):
+        self.assertEqual(0, self.generate('java,js', 'test').returncode)
+        (self.project / 'pom.xml').touch()
+        (self.project / 'package.json').touch()
+        stubs = self.project / 'stubs'
+        stubs.mkdir()
+        for npm_status, mvn_status, expected in [(127, 1, 1), (1, 127, 1), (0, 127, 9), (0, 0, 0)]:
+            for name, status in [('npm', npm_status), ('mvn', mvn_status)]:
+                path = stubs / name
+                path.write_text('#!/bin/bash\necho ' + name + '-ran\nexit ' + str(status) + '\n')
+                path.chmod(0o755)
+            result = self.run_script('test', env={**os.environ, 'PATH': str(stubs) + ':/usr/bin:/bin'})
+            self.assertEqual(expected, result.returncode, result.stdout + result.stderr)
+            self.assertIn('npm-ran', result.stdout)
+            self.assertIn('mvn-ran', result.stdout)
+
     def test_troubleshoot_is_only_a_placeholder(self):
         self.assertEqual(0, self.generate(files='troubleshoot').returncode)
         for target in ('local', 'production'):

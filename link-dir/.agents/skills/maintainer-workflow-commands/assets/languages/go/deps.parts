@@ -12,7 +12,7 @@ deps_go() {
     return
   fi
   [[ "$LEVEL" == patch ]] && flag=(-u=patch)
-  run_step "go get $LEVEL" go_update "${flag[@]}" "${PKGS[@]:-./...}"
+  run_step "go get $LEVEL" go_update "${flag[@]}" "${POSITIONAL[@]:-./...}"
 }
 # @section help
   go     go list -u -m | go get -u=patch|(-u) ./..., go mod tidy; major is by hand (/vN)

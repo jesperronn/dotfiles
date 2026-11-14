@@ -8,7 +8,7 @@ deps_ruby() {
     return
   fi
   [[ "$LEVEL" != major ]] && flag=("--$LEVEL")
-  run_step "ruby bundle update $LEVEL" bundle update ${flag[@]+"${flag[@]}"} ${PKGS[@]+"${PKGS[@]}"}
+  run_step "ruby bundle update $LEVEL" bundle update ${flag[@]+"${flag[@]}"} ${POSITIONAL[@]+"${POSITIONAL[@]}"}
 }
 # @section help
   ruby   bundle outdated --only-explicit | bundle update --patch|--minor|(all)

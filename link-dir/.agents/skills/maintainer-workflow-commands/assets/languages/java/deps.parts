@@ -25,7 +25,7 @@ deps_java() {
     minor) allow=(-DallowMajorUpdates=false) ;;
   esac
   run_step "java versions:use-latest-releases $LEVEL" java_update "$tool" ${allow[@]+"${allow[@]}"} \
-    ${PKGS[@]+"-Dincludes=$(join_csv "${PKGS[@]}")"}
+    ${POSITIONAL[@]+"-Dincludes=$(join_csv "${POSITIONAL[@]}")"}
 }
 # @section help
   java   mvn versions:display-dependency-updates | versions:use-latest-releases;

@@ -37,17 +37,15 @@ group_detected() {
   esac
 }
 
-is_group() {
-  local g
-  for g in $ALL_GROUPS; do [[ "$g" == "$1" ]] && return 0; done
-  return 1
+select_group_flag() {
+  case "${1#--}" in
+    @@language_patterns@@) SELECTED_GROUPS+=("${1#--}") ;;
+    *) return 1 ;;
+  esac
 }
 
-# Select a group from a --<group> flag. Returns 1 when the flag is not a group.
-select_group_flag() {
-  local g="${1#--}"
-  is_group "$g" || return 1
-  SELECTED_GROUPS+=("$g")
+group_selected() {
+  [[ ${#SELECTED_GROUPS[@]} -eq 0 || " ${SELECTED_GROUPS[*]-} " == *" $1 "* ]]
 }
 
 # Print the groups to act on: the selected ones, else every detected one.
@@ -60,6 +58,8 @@ groups_to_run() {
   fi
   return 0
 }
+
+@@parser@@
 
 @@functions@@
 
@@ -89,12 +89,17 @@ root_rel() {
 
 # --- steps -------------------------------------------------------------------
 
-STEP_NAMES=()
-STEP_RESULTS=() # ok | FAIL | MISSING | skip
+STEP_SUMMARY=()
+RESULT=0
 
 record_step() {
-  STEP_NAMES+=("$1")
-  STEP_RESULTS+=("$2")
+  local color="$C_GREEN"
+  case "$2" in
+    FAIL) color="$C_RED"; RESULT="$EX_FAILED" ;;
+    MISSING) color="$C_RED"; [[ "$RESULT" != 0 ]] || RESULT="$EX_TOOL_MISSING" ;;
+    skip) color="$C_DIM" ;;
+  esac
+  STEP_SUMMARY+=("$(printf '%s%-7s%s %s' "$color" "$2" "$C_0" "$1")")
 }
 
 # run_step NAME CMD [ARGS...]: run in the project root, never abort the batch.
@@ -123,20 +128,8 @@ skip_step() {
   record_step "$1" skip
 }
 
-# Print one line per step; return 0 all ok, 1 any failed, 9 a tool was missing.
 print_summary() {
-  local i rc=0 res color
   printf '\n'
-  for i in "${!STEP_NAMES[@]}"; do
-    res="${STEP_RESULTS[$i]}"
-    case "$res" in
-      ok) color="$C_GREEN" ;;
-      skip) color="$C_DIM" ;;
-      *) color="$C_RED" ;;
-    esac
-    printf '%s%-7s%s %s\n' "$color" "$res" "$C_0" "${STEP_NAMES[$i]}"
-    [[ "$res" == FAIL ]] && rc="$EX_FAILED"
-    [[ "$res" == MISSING && "$rc" -eq 0 ]] && rc="$EX_TOOL_MISSING"
-  done
-  return "$rc"
+  [[ ${#STEP_SUMMARY[@]} -eq 0 ]] || printf '%s\n' "${STEP_SUMMARY[@]}"
+  return "$RESULT"
 }

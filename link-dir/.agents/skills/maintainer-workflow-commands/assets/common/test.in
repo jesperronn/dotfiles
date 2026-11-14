@@ -38,43 +38,27 @@ add_path() {
 @@functions@@
 
 main() {
-  local arg g p rel
-  local paths=() groups=()
-  while [[ $# -gt 0 ]]; do
-    arg="$1"
-    shift
-    case "$arg" in
-      -h | --help)
-        usage
-        exit 0
-        ;;
-      --dry-run) export DRY_RUN=1 ;;
-@@verbose_option@@
-      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
-      -*) die_usage "unknown option: $arg" ;;
-      *) paths+=("$arg") ;;
-    esac
-  done
+  local g p rel
+  local groups=()
+  parse_args test "$@"
 
-  for p in ${paths[@]+"${paths[@]}"}; do
+  for p in ${POSITIONAL[@]+"${POSITIONAL[@]}"}; do
     rel="$(root_rel "$p")" || die_usage "no such path: $p"
     g="$(test_group_of "$rel")"
     if [[ -z "$g" && ${#SELECTED_GROUPS[@]} -eq 1 ]]; then g="${SELECTED_GROUPS[0]}"; fi
     [[ -n "$g" ]] || die_usage "cannot tell which tests '$p' belongs to; pass one language flag"
-    if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
-      case " ${SELECTED_GROUPS[*]} " in *" $g "*) ;; *) continue ;; esac
-    fi
+    group_selected "$g" || continue
     local continue_path=0
 @@expand@@
     [[ "$continue_path" == 1 ]] || add_path "$g" "$rel"
     case " ${groups[*]-} " in *" $g "*) ;; *) groups+=("$g") ;; esac
   done
-  if [[ ${#paths[@]} -eq 0 ]]; then
+  if [[ ${#POSITIONAL[@]} -eq 0 ]]; then
     while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
   fi
 
   if [[ ${#groups[@]} -eq 0 ]]; then
-    if [[ ${#paths[@]} -gt 0 ]]; then
+    if [[ ${#POSITIONAL[@]} -gt 0 ]]; then
       echo "nothing to test for the given paths and flags"
       exit 0
     fi

@@ -1,0 +1,18 @@
+# shellcheck disable=SC2034 # Parsed flags are read by the calling command.
+parse_args() {
+  local mode="$1" arg
+  shift
+  POSITIONAL=()
+  for arg; do
+    case "$arg" in
+      -h | --help) usage; exit 0 ;;
+      --dry-run) DRY_RUN=1 ;;
+@@options@@
+      --*)
+        if [[ "$mode" == setup ]] || ! select_group_flag "$arg"; then die_usage "unknown option: $arg"; fi
+        ;;
+      -*) die_usage "unknown option: $arg" ;;
+      *) [[ "$mode" != setup ]] || die_usage "unknown argument: $arg"; POSITIONAL+=("$arg") ;;
+    esac
+  done
+}
