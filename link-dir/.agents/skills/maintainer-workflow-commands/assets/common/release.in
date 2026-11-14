@@ -33,8 +33,9 @@ step() {
 
 valid_version() {
   local value="$1" part pre
-  local semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+  local semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
   [[ "$value" =~ $semver ]] || return 1
+  value="${value%%+*}"
   if [[ "$value" == *-* ]]; then
     pre="${value#*-}"
     local IFS=.
@@ -100,7 +101,7 @@ poll_seconds="${RELEASE_RUN_POLL_SECONDS:-3}"
 [[ "$wait_seconds" =~ ^(0|[1-9][0-9]*)$ && "$poll_seconds" =~ ^(0|[1-9][0-9]*)$ ]] || usage_error 'wait and poll must be whole seconds'
 [[ "$wait_seconds" == 0 || "$poll_seconds" != 0 ]] || usage_error 'positive wait needs positive poll'
 printf 'Release %s (%s)\n' "$tag" "$today"
-[[ "$version" != *-* ]] || printf '%s\n' 'This is a pre-release.'
+[[ "${version%%+*}" != *-* ]] || printf '%s\n' 'This is a pre-release.'
 
 [[ "$(git branch --show-current)" == main ]] || die 'must be on main'
 [[ -z "$(git status --porcelain)" ]] || die 'working tree is not clean'
@@ -119,10 +120,13 @@ if grep -qF "## [$version]" CHANGELOG.md; then die "CHANGELOG.md already contain
 
 step bin/lint
 step bin/test
+if [[ "$dry" != 1 ]]; then
+  [[ -z "$(git status --porcelain)" && "$(git rev-parse HEAD)" == "$head" ]] || die 'verification changed the repository; inspect changes before releasing'
+fi
 printf '+ move [Unreleased] notes under ## [%s] - %s\n' "$version" "$today"
 [[ "$dry" == 1 ]] || move_notes
 step git add -- CHANGELOG.md
-step git commit -m "docs: changelog for $version"
+step git commit -m "docs: changelog for $version" -- CHANGELOG.md
 step git tag -a "$tag" -m "$tag"
 if [[ "$dry" == 1 ]]; then
   printf '%s\n' '+ ask before pushing (unless --yes)'

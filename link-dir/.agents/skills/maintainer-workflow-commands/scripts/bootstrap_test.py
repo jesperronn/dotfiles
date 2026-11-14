@@ -230,6 +230,40 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('pre-release', result.stdout)
         self.assertEqual(2, self.release('--dry-run', 'v2.0.0').returncode)
 
+    def test_release_accepts_build_metadata(self):
+        for version in ('1.1.0+build.7', '1.1.0-rc.3+build.7', '1.1.0+build-meta'):
+            result = self.release('--dry-run', version)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertIn('v' + version, result.stdout)
+        self.assertNotIn('pre-release', self.release('--dry-run', '1.1.0+build-meta').stdout)
+
+    def test_validation_cannot_add_files_to_release_commit(self):
+        test = self.project / 'bin/test'
+        test.write_text('#!/bin/bash\necho generated > source.txt\ngit add source.txt\n')
+        self.git_run('add', 'bin/test')
+        self.git_run('commit', '-qm', 'test: stage generated source')
+        self.env['RELEASE_TEST_HEAD'] = self.git_run('rev-parse', 'HEAD').stdout.strip()
+        notes = (self.project / 'CHANGELOG.md').read_bytes()
+        result = self.release('--yes')
+        self.assertEqual(1, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(notes, (self.project / 'CHANGELOG.md').read_bytes())
+        self.assertNotIn('v1.1.0', self.git_run('tag').stdout)
+        self.assertNotIn('push', self.calls.read_text())
+
+    def test_failed_validation_does_not_release(self):
+        test = self.project / 'bin/test'
+        test.write_text('#!/bin/bash\nexit 1\n')
+        self.git_run('add', 'bin/test')
+        self.git_run('commit', '-qm', 'test: fail checks')
+        self.env['RELEASE_TEST_HEAD'] = self.git_run('rev-parse', 'HEAD').stdout.strip()
+        notes = (self.project / 'CHANGELOG.md').read_bytes()
+        result = self.release('--yes')
+        self.assertEqual(1, result.returncode)
+        self.assertEqual(notes, (self.project / 'CHANGELOG.md').read_bytes())
+        self.assertEqual(self.env['RELEASE_TEST_HEAD'], self.git_run('rev-parse', 'HEAD').stdout.strip())
+        self.assertNotIn('v1.1.0', self.git_run('tag').stdout)
+        self.assertNotIn('push', self.calls.read_text())
+
     def test_preconditions_refuse_before_mutation(self):
         for change in ('branch', 'dirty', 'sync', 'auth', 'empty'):
             with self.subTest(change=change):
