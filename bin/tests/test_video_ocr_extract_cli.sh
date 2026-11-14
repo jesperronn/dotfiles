@@ -124,6 +124,7 @@ test_output_contains "not found" "run with missing video shows error" "$VIDEO_OC
 echo ""
 echo "Testing: run with unknown flag"
 tmpfile=$(mktemp)
+# shellcheck disable=SC2064 # path fixed at definition time on purpose
 trap "rm -f $tmpfile" EXIT
 touch "$tmpfile"
 test_exit_code 1 "run with unknown flag returns exit code 1" "$VIDEO_OCR_EXTRACT" run "$tmpfile" --unknown-flag value
@@ -135,6 +136,7 @@ rm "$tmpfile"
 echo ""
 echo "Testing: run flag parsing"
 tmpfile=$(mktemp)
+# shellcheck disable=SC2064 # path fixed at definition time on purpose
 trap "rm -f $tmpfile" EXIT
 touch "$tmpfile"
 
@@ -162,6 +164,7 @@ rm "$tmpfile"
 echo ""
 echo "Testing: run with threshold flags"
 tmpfile=$(mktemp)
+# shellcheck disable=SC2064 # path fixed at definition time on purpose
 trap "rm -f $tmpfile" EXIT
 touch "$tmpfile"
 if output=$($VIDEO_OCR_EXTRACT run "$tmpfile" --diff-threshold 20.5 --similarity-threshold 0.95 2>&1); then
@@ -197,6 +200,7 @@ echo "Testing: --lang multi-value forms"
 
 if have_ffmpeg=$(command -v ffmpeg 2>/dev/null); [[ -n "$have_ffmpeg" ]]; then
     lang_tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064 # path fixed at definition time on purpose
     trap "rm -rf '$lang_tmpdir'" EXIT
     ffmpeg -y -loglevel error -f lavfi -i "color=c=white:s=64x64:d=1:r=1" \
         "${lang_tmpdir}/tiny.mp4" >/dev/null 2>&1
@@ -231,6 +235,7 @@ echo ""
 echo "Testing: --lang with missing traineddata"
 if have_ffmpeg=$(command -v ffmpeg 2>/dev/null); [[ -n "$have_ffmpeg" ]]; then
     badlang_tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064 # path fixed at definition time on purpose
     trap "rm -rf '$badlang_tmpdir'" EXIT
     ffmpeg -y -loglevel error -f lavfi -i "color=c=white:s=64x64:d=1:r=1" \
         "${badlang_tmpdir}/tiny.mp4" >/dev/null 2>&1
@@ -268,6 +273,7 @@ elif ! command -v uv >/dev/null 2>&1; then
     echo "  (skipped: uv not found)"
 else
     dan_tmpdir=$(mktemp -d)
+    # shellcheck disable=SC2064 # path fixed at definition time on purpose
     trap "rm -rf '$dan_tmpdir'" EXIT
 
     uv run --with pillow python3 - "$dan_tmpdir" <<'PYEOF'

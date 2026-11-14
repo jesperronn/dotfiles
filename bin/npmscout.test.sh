@@ -4,6 +4,7 @@
 set -euo pipefail
 
 DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC2034 # exposed for the harness and helpers; not referenced directly here
 SCRIPT_UNDER_TEST="$DOTFILES_ROOT/bin/npmscout"
 
 source "$DOTFILES_ROOT/bin/lib/bash_test.sh"

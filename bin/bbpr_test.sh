@@ -213,6 +213,7 @@ test_show_comment_renderer_colors_and_sorts_comments() {
 
   output="$(
     source "$BBPR_BIN"
+    # shellcheck disable=SC2034 # read by sourced bbpr
     BBPR_COLOR_ENABLED=1
     bbpr_render_show_comments '{"values":[{"id":2,"state":"OPEN","author":{"user":{"displayName":"Open Author"}},"text":{"content":"Open message."},"anchor":{"path":"z-last.rb","line":9}},{"id":1,"state":"RESOLVED","author":{"user":{"displayName":"Resolved Author"}},"text":{"content":"Resolved message."},"anchor":{"path":"a-first.rb","line":2,"orphaned":true}}]}' 1
   )"

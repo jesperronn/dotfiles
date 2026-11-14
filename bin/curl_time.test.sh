@@ -269,4 +269,4 @@ test_connection_refused() {
   assert_contains "$output" "Total:" "still shows Total"
 }
 
-run_tests
+run_tests "$@"

@@ -97,6 +97,7 @@ NO_SAML="$(cat "$FIXTURES/loc_no_saml.txt")"
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test_raw_deflate_location() {
+  local out="" status=""
   capture_command out status "$BIN" < <(printf '%s' "$RAW")
   assert_status 0 "$status" "raw-deflate Location exits 0"
   assert_contains "$out" "<saml2p:AuthnRequest" "raw-deflate decodes to XML"
@@ -119,6 +120,7 @@ test_argv_path() {
   work="$(mktemp -d)"
   {
     printf '%s\n' '#!/usr/bin/env bash'
+    # shellcheck disable=SC2016 # literal text for the generated fake curl
     printf '%s\n' 'cat "$RESP"'
   } >"$work/curl"
   chmod +x "$work/curl"
@@ -144,4 +146,4 @@ test_no_samlrequest() {
   assert_contains "$out" "could not inflate" "reports nothing to decode"
 }
 
-run_tests
+run_tests "$@"

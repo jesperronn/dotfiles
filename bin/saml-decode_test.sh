@@ -266,4 +266,4 @@ test_encrypted_with_key() {
   assert_contains "$out" "urn:inner-assertion" "decrypted inner is shown"
 }
 
-run_tests
+run_tests "$@"

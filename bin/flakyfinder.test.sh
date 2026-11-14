@@ -3,7 +3,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091 # sourced paths resolved at runtime
 source "$SCRIPT_DIR/lib/bash_test.sh"
+# shellcheck disable=SC1091 # sourced paths resolved at runtime
 source "$SCRIPT_DIR/flakyfinder"
 
 # Global cleanup: remove any temp directories left behind by interrupted tests

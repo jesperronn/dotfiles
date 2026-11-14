@@ -48,24 +48,30 @@ FAKE_PRS='{"isLastPage":true,"values":[
 ]}'
 
 # Stub the network layer: return the fake paginated response verbatim.
+# shellcheck disable=SC2329 # overrides the sourced bbpr_fetch, called indirectly
 bbpr_fetch() { printf '%s' "$FAKE_PRS"; }
 
 # Run bbpr open in dense mode with all long/short/json variants disabled.
 run_open() {
+  # shellcheck disable=SC2034 # read by sourced bbpr_cmd_open
   BBPR_LONG=0
+  # shellcheck disable=SC2034 # read by sourced bbpr_cmd_open
   BBPR_JSON=0
+  # shellcheck disable=SC2034 # read by sourced bbpr_cmd_open
   BBPR_SHORT=0
   bbpr_cmd_open
 }
 
 echo "Testing: dense open colors PR number by state when color enabled"
+# shellcheck disable=SC2034 # read by sourced bbpr
 BBPR_COLOR_ENABLED=1
 out="$(run_open)"
-[[ "$out" == *"$ESC_GREEN"* ]] && pass "OPEN PR number is green ($ESC_GREEN)" || fail "OPEN PR number should be green"
-[[ "$out" == *"$ESC_RED"* ]] && pass "CLOSED PR number is red ($ESC_RED)" || fail "CLOSED PR number should be red"
-[[ "$out" == *"$ESC_DIM"* ]] && pass "MERGED PR number is dim ($ESC_DIM)" || fail "MERGED PR number should be dim"
+if [[ "$out" == *"$ESC_GREEN"* ]]; then pass "OPEN PR number is green ($ESC_GREEN)"; else fail "OPEN PR number should be green"; fi
+if [[ "$out" == *"$ESC_RED"* ]]; then pass "CLOSED PR number is red ($ESC_RED)"; else fail "CLOSED PR number should be red"; fi
+if [[ "$out" == *"$ESC_DIM"* ]]; then pass "MERGED PR number is dim ($ESC_DIM)"; else fail "MERGED PR number should be dim"; fi
 
 echo "Testing: dense open rows stay plain when color disabled"
+# shellcheck disable=SC2034 # read by sourced bbpr
 BBPR_COLOR_ENABLED=0
 out="$(run_open)"
 if [[ "$out" != *"$ESC_GREEN"* && "$out" != *"$ESC_RED"* && "$out" != *"$ESC_DIM"* ]]; then
