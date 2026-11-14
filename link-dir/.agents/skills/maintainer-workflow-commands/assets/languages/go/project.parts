@@ -1,0 +1,2 @@
+# @section detect
+    go) has_file go.mod ;;

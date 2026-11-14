@@ -1,0 +1,20 @@
+# @section functions
+lint_ruby() {
+  local cmd=(bundle exec rubocop) flags=()
+  [[ -x "$PROJECT_ROOT/bin/rubocop" ]] && cmd=(bin/rubocop)
+  [[ "$AUTOFIX" == 1 ]] && flags=(-a)
+  run_step "ruby ${cmd[*]}" "${cmd[@]}" ${flags[@]+"${flags[@]}"} ${F_ruby[@]+"${F_ruby[@]}"}
+}
+# @section help
+  ruby   rubocop                                              --autofix: rubocop -a
+# @section classify
+    *.rb | *.rake | *.gemspec | Gemfile | Rakefile | Capfile | config.ru | */Gemfile | */Rakefile)
+      echo ruby
+      return
+      ;;
+# @section add
+    ruby) F_ruby+=("$2") ;;
+# @section groups
+        ruby) [[ ${#F_ruby[@]} -gt 0 ]] && groups+=(ruby) ;;
+# @section shebang
+    '#!'*ruby*) echo ruby ;;

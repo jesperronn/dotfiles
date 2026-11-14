@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Internal skill tool: assemble standalone workflow scripts from selected parts."""
+import argparse
+from collections import defaultdict
+from pathlib import Path
+import re
+
+ASSETS = Path(__file__).resolve().parent.parent / 'assets'
+LANGUAGES = ('bash', 'ruby', 'js', 'go', 'java')
+COMMANDS = ('setup', 'dev', 'test', 'lint', 'deps', 'workflows', 'troubleshoot', 'changelog', 'release')
+
+
+def selection(value, allowed, parser):
+    items = value.split(',')
+    items = ['bash' if x == 'sh' else x for x in items] if allowed == LANGUAGES else items
+    if not items or any(x not in allowed for x in items):
+        parser.error('expected comma-separated values from: ' + ','.join(allowed))
+    return [x for x in allowed if x in items]
+
+
+def sections(command, languages):
+    result = defaultdict(list)
+    for language in languages:
+        path = ASSETS / 'languages' / language / (command + '.parts')
+        if not path.exists():
+            continue
+        section = None
+        for line in path.read_text().splitlines(keepends=True):
+            if line.startswith('# @section '):
+                section = line.strip().split()[-1]
+                if section == 'functions' and result[section]:
+                    result[section].append('\n')
+            elif section:
+                result[section].append(line)
+    return {key: ''.join(value).rstrip('\n') for key, value in result.items()}
+
+
+def render(command, languages):
+    template = (ASSETS / 'common' / (command + '.in')).read_text()
+    values = sections(command, languages)
+    prefix = 'P' if command == 'test' else 'F'
+    flag_languages = [x for x in languages if command != 'deps' or x != 'bash']
+    values.update(languages=', '.join(languages) if command != 'project' else ' '.join(languages),
+                  flags=' '.join('[--' + x + ']' for x in flag_languages),
+                  verbose_init='VERBOSE="${VERBOSE:-0}"' if set(languages) & {'bash', 'go'} else '',
+                  verbose_usage='[-v]' if set(languages) & {'bash', 'go'} else '',
+                  verbose_option='      -v | --verbose) VERBOSE=1 ;;' if set(languages) & {'bash', 'go'} else '',
+                  arrays=' '.join(prefix + '_' + x + '=()' for x in languages),
+                  dependency_filter='    [[ "$g" != bash ]] || continue' if 'bash' in languages else '')
+    if not values.get('directories'):
+        values['directories'] = '        :'
+    # Empty optional slots disappear as whole lines; preserve shell/heredoc spacing.
+    lines = []
+    for line in template.splitlines():
+        slot = re.fullmatch(r'@@([a-z_]+)@@', line.strip())
+        if slot and not values.get(slot[1]):
+            continue
+        line = re.sub(r'@@([a-z_]+)@@', lambda m: values.get(m[1], ''), line)
+        if line.startswith('Usage:'):
+            line = re.sub(r' {2,}', ' ', line)
+        lines.append(line)
+    template = re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)) + '\n'
+    return ('#!/usr/bin/env bash\n' if command != 'project' else '') + template
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--files', required=True, help='comma-separated workflow names')
+    parser.add_argument('--lang', required=True, help='comma-separated languages; sh aliases bash')
+    parser.add_argument('--output', required=True, type=Path, help='destination project or scratch directory')
+    args = parser.parse_args()
+    args.output = args.output.resolve()
+    commands = selection(args.files, COMMANDS, parser)
+    languages = selection(args.lang, LANGUAGES, parser)
+    generated = {Path('bin') / name: render(name, languages) for name in commands}
+    if set(commands) & {'setup', 'dev', 'test', 'lint', 'deps', 'changelog'}:
+        generated[Path('bin/lib/project.sh')] = render('project', languages)
+    # Validate every destination before writing any file. Never replace project scripts.
+    for relative in generated:
+        target = args.output / relative
+        if target.exists() or target.is_symlink():
+            parser.error('refusing to overwrite ' + str(target))
+        for parent in target.parents:
+            if parent.is_symlink() or (parent.exists() and not parent.is_dir()):
+                parser.error('destination parent must be a real directory: ' + str(parent))
+    for relative, source in generated.items():
+        target = args.output / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open('x') as stream:
+            stream.write(source)
+        target.chmod(0o644 if relative.name == 'project.sh' else 0o755)
+        print(target)
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,155 @@
+# release — move release notes, commit, tag, and confirm before publishing.
+set -euo pipefail
+cd "${BASH_SOURCE[0]%/*}/.."
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/release [--dry-run] [--yes] [VERSION]
+
+VERSION: semver without v, e.g. 1.0.0 or 1.0.0-rc.3 (a pre-release).
+Omitted: use bin/changelog next. Pass VERSION when nothing is releasable.
+A version different from the suggestion prints a note and continues.
+  --dry-run  check prerequisites and print steps; change nothing
+  --yes      skip the push confirmation
+  -h, --help show this help
+
+Needs clean main equal to origin/main, filled CHANGELOG.md [Unreleased],
+executable bin/lint, bin/test, bin/changelog, and authenticated gh.
+Release notes stay hand-written; bin/changelog only suggests the version.
+Env: RELEASE_DATE, RELEASE_WORKFLOW (Release), RELEASE_RUN_WAIT_SECONDS (60),
+     RELEASE_RUN_POLL_SECONDS (3; use wait=0 and poll=0 in tests).
+Exit: 0 success, 1 failed or declined, 2 usage, 9 missing tool.
+USAGE
+}
+
+die() { printf 'release: %s\n' "$*" >&2; exit 1; }
+usage_error() { printf 'release: %s\n' "$*" >&2; exit 2; }
+step() {
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
+  [[ "$dry" == 1 ]] || "$@"
+}
+
+valid_version() {
+  local value="$1" part pre
+  local semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+  [[ "$value" =~ $semver ]] || return 1
+  if [[ "$value" == *-* ]]; then
+    pre="${value#*-}"
+    local IFS=.
+    for part in $pre; do
+      [[ ! "$part" =~ ^0[0-9]+$ ]] || return 1
+    done
+  fi
+}
+
+unreleased_body() {
+  awk '/^## \[/ { if (on) exit; on = ($0 ~ /^## \[Unreleased\]/); next } on { print }' CHANGELOG.md
+}
+
+move_notes() {
+  local tmp
+  tmp="$(mktemp)"
+  if ! awk -v ver="$version" -v date="$today" '
+    /^## \[Unreleased\]/ && !done { print; print ""; print "## [" ver "] - " date; done = 1; next }
+    { print }
+  ' CHANGELOG.md >"$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  cat "$tmp" >CHANGELOG.md
+  rm -f "$tmp"
+}
+
+dry="${DRY_RUN:-0}" yes=0 version=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help) usage; exit 0 ;;
+    --dry-run) dry=1 ;;
+    --yes) yes=1 ;;
+    -*) usage_error "unknown option: $1" ;;
+    *) [[ -z "$version" ]] || usage_error 'only one VERSION allowed'; version="$1" ;;
+  esac
+  shift
+done
+[[ -z "$version" ]] || valid_version "$version" || usage_error "invalid VERSION: $version (omit the leading v)"
+for tool in git gh; do
+  command -v "$tool" >/dev/null 2>&1 || { printf 'release: missing %s\n' "$tool" >&2; exit 9; }
+done
+for command in lint test changelog; do
+  [[ -x "bin/$command" ]] || die "needs executable bin/$command"
+done
+suggestion_rc=0
+suggestion="$(bin/changelog next 2>&1)" || suggestion_rc=$?
+suggested=""
+if [[ "$suggestion_rc" == 0 ]] && valid_version "${suggestion#v}"; then suggested="${suggestion#v}"; fi
+if [[ -z "$version" ]]; then
+  [[ "$suggestion_rc" != 3 ]] || die 'nothing releasable; pass VERSION to release anyway'
+  [[ -n "$suggested" ]] || die "cannot derive version: $suggestion"
+  version="$suggested"
+elif [[ -n "$suggested" && "$suggested" != "$version" ]]; then
+  printf 'note: conventional commits suggest v%s\n' "$suggested"
+fi
+tag="v$version"
+today="${RELEASE_DATE:-$(date +%F)}"
+[[ "$today" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage_error 'RELEASE_DATE must be YYYY-MM-DD'
+workflow="${RELEASE_WORKFLOW:-Release}"
+wait_seconds="${RELEASE_RUN_WAIT_SECONDS:-60}"
+poll_seconds="${RELEASE_RUN_POLL_SECONDS:-3}"
+[[ "$wait_seconds" =~ ^(0|[1-9][0-9]*)$ && "$poll_seconds" =~ ^(0|[1-9][0-9]*)$ ]] || usage_error 'wait and poll must be whole seconds'
+[[ "$wait_seconds" == 0 || "$poll_seconds" != 0 ]] || usage_error 'positive wait needs positive poll'
+printf 'Release %s (%s)\n' "$tag" "$today"
+[[ "$version" != *-* ]] || printf '%s\n' 'This is a pre-release.'
+
+[[ "$(git branch --show-current)" == main ]] || die 'must be on main'
+[[ -z "$(git status --porcelain)" ]] || die 'working tree is not clean'
+head="$(git rev-parse HEAD)"
+# Query origin without fetching: even a dry run must leave local refs unchanged.
+remote="$(git ls-remote --exit-code --heads origin refs/heads/main)" || die 'cannot query origin/main'
+[[ "${remote%%[[:space:]]*}" == "$head" ]] || die 'main must equal origin/main; fetch and synchronize first'
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then die "tag $tag already exists locally"; fi
+remote_rc=0
+git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1 || remote_rc=$?
+case "$remote_rc" in 0) die "tag $tag exists on origin" ;; 2) ;; *) die 'cannot query origin tags' ;; esac
+gh auth status >/dev/null 2>&1 || die 'gh is not authenticated'
+[[ -f CHANGELOG.md ]] || die 'CHANGELOG.md not found'
+[[ -n "$(unreleased_body | tr -d '[:space:]')" ]] || die 'CHANGELOG.md [Unreleased] is missing or empty'
+if grep -qF "## [$version]" CHANGELOG.md; then die "CHANGELOG.md already contains $version"; fi
+
+step bin/lint
+step bin/test
+printf '+ move [Unreleased] notes under ## [%s] - %s\n' "$version" "$today"
+[[ "$dry" == 1 ]] || move_notes
+step git add -- CHANGELOG.md
+step git commit -m "docs: changelog for $version"
+step git tag -a "$tag" -m "$tag"
+if [[ "$dry" == 1 ]]; then
+  printf '%s\n' '+ ask before pushing (unless --yes)'
+  step git push --atomic origin main "refs/tags/$tag"
+  printf '+ watch workflow %s for %s; print release URL\n' "$workflow" "$tag"
+  exit 0
+fi
+if [[ "$yes" == 0 ]]; then
+  printf 'Push main and %s to origin? [y/N] ' "$tag"
+  answer=""
+  read -r answer || true
+  case "$answer" in
+    y | Y | yes | YES) ;;
+    *) printf 'Not pushed. Changelog commit and %s remain local.\n' "$tag"; exit 1 ;;
+  esac
+fi
+step git push --atomic origin main "refs/tags/$tag"
+remaining="$wait_seconds"
+run_id=""
+while :; do
+  run_id="$(gh run list --workflow "$workflow" --branch "$tag" --limit 1 --json databaseId --jq '.[0].databaseId // empty')" || run_id=""
+  [[ -z "$run_id" ]] || break
+  [[ "$remaining" -gt 0 ]] || die "pushed $tag, but workflow $workflow did not appear; check gh run list"
+  pause="$poll_seconds"
+  [[ "$pause" -le "$remaining" ]] || pause="$remaining"
+  sleep "$pause"
+  remaining=$((remaining - pause))
+done
+gh run watch "$run_id" --exit-status || die "workflow failed after pushing $tag; see gh run view $run_id --log-failed"
+gh release view "$tag" --json url --jq .url || die "workflow passed, but no release URL for $tag"

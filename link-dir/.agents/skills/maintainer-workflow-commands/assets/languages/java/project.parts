@@ -1,0 +1,22 @@
+# @section detect
+    java) has_file pom.xml || has_file build.gradle || has_file build.gradle.kts ;;
+# @section functions
+is_maven() { has_file pom.xml; }
+
+is_gradle() { has_file build.gradle || has_file build.gradle.kts; }
+
+java_tool() {
+  if is_maven; then
+    [[ -x "$PROJECT_ROOT/mvnw" ]] && echo ./mvnw || echo mvn
+  else
+    [[ -x "$PROJECT_ROOT/gradlew" ]] && echo ./gradlew || echo gradle
+  fi
+}
+
+build_file_mentions() {
+  local f
+  for f in pom.xml build.gradle build.gradle.kts; do
+    [[ -f "$PROJECT_ROOT/$f" ]] && grep -q -- "$1" "$PROJECT_ROOT/$f" && return 0
+  done
+  return 1
+}

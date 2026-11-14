@@ -1,0 +1,13 @@
+# @section functions
+ruby_install() { bundle check >/dev/null 2>&1 || bundle install; }
+
+setup_ruby() {
+  run_step "ruby bundle install" ruby_install
+  if is_rails && has_file config/database.yml; then
+    run_step "rails db:prepare" bin/rails db:prepare
+  fi
+}
+# @section help
+  ruby   bundle install; Rails with config/database.yml: bin/rails db:prepare
+# @section tools
+    ruby) echo "ruby bundle" ;;

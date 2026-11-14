@@ -1,0 +1,28 @@
+# @section functions
+lint_java() {
+  local tool
+  tool="$(java_tool)"
+  if build_file_mentions spotless; then
+    if is_maven; then
+      run_step "java spotless" "$tool" -B "spotless:$([[ "$AUTOFIX" == 1 ]] && echo apply || echo check)"
+    else
+      run_step "java spotless" "$tool" "$([[ "$AUTOFIX" == 1 ]] && echo spotlessApply || echo spotlessCheck)"
+    fi
+  elif build_file_mentions checkstyle; then
+    if is_maven; then run_step "java checkstyle" "$tool" -B checkstyle:check; else run_step "java checkstyle" "$tool" checkstyleMain; fi
+  else
+    skip_step "java" "no spotless or checkstyle configured (add spotless)"
+  fi
+}
+# @section help
+  java   spotless | checkstyle when configured                --autofix: spotless apply
+Java lint runs project-wide, including with PATH.
+# @section classify
+    *.java)
+      echo java
+      return
+      ;;
+# @section add
+    java) F_java+=("$2") ;;
+# @section groups
+        java) [[ ${#F_java[@]} -gt 0 ]] && groups+=(java) ;;

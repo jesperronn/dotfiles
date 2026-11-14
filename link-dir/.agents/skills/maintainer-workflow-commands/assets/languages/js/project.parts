@@ -1,0 +1,12 @@
+# @section detect
+    js) has_file package.json ;;
+# @section functions
+js_pm() {
+  if has_file pnpm-lock.yaml; then
+    echo pnpm
+  elif has_file yarn.lock; then
+    echo yarn
+  else
+    echo npm
+  fi
+}

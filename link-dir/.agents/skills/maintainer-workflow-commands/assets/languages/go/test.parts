@@ -1,0 +1,23 @@
+# @section functions
+test_go() {
+  local flags=(-count=1) targets=() p d seen=" "
+  [[ "${GO_TEST_RACE:-1}" == 1 ]] && flags+=(-race)
+  [[ "$VERBOSE" == 1 ]] && flags+=(-v)
+  for p in ${P_go[@]+"${P_go[@]}"}; do
+    if [[ -d "$PROJECT_ROOT/$p" ]]; then d="$p"; else d="$(dirname "$p")"; fi
+    [[ "$d" == . ]] || d="./${d#./}"
+    case "$seen" in *" $d "*) continue ;; esac
+    seen+="$d "
+    targets+=("$d")
+  done
+  [[ ${#targets[@]} -eq 0 ]] && targets=("./...")
+  run_step "go test ${targets[*]}" go test "${targets[@]}" "${flags[@]}"
+}
+# @section help
+  *.go or a dir with .go    go test of that package
+# @section classify
+    *.go) echo go ;;
+# @section directories
+        if [[ -n "$(find "$PROJECT_ROOT/$p" -name '*.go' -print -quit)" ]]; then echo go; return; fi
+# @section add
+    go) P_go+=("$2") ;;

@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # dev — start the local development server (or watcher) for the project.
 set -euo pipefail
 # shellcheck source=lib/project.sh disable=SC1091
@@ -11,17 +10,14 @@ Usage: bin/dev [--dry-run] [ARGS...]
 Starts the first match, passing ARGS on:
   $DEV_CMD                            any command (run through bash -c)
   Procfile.dev                        overmind start -f | foreman start -f
-  Rails                               bin/rails server
-  package.json "dev" script           <pm> run dev
-  Spring Boot (maven | gradle)        mvn spring-boot:run | gradle bootRun
-  Go main.go or one cmd/<name>/       go run
+@@help@@
 Nothing matches: exit 1; set DEV_CMD or edit this script.
 Exit: the server's own status; 2 usage. Env: DRY_RUN=1 like --dry-run.
 USAGE
 }
 
 dev_command() {
-  local cmds=() pm tool
+  local cmds=()
   if [[ -n "${DEV_CMD:-}" ]]; then
     cmds=(bash -c "$DEV_CMD" dev)
   elif has_file Procfile.dev; then
@@ -30,18 +26,7 @@ dev_command() {
     else
       cmds=(foreman start -f Procfile.dev)
     fi
-  elif is_rails; then
-    cmds=(bin/rails server)
-  elif has_file package.json && grep -q '"dev"' "$PROJECT_ROOT/package.json"; then
-    pm="$(js_pm)"
-    cmds=("$pm" run dev)
-  elif (is_maven || is_gradle) && build_file_mentions spring-boot; then
-    tool="$(java_tool)"
-    if is_maven; then cmds=("$tool" spring-boot:run); else cmds=("$tool" bootRun); fi
-  elif has_file go.mod && has_file main.go; then
-    cmds=(go run .)
-  elif has_file go.mod && [[ $(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l) -eq 1 ]]; then
-    cmds=(go run "./cmd/$(basename "$(find "$PROJECT_ROOT/cmd" -mindepth 1 -maxdepth 1 -type d)")")
+@@branches@@
   else
     return 1
   fi

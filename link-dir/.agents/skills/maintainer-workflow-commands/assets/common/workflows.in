@@ -1,0 +1,17 @@
+# workflows — list project commands without executing them.
+set -euo pipefail
+case "${1-}" in
+  -h | --help) printf '%s\n' 'Usage: bin/workflows [COMMAND]'; exit 0 ;;
+esac
+[[ $# -le 1 ]] || exit 2
+dir="$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)"
+found=0
+for file in "$dir"/*; do
+  [[ -f "$file" && -x "$file" && "$file" != *.test.sh ]] || continue
+  name="${file##*/}"
+  [[ -z "${1-}" || "$1" == "$name" ]] || continue
+  description="$(grep -m1 "^# $name — " "$file" || true)"
+  printf '%-16s %s\n' "bin/$name" "${description#* — }"
+  found=1
+done
+[[ "$found" == 1 ]] || { printf '%s\n' 'No matching command.' >&2; exit 2; }

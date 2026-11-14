@@ -1,0 +1,6 @@
+# @section functions
+setup_bash() { skip_step "bash" "nothing to install (run bin/setup --check for shellcheck, shfmt)"; }
+# @section help
+  bash   needs shellcheck, shfmt
+# @section tools
+    bash) echo "shellcheck shfmt" ;;

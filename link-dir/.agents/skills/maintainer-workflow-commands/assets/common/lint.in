@@ -1,0 +1,104 @@
+# lint — lint (and with --autofix, format) the project per ecosystem (@@languages@@).
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/lint [--autofix] @@flags@@ [--dry-run] [PATH...]
+
+Check the project, or selected paths and languages. --autofix applies fixes.
+Directories expand to tracked files, or all files outside Git.
+@@help@@
+--dry-run or DRY_RUN=1 prints commands without running them.
+USAGE
+}
+
+AUTOFIX=0
+@@arrays@@
+
+lint_group_of() {
+  local f="$1" first
+  case "$f" in
+@@classify@@
+  esac
+  [[ -f "$PROJECT_ROOT/$f" && "$f" != *.* ]] || return 0
+  first="$(head -n 1 "$PROJECT_ROOT/$f" 2>/dev/null || true)"
+  case "$first" in
+@@shebang@@
+  esac
+}
+
+add_file() {
+  case "$1" in
+@@add@@
+  esac
+}
+
+# Classify a root-relative file or directory and queue its files.
+queue_path() {
+  local rel="$1" f g
+  if [[ -d "$PROJECT_ROOT/$rel" ]]; then
+    while IFS= read -r f; do
+      g="$(lint_group_of "$f")"
+      [[ -n "$g" ]] && add_file "$g" "$f"
+    done < <(cd "$PROJECT_ROOT" && { git ls-files -- "$rel" 2>/dev/null || find "$rel" -type f; })
+  else
+    g="$(lint_group_of "$rel")"
+    [[ -n "$g" ]] && add_file "$g" "$rel"
+  fi
+  return 0
+}
+
+@@functions@@
+
+main() {
+  local arg g p rel
+  local paths=() groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --dry-run) export DRY_RUN=1 ;;
+      -a | --autofix) AUTOFIX=1 ;;
+      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
+      -*) die_usage "unknown option: $arg" ;;
+      *) paths+=("$arg") ;;
+    esac
+  done
+
+  if [[ ${#paths[@]} -gt 0 ]]; then
+    for p in "${paths[@]}"; do
+      rel="$(root_rel "$p")" || die_usage "no such path: $p"
+      queue_path "$rel"
+    done
+    for g in $ALL_GROUPS; do
+      case "$g" in
+@@groups@@
+      esac
+    done
+    if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
+      local keep=()
+      for g in ${groups[@]+"${groups[@]}"}; do
+        case " ${SELECTED_GROUPS[*]} " in *" $g "*) keep+=("$g") ;; esac
+      done
+      groups=(${keep[@]+"${keep[@]}"})
+    fi
+  else
+    while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
+@@queue@@
+  fi
+
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "nothing to lint for the given paths and flags" >&2
+    exit 0
+  fi
+  for g in "${groups[@]}"; do "lint_$g"; done
+  print_summary
+}
+
+main "$@"

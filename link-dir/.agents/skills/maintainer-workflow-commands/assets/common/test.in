@@ -1,0 +1,88 @@
+# test — run the project's tests per ecosystem (@@languages@@).
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/test @@flags@@ [--dry-run] @@verbose_usage@@ [PATH...]
+
+Run detected suites; language flags and PATH narrow the run.
+Unclassified paths need one language flag. Continue after failed suites.
+@@help@@
+--dry-run or DRY_RUN=1 prints commands without running them.
+USAGE
+}
+
+@@verbose_init@@
+@@arrays@@
+
+test_group_of() {
+  local p="$1"
+  case "$p" in
+@@classify@@
+    *)
+      if [[ -d "$PROJECT_ROOT/$p" ]]; then
+@@directories@@
+      fi
+      ;;
+  esac
+}
+
+add_path() {
+  case "$1" in
+@@add@@
+  esac
+}
+
+@@functions@@
+
+main() {
+  local arg g p rel
+  local paths=() groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --dry-run) export DRY_RUN=1 ;;
+@@verbose_option@@
+      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
+      -*) die_usage "unknown option: $arg" ;;
+      *) paths+=("$arg") ;;
+    esac
+  done
+
+  for p in ${paths[@]+"${paths[@]}"}; do
+    rel="$(root_rel "$p")" || die_usage "no such path: $p"
+    g="$(test_group_of "$rel")"
+    if [[ -z "$g" && ${#SELECTED_GROUPS[@]} -eq 1 ]]; then g="${SELECTED_GROUPS[0]}"; fi
+    [[ -n "$g" ]] || die_usage "cannot tell which tests '$p' belongs to; pass one language flag"
+    if [[ ${#SELECTED_GROUPS[@]} -gt 0 ]]; then
+      case " ${SELECTED_GROUPS[*]} " in *" $g "*) ;; *) continue ;; esac
+    fi
+    local continue_path=0
+@@expand@@
+    [[ "$continue_path" == 1 ]] || add_path "$g" "$rel"
+    case " ${groups[*]-} " in *" $g "*) ;; *) groups+=("$g") ;; esac
+  done
+  if [[ ${#paths[@]} -eq 0 ]]; then
+    while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
+  fi
+
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    if [[ ${#paths[@]} -gt 0 ]]; then
+      echo "nothing to test for the given paths and flags"
+      exit 0
+    fi
+    echo "nothing to test: no selected ecosystem detected" >&2
+    exit "$EX_FAILED"
+  fi
+  for g in "${groups[@]}"; do "test_$g"; done
+  print_summary
+}
+
+main "$@"

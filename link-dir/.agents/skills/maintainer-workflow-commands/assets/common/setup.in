@@ -1,0 +1,73 @@
+# setup — install what the project needs to start, per ecosystem. Idempotent.
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/setup [--check] [--dry-run]
+
+Install dependencies, then run executable bin/setup.d/* steps in name order.
+--check checks tools without installing. --dry-run or DRY_RUN=1 previews steps.
+@@help@@
+USAGE
+}
+
+CHECK=0
+
+tools_for() {
+  case "$1" in
+@@tools@@
+  esac
+}
+
+check_tools() {
+  local t
+  for t in $(tools_for "$1"); do
+    if [[ "$t" == ./* ]] && [[ -x "$PROJECT_ROOT/$t" ]] || command -v "$t" >/dev/null 2>&1; then
+      record_step "$1: $t" ok
+    else
+      record_step "$1: $t" MISSING
+    fi
+  done
+}
+
+run_setup_d() {
+  local f
+  for f in "$PROJECT_ROOT"/bin/setup.d/*; do
+    [[ -x "$f" && -f "$f" ]] && run_step "setup.d/$(basename "$f")" "bin/setup.d/$(basename "$f")"
+  done
+  return 0
+}
+
+@@functions@@
+
+main() {
+  local arg g
+  local groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --check) CHECK=1 ;;
+      --dry-run) export DRY_RUN=1 ;;
+      *) die_usage "unknown option: $arg" ;;
+    esac
+  done
+  while IFS= read -r g; do groups+=("$g"); done < <(groups_to_run)
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "nothing to set up: no selected ecosystem detected" >&2
+    exit "$EX_FAILED"
+  fi
+  for g in "${groups[@]}"; do
+    if [[ "$CHECK" == 1 ]]; then check_tools "$g"; else "setup_$g"; fi
+  done
+  [[ "$CHECK" == 1 ]] || run_setup_d
+  print_summary
+}
+
+main "$@"

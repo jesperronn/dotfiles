@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-# changelog — read-only preview of "what would this release be", from conventional commits.
+# changelog — preview releases from conventional commits; update writes CHANGELOG.md.
 # shellcheck disable=SC2329 # cmd_<sub> is dispatched by name
 set -euo pipefail
 # shellcheck source=lib/project.sh disable=SC1091
@@ -28,7 +27,7 @@ Usage: bin/changelog next|render|update|due [--repo DIR] [--grace 2h] [--now EPO
 Bump: "!:" or a BREAKING CHANGE footer = major; feat = minor; fix, perf = patch;
 docs, test, chore, refactor, ci, build, style and revert alone = none.
 Entries: "- **scope:** description (hash)", under Changed (BREAKING), Added, Fixed, Changed.
-Read-only: never tags, fetches or writes.
+Only update writes files. Never tags or fetches.
 Exit: 0 ok, 1 error, 2 usage, 3 nothing releasable, 4 not yet due.
 USAGE
 }

@@ -1,0 +1,13 @@
+# troubleshoot — placeholder for project checks.
+set -euo pipefail
+usage() {
+  printf '%s\n' 'Usage: bin/troubleshoot <target> [ARGS...]' \
+    'Targets: local, compose, or a remote environment/host.' \
+    'Empty for now: add project checks here. Remote targets should print commands only.'
+}
+case "${1-}" in
+  -h | --help) usage ;;
+  '') usage >&2; exit 2 ;;
+  -*) usage >&2; exit 2 ;;
+  *) printf '%s\n' 'empty for now' ;;
+esac

@@ -1,0 +1,15 @@
+# @section functions
+test_js() {
+  local pm args=()
+  pm="$(js_pm)"
+  if [[ ${#P_js[@]} -gt 0 ]]; then
+    if [[ "$pm" == npm ]]; then args=(-- "${P_js[@]}"); else args=("${P_js[@]}"); fi
+  fi
+  run_step "js $pm run test" "$pm" run test ${args[@]+"${args[@]}"}
+}
+# @section help
+  *.js *.ts ...             js (package.json "test" script, PATH passed after --)
+# @section classify
+    *.js | *.mjs | *.cjs | *.ts | *.tsx) echo js ;;
+# @section add
+    js) P_js+=("$2") ;;

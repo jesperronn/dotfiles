@@ -1,127 +1,65 @@
 ---
 name: maintainer-workflow-commands
-group: shell-bash
-summary: "Copy-in bin/ command templates (setup, dev, test, lint, deps, workflows, troubleshoot) for bash, Ruby/Rails, JS, Go and Java projects, with safety rules, exit codes and hermetic tests."
-description: Use when adding or auditing maintainer commands in any project (bin/setup, bin/dev, bin/test, bin/lint, bin/deps, bin/workflows, bin/troubleshoot, release/changelog), or when asked to make setup, test, lint, deps, release, deploy and troubleshoot discoverable and safe for humans and agents.
+summary: "Generate lean project workflows for selected languages."
+description: Use when adding or auditing project commands for setup, development, tests, lint, dependencies, troubleshooting, or releases, and when making those commands discoverable through bin/workflows.
 ---
 
 # Maintainer workflow commands
 
-One verb per task, same name in every project. Humans and agents run
-`bin/workflows`, then the verb. Templates are in [templates/bin](templates/bin);
-per-ecosystem commands in [ecosystems.md](ecosystems.md); how three real repos
-did it in [examples.md](examples.md).
+Keep project commands small. Generate only the workflows and languages needed.
+Preserve existing names, runners, CI, and project conventions.
 
-## Verbs
+## Bootstrap
 
-| Verb | Does | Template |
-| --- | --- | --- |
-| `workflows [name]` | print-only index: every `bin/` script (scraped from its `# name — text` line) plus per-workflow cheat sheets | yes |
-| `setup [--check]` | install what the project needs; idempotent | yes |
-| `dev` | start the dev server | yes |
-| `test [--group] [PATH]` | tests per ecosystem, narrowed by path | yes |
-| `lint [--autofix] [PATH]` | lint/format per ecosystem | yes |
-| `deps [--patch\|--minor\|--major]` | list or update dependencies | yes |
-| `troubleshoot <target>` | local: run checks; remote: print only | yes |
-| `changelog next\|render\|update\|due` | release preview from conventional commits; `update` writes `CHANGELOG.md` | yes |
-| release, deploy | project specific | see below |
+1. Inspect the project, including nested manifests, lockfiles, existing scripts,
+   and CI. Identify languages that need workflows; ignore dependencies, build
+   output, and the generated wrappers themselves. See [ecosystems](references/ecosystems.md).
+2. Select missing commands and languages. Run this internal tool from the skill
+   directory; it writes files but runs no project commands or installs:
 
-## Adopt in a project
+   ```bash
+   scripts/bootstrap --files=deps,lint,test,setup --lang=js,java,bash --output=/path/to/project
+   ```
 
-1. Survey `bin/`, `Makefile`, CI, docs. Reuse what exists; index it in
-   `bin/workflows`. Where a concept does not exist (staging, release), write
-   "none". Never invent stages.
-2. Copy `templates/bin/*` and `lib/project.sh`, `chmod +x`. Keep only the
-   ecosystems the project uses; detection is by `Gemfile`, `package.json`,
-   `go.mod`, `pom.xml`/`build.gradle*`, `*.sh`.
-3. Project-specific steps go in `bin/setup.d/NN-name` (executable), checks in
-   `bin/doctor`; edit the `PROJECT` lines in `workflows` and `troubleshoot`.
-4. Wire `bin/test` and `bin/lint` into CI. Add `bin/commands.test.sh` (needs a
-   `bin/lib/bash_test.sh` harness; `BASH_TEST_LIB` overrides the path).
-5. Give every `bin/` script a `# <name> — <one line>` comment near the top;
-   `bin/workflows commands` scrapes it, so the index cannot go stale.
-6. Shape AGENTS.md (see below) and point it at `bin/workflows`.
+   Files: `setup,dev,test,lint,deps,workflows,troubleshoot,changelog,release`.
+   Languages: `bash,ruby,js,go,java`; `sh` aliases `bash`.
+3. Bootstrap refuses overwrites. For an existing workflow, generate into a
+   scratch directory and adapt the result. Keep names such as `bin/runtests`;
+   update companion scripts to call the project's actual entrypoints.
+4. Generated scripts contain only selected language sections, including help,
+   flags, routing, and helpers. Bash is their interpreter regardless of which
+   test languages were selected. They have no runtime dependency on this skill.
+5. Adapt tool choices and paths. Remove unused steps; replace project-specific
+   assumptions. `bin/workflows` indexes executable commands from their
+   `# <name> — <description>` headers without executing them.
+6. Test the result, run lint then tests, and connect the actual commands to CI
+   and AGENTS.md. Do not copy this skill's test harness into the project blindly.
 
-A Makefile, `just` or Gradle task project keeps its runner: make the verbs
-thin wrappers or index them in `bin/workflows`.
+## Contracts
 
-## AGENTS.md shape
+- Language flags select suites: `--java` detects Maven/Gradle and prefers the
+  wrapper. Never replace it with `--maven` or `--gradle`. No flag runs detected
+  selected languages; paths narrow the run, and flags filter paths.
+- `test` Java directories select `*Test.java`, `*Tests.java`, and `*IT.java`
+  recursively; empty selections fail. Selectors use simple class names. Adapt
+  duplicate names and integration-test tasks to the project.
+- `lint` checks by default; `--autofix` applies supported fixes. Java lint and
+  fallback JS lint scripts run project-wide. Adapt fallback JS autofix explicitly.
+- `setup --check` checks tools. `deps` lists by default; `--patch`, `--minor`,
+  or `--major` requests updates. It never commits.
+- `setup`, `dev`, `test`, `lint`, `deps`, and `release` support `--dry-run`.
+  Batch commands continue after failed steps. Exit: 0 success, 1 failure,
+  2 usage, 9 missing tool. Preserve existing project exit conventions.
+- `troubleshoot <target> [ARGS...]` is intentionally empty: it prints
+  "empty for now". Add checks only when the project needs them; remote targets
+  should print commands for the user to run.
+- `release` uses hand-written Unreleased notes and `changelog next` for version
+  suggestions. Generate both companions when missing, plus lint/test entrypoints.
+  Read the [release contract](references/release.md) before adapting or running it.
 
-Same sections in every project, each short (apply `concise-docs`: one home
-per fact, only what cannot be found by running the project):
+## Verify the skill
 
-1. One line: what the project is.
-2. **Definition of done**: `bin/workflows` lists the commands; run `bin/lint`
-   then `bin/test`, and show the output before saying "done".
-3. **Conventions**: commits, staging, tests colocated as `bin/*.test.sh`
-   (or the project's one test dir), `gsed` on macOS.
-4. **Hard rules**: what must never be committed, pushed or run.
-5. **Docs**: links to the one home of each kind of fact.
-
-Release, deploy and agent-specific workflows go in `docs/`, linked from here.
-
-## Template behaviour
-
-- `--dry-run` (or `DRY_RUN=1`) prints `+ command` lines and runs nothing; use it
-  to preview and to test.
-- Groups: `--bash --ruby --js --go --java`. None selected = all detected.
-- PATH args (test, lint) route to the right group by name; a file never goes
-  to a linter of another language.
-- Every group runs even if one fails; summary lines `ok|FAIL|MISSING|skip`.
-- Exit: 0 ok, 1 failed, 9 tool missing, 2 usage (`EX_USAGE` in `lib/project.sh`;
-  use 64 if the project already does). `--help` exits 0 everywhere.
-- Plain output when not a TTY or `NO_COLOR` is set.
-
-## Safety rules
-
-- Remote targets (staging, production, any host): run NOTHING, print the
-  commands for the user. Test with `PATH=/nonexistent bash bin/troubleshoot prod`.
-- `deps` never commits and prints a commit message that lists the commands it ran
-  (counts, not per-package versions); `changelog` never tags; release never pushes without a
-  prompt. Agents never run deploys, `ssh`, `cap` or `ansible` against remote.
-- Never probe a script with `--help` unless you know it parses it: some `bin/setup`
-  scripts ignore args and run everything.
-
-## Release and deploy (no template)
-
-- `bin/changelog next|render|due` preview only; `update` is the one writer (inserts
-  `## [X.Y.Z] - DATE` into `CHANGELOG.md`, `--replace-unreleased`, refuses a
-  duplicate). `update` is not part of a release script: bbapprove's `release`
-  moves the hand-written `[Unreleased]` notes and only calls `next`. Keep
-  one changelog source per project (hand-written or generated). Exit 0 ok, 3 nothing releasable, 4 not yet
-  due. Bump: `!:`/`BREAKING CHANGE` major; `feat` minor; `fix`, `perf` patch;
-  the rest none. It reads tags, so tag with `vX.Y.Z`.
-- If the project already has release tooling (goreleaser, git-cliff,
-  release-please, semantic-release, JReleaser), wrap it instead of using
-  `bin/changelog`. Drop `update` when the changelog lives in tag messages.
-- A release script tags locally and pushes only after a prompt. Share tag
-  lookup with any `bump_version`: guard its main with
-  `[[ "${BASH_SOURCE[0]}" == "$0" ]]` and `source` it.
-- Deploy: keep a local rehearsal target separate from real stages; real ones are
-  run by the user. Describe them in `bin/workflows`.
-
-## Tests
-
-Colocated `bin/*.test.sh` with a shared harness (`test_pass`, `assert_*`).
-Hermetic: scratch git repos with explicit `user.name/email`, stubs first on
-`PATH`, waits as env vars set to `0`, `--dry-run` instead of real installs. Every
-assertion prints `[PASS]`.
-
-## Audit checklist
-
-For each project check: `bin/workflows` exists and `AGENTS.md` links it; CI
-runs `bin/lint` and `bin/test`; `lint --autofix` exists; `setup --check`
-exists when tools beyond the language toolchain are needed; changelog and
-release are scripted or explicitly "none"; no handoff or report files in the
-repo root; `docs/README.md` indexes more than a few docs. `dev` and
-`troubleshoot` apply to servers and remote hosts only, so skip them for CLIs.
-
-## Pitfalls
-
-- macOS BSD `sed`: use `gsed`. Bash 3.2 has no associative arrays and breaks
-  `"${arr[@]}"` on empty arrays under `set -u`: use `${arr[@]+"${arr[@]}"}`.
-- In a sourced script `$0` is the caller; use `${BASH_SOURCE[0]}`.
-- A test copying `bin/` into a scratch project must drop its own `*.test.sh`,
-  or `bin/test --bash` runs it recursively.
-- Test the "runs nothing" path with builtins only (`printf`, not `cat`).
-- `assert_contains` takes the haystack first, then the needle.
+Run `bin/maintainer-workflow-commands.test.sh` from the dotfiles repository.
+It tests generation, language exclusion, workflow behavior, and release safety
+in scratch projects, using stubs for external commands. Run `bin/gen_skills_readme`
+after editing this skill.

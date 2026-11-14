@@ -1,0 +1,67 @@
+# deps — list outdated dependencies, or update them up to a level. Never commits.
+# shellcheck disable=SC2329 # run_step and the deps_<group> dispatch call these indirectly
+set -euo pipefail
+# shellcheck source=lib/project.sh disable=SC1091
+source "${BASH_SOURCE[0]%/*}/lib/project.sh"
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/deps [--patch|--minor|--major] @@flags@@ [--dry-run] [PACKAGE...]
+
+List outdated dependencies, or update up to --patch, --minor, or --major.
+PACKAGE requires a level and one language flag. Never commits.
+@@help@@
+--dry-run or DRY_RUN=1 previews changes. Verify with bin/lint then bin/test.
+USAGE
+}
+
+LEVEL=""
+PKGS=()
+
+@@functions@@
+
+main() {
+  local arg g
+  local groups=()
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    shift
+    case "$arg" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --dry-run) export DRY_RUN=1 ;;
+      --patch | --minor | --major)
+        [[ -z "$LEVEL" || "$LEVEL" == "${arg#--}" ]] || die_usage "--patch, --minor and --major are mutually exclusive"
+        LEVEL="${arg#--}"
+        ;;
+      --*) select_group_flag "$arg" || die_usage "unknown option: $arg" ;;
+      -*) die_usage "unknown option: $arg" ;;
+      *) PKGS+=("$arg") ;;
+    esac
+  done
+  if [[ ${#PKGS[@]} -gt 0 ]]; then
+    [[ -n "$LEVEL" ]] || die_usage "named packages need a level (--patch, --minor or --major)"
+    [[ ${#SELECTED_GROUPS[@]} -eq 1 ]] || die_usage "named packages need exactly one language flag"
+  fi
+  while IFS= read -r g; do
+@@dependency_filter@@
+    groups+=("$g")
+  done < <(groups_to_run)
+  if [[ ${#groups[@]} -eq 0 ]]; then
+    echo "no selected dependency manifest found" >&2
+    exit "$EX_FAILED"
+  fi
+  for g in "${groups[@]}"; do "deps_$g"; done
+  local rc=0
+  print_summary || rc=$?
+  if [[ -n "$LEVEL" && "$DRY_RUN" != 1 ]]; then
+    printf '\nChanged files:\n'
+    git -C "$PROJECT_ROOT" --no-pager status --short || true
+    printf '\nNext: bin/lint && bin/test, then commit by hand. Suggested message:\n  chore(deps): update %s dependencies\n' "$LEVEL"
+  fi
+  exit "$rc"
+}
+
+main "$@"

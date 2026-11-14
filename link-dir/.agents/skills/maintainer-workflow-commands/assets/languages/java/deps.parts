@@ -1,0 +1,32 @@
+# @section functions
+java_update() {
+  local tool="$1"
+  shift
+  "$tool" -B versions:use-latest-releases "$@" && "$tool" -B versions:commit
+}
+
+deps_java() {
+  local tool allow=()
+  tool="$(java_tool)"
+  if is_gradle; then
+    if [[ -z "$LEVEL" ]]; then
+      run_step "java gradle dependencyUpdates" "$tool" dependencyUpdates
+    else
+      skip_step "java $LEVEL" "gradle has no portable updater: edit libs.versions.toml or build.gradle"
+    fi
+    return
+  fi
+  if [[ -z "$LEVEL" ]]; then
+    run_step "java outdated" "$tool" -B versions:display-dependency-updates
+    return
+  fi
+  case "$LEVEL" in
+    patch) allow=(-DallowMajorUpdates=false -DallowMinorUpdates=false) ;;
+    minor) allow=(-DallowMajorUpdates=false) ;;
+  esac
+  run_step "java versions:use-latest-releases $LEVEL" java_update "$tool" ${allow[@]+"${allow[@]}"} \
+    ${PKGS[@]+"-Dincludes=$(join_csv "${PKGS[@]}")"}
+}
+# @section help
+  java   mvn versions:display-dependency-updates | versions:use-latest-releases;
+         gradle: ben-manes dependencyUpdates to list, edit versions by hand

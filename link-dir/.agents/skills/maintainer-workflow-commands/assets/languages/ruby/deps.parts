@@ -1,0 +1,14 @@
+# @section functions
+ruby_list() { bundle outdated --only-explicit || [[ $? -eq 1 ]]; }
+
+deps_ruby() {
+  local flag=()
+  if [[ -z "$LEVEL" ]]; then
+    run_step "ruby outdated" ruby_list
+    return
+  fi
+  [[ "$LEVEL" != major ]] && flag=("--$LEVEL")
+  run_step "ruby bundle update $LEVEL" bundle update ${flag[@]+"${flag[@]}"} ${PKGS[@]+"${PKGS[@]}"}
+}
+# @section help
+  ruby   bundle outdated --only-explicit | bundle update --patch|--minor|(all)

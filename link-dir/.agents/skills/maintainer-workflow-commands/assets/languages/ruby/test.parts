@@ -1,0 +1,24 @@
+# @section functions
+test_ruby() {
+  local runner
+  if has_file spec; then
+    runner=(bundle exec rspec)
+    [[ -x "$PROJECT_ROOT/bin/rspec" ]] && runner=(bin/rspec)
+  elif is_rails; then
+    runner=(bin/rails test)
+  else
+    local selectors=()
+    [[ ${#P_ruby[@]} -eq 0 ]] || selectors=("TEST=${P_ruby[*]}")
+    run_step "ruby rake test" bundle exec rake test ${selectors[@]+"${selectors[@]}"}
+    return
+  fi
+  run_step "ruby ${runner[*]}" "${runner[@]}" ${P_ruby[@]+"${P_ruby[@]}"}
+}
+# @section help
+  spec/, *_spec.rb          ruby (rspec when spec/ exists, else minitest via bin/rails test or rake)
+  *_test.rb, test/*.rb      ruby
+# @section classify
+    *_spec.rb | spec | spec/*) echo ruby ;;
+    *_test.rb | test/*.rb) echo ruby ;;
+# @section add
+    ruby) P_ruby+=("$2") ;;

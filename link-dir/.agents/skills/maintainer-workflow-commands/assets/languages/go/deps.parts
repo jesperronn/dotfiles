@@ -1,0 +1,18 @@
+# @section functions
+go_update() { go get "$@" && go mod tidy; }
+
+deps_go() {
+  local flag=(-u)
+  if [[ -z "$LEVEL" ]]; then
+    run_step "go outdated" go list -u -m -f '{{if and (not .Indirect) .Update}}{{.Path}} {{.Version}} -> {{.Update.Version}}{{end}}' all
+    return
+  fi
+  if [[ "$LEVEL" == major ]]; then
+    skip_step "go major" "a major version changes the import path (/vN): edit imports and go.mod by hand"
+    return
+  fi
+  [[ "$LEVEL" == patch ]] && flag=(-u=patch)
+  run_step "go get $LEVEL" go_update "${flag[@]}" "${PKGS[@]:-./...}"
+}
+# @section help
+  go     go list -u -m | go get -u=patch|(-u) ./..., go mod tidy; major is by hand (/vN)
