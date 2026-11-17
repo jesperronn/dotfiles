@@ -32,7 +32,11 @@ Preserve existing names, runners, CI, and project conventions.
    test languages were selected. They have no runtime dependency on this skill.
 5. Adapt tool choices and paths. Remove unused steps; replace project-specific
    assumptions. `bin/workflows` indexes executable commands from their
-   `# <name> — <description>` headers without executing them.
+   `# <name> — <description>` headers without executing them. Always present
+   commands in lifecycle phases (setup, develop, deps, release, deploy,
+   troubleshoot), with clear headings, aligned descriptions, and blank lines
+   between phases. Omit empty phases; keep unclassified commands in `other`.
+   Adapt the template's groups to the project's names and workflow order.
 6. Test the result, run lint then tests, and connect the actual commands to CI
    and AGENTS.md. Do not copy this skill's test harness into the project blindly.
 
@@ -51,6 +55,11 @@ Preserve existing names, runners, CI, and project conventions.
 - `setup`, `dev`, `test`, `lint`, `deps`, and `release` support `--dry-run`.
   Batch commands continue after failed steps. Exit: 0 success, 1 failure,
   2 usage, 9 missing tool. Preserve existing project exit conventions.
+- `acceptance [--offline]` is an optional manual check, not part of lint or test.
+  It prints one PASS, FAIL or SKIP line per check and exits non-zero on any
+  FAIL. Offline checks need no setup. Live checks are read-only and run only
+  when the user fills in the ignored `acceptance.env`. Keep it in place of a
+  project's own live-test script, and never run it from CI.
 - `troubleshoot <target> [ARGS...]` is intentionally empty: it prints
   "empty for now". Add checks only when the project needs them; remote targets
   should print commands for the user to run.
