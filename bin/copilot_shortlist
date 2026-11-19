@@ -313,7 +313,7 @@ def load(root, args):
         project = meta.get("cwd", "")
         if not args.include_bench and any(b in project for b in BENCH_MARKERS):
             continue
-        if args.project and args.project not in project:
+        if args.project and os.path.expanduser(args.project) not in project:
             continue
         if args.since and meta.get("created_at", "")[:10] < args.since:
             continue

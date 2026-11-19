@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""copilot_show — render one GitHub Copilot session (events.jsonl) as a single self-contained HTML page.
+
+Usage: copilot_show <session-id-prefix | session-dir | events.jsonl> [--root DIR] [--out FILE] [--open]
+                    [--max-result N] [--no-redact]
+Local only, no network. Default output: ~/.cache/copilot_show/<id8>.html
+"""
+import argparse
+import html
+import json
+import os
+import re
+import subprocess
+import sys
+
+DEFAULT_ROOT = "~/.copilot/session-state"
+
+CORRECTION_RE = re.compile(
+    r"\b(no[,.!]|nope|don'?t|do not|stop|wrong|i said|i told you|again|still|instead|not what|you forgot|"
+    r"you missed|revert|undo|why did you|that'?s not|nej|ikke|forkert|stadig|igen|jeg sagde|fortryd|hvorfor)\b",
+    re.I)
+_HOME_RE = re.compile(r"/Users/[^/\s'\"]+")
+_SECRET_RES = (
+    re.compile(r"(?i)\b(authorization)\b\s*[:=]\s*(?:bearer|basic|token)?\s*[^\s'\",;]+"),
+    re.compile(r"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{6,}"),
+    re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})"),
+    re.compile(r"\b[0-9a-fA-F]{32,}\b"),
+)
+
+
+def redact(text):
+    text = _HOME_RE.sub("~", text)
+    for rx in _SECRET_RES:
+        text = rx.sub("[redacted]", text)
+    return text
+
+
+def resolve(arg, root):
+    """Return (session_dir, events_path)."""
+    p = os.path.expanduser(arg)
+    if os.path.isfile(p):
+        return os.path.dirname(os.path.abspath(p)), os.path.abspath(p)
+    if os.path.isdir(p):
+        return p, os.path.join(p, "events.jsonl")
+    root = os.path.expanduser(root)
+    hits = [d for d in sorted(os.listdir(root)) if d.startswith(arg)] if os.path.isdir(root) else []
+    if len(hits) != 1:
+        raise SystemExit(f"copilot_show: {'no' if not hits else 'ambiguous'} session matches {arg!r}"
+                         + (f": {', '.join(hits[:5])}" if hits else ""))
+    d = os.path.join(root, hits[0])
+    return d, os.path.join(d, "events.jsonl")
+
+
+def read_meta(session_dir):
+    meta = {}
+    try:
+        with open(os.path.join(session_dir, "workspace.yaml"), encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                m = re.match(r"^(id|cwd|client_name|created_at):\s*(.*)$", line)
+                if m:
+                    meta[m.group(1)] = m.group(2).strip()
+    except OSError:
+        pass
+    return meta
+
+
+def load_events(path):
+    events = []
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
+    return events
+
+
+def build_items(events):
+    """Fold the event stream into display items: user / assistant / tool (with result) / marker."""
+    items, tools = [], {}
+    for ev in events:
+        t, d, ts = ev.get("type"), ev.get("data") or {}, (ev.get("timestamp") or "")[11:19]
+        if t == "user.message" and isinstance(d.get("content"), str):
+            items.append({"kind": "user", "text": d["content"], "ts": ts})
+        elif t == "assistant.message":
+            if (d.get("content") or "").strip():
+                items.append({"kind": "assistant", "text": d["content"], "ts": ts, "model": d.get("model", "")})
+            for req in d.get("toolRequests") or []:
+                item = {"kind": "tool", "name": req.get("name", "?"), "args": req.get("arguments"),
+                        "summary": req.get("intentionSummary") or "", "result": None, "ok": True, "ts": ts}
+                tools[req.get("toolCallId")] = item
+                items.append(item)
+        elif t == "tool.execution_complete":
+            item = tools.get(d.get("toolCallId"))
+            if item is not None:
+                item["ok"] = d.get("success") is not False
+                res = d.get("result") or {}
+                err = d.get("error")
+                item["result"] = (err.get("message") if isinstance(err, dict) else err) or res.get("content") or ""
+        elif t == "abort":
+            items.append({"kind": "marker", "text": "aborted by user", "ts": ts})
+        elif t == "session.error":
+            items.append({"kind": "marker", "text": "session error: " + str(d.get("message", ""))[:200], "ts": ts})
+        elif t == "session.compaction_complete":
+            items.append({"kind": "marker", "text": "context compacted", "ts": ts})
+        elif t == "session.shutdown":
+            items.append({"kind": "marker", "text": f"session ended ({d.get('shutdownType')})", "ts": ts})
+    return items
+
+
+def arg_preview(args):
+    if isinstance(args, dict):
+        for key in ("command", "path", "pattern", "query", "skill", "prompt", "description"):
+            if isinstance(args.get(key), str):
+                return args[key]
+    return json.dumps(args, ensure_ascii=False) if args else ""
+
+
+CSS = """
+:root{--bg:#fff;--fg:#1f2328;--mut:#656d76;--line:#d0d7de;--user:#ddf4ff;--ai:#f6f8fa;--bad:#ffebe9;--badfg:#cf222e;--tool:#fff8c5;--code:#f6f8fa}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#8d96a0;--line:#30363d;--user:#0c2d4a;--ai:#161b22;--bad:#3b1219;--badfg:#ff7b72;--tool:#2d2a12;--code:#161b22}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,system-ui,sans-serif}
+header{padding:16px 20px;border-bottom:1px solid var(--line)}h1{font-size:18px;margin:0 0 4px}
+.meta{color:var(--mut);font-size:13px}.wrap{display:flex;align-items:flex-start}
+nav{position:sticky;top:0;width:260px;max-height:100vh;overflow:auto;padding:12px;border-right:1px solid var(--line);font-size:12px;flex:none}
+nav a{display:block;color:var(--fg);text-decoration:none;padding:3px 4px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav a:hover{background:var(--ai)}nav a.fix{color:var(--badfg);font-weight:600}
+main{flex:1;min-width:0;max-width:900px;padding:16px 20px}
+.msg{border-radius:8px;padding:10px 14px;margin:10px 0;white-space:pre-wrap;word-break:break-word}
+.user{background:var(--user)}.user.fix{outline:2px solid var(--badfg)}.assistant{background:var(--ai)}
+.who{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+details.tool{margin:4px 0 4px 18px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+details.tool.err{background:var(--bad);border-color:var(--badfg)}
+details.tool summary{cursor:pointer;padding:4px 8px;font-family:ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+details.tool pre{margin:0;padding:8px;background:var(--code);overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
+.marker{text-align:center;color:var(--badfg);font-size:12px;margin:12px 0}.badge{font-size:11px;color:var(--badfg);margin-left:8px}
+.toolbar{margin-top:8px;font-size:13px}body.notools details.tool{display:none}
+@media(max-width:800px){nav{display:none}}
+"""
+
+JS = """
+document.getElementById('hide').addEventListener('change',function(e){document.body.classList.toggle('notools',e.target.checked)});
+"""
+
+
+def render(meta, items, max_result, do_redact):
+    esc = (lambda s: html.escape(redact(s) if do_redact else s))
+    users = [i for i in items if i["kind"] == "user"]
+    tool_n = sum(1 for i in items if i["kind"] == "tool")
+    err_n = sum(1 for i in items if i["kind"] == "tool" and not i["ok"])
+    nav, body, n = [], [], 0
+    for it in items:
+        k = it["kind"]
+        if k == "user":
+            n += 1
+            fix = n > 1 and len(it["text"]) < 600 and CORRECTION_RE.search(it["text"])
+            cls = " fix" if fix else ""
+            first = it["text"].strip().splitlines()[0][:60] if it["text"].strip() else "(empty)"
+            nav.append(f'<a href="#u{n}" class="{cls.strip()}">{n}. {esc(first)}</a>')
+            badge = '<span class="badge">possible correction</span>' if fix else ""
+            body.append(f'<div class="msg user{cls}" id="u{n}"><div class="who">you · {it["ts"]}{badge}</div>{esc(it["text"])}</div>')
+        elif k == "assistant":
+            body.append(f'<div class="msg assistant"><div class="who">copilot · {esc(it["model"])} · {it["ts"]}</div>{esc(it["text"])}</div>')
+        elif k == "tool":
+            label = it["summary"] or arg_preview(it["args"])
+            result = str(it["result"] or "")
+            more = f"\n… [{len(result) - max_result} more chars]" if len(result) > max_result else ""
+            args_txt = json.dumps(it["args"], indent=1, ensure_ascii=False) if it["args"] is not None else ""
+            body.append(
+                f'<details class="tool{"" if it["ok"] else " err"}"><summary>{"✗ " if not it["ok"] else ""}'
+                f'{esc(it["name"])} — {esc(label[:140])}</summary>'
+                f'<pre>{esc(args_txt[:max_result])}</pre><pre>{esc(result[:max_result] + more)}</pre></details>')
+        else:
+            body.append(f'<div class="marker">— {esc(it["text"])} · {it["ts"]} —</div>')
+    title = esc((users[0]["text"].strip().splitlines() or ["session"])[0][:90]) if users else "session"
+    sub = (f'{esc(os.path.basename(meta.get("cwd", "").rstrip("/")))} · {esc(meta.get("client_name", ""))} · '
+           f'{meta.get("created_at", "")[:10]} · {len(users)} prompts · {tool_n} tool calls · {err_n} failed')
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            f'<title>{title}</title><style>{CSS}</style></head><body><header><h1>{title}</h1><div class="meta">{sub}</div>'
+            f'<div class="toolbar"><label><input type="checkbox" id="hide"> hide tool calls</label></div></header>'
+            f'<div class="wrap"><nav>{"".join(nav)}</nav><main>{"".join(body)}</main></div><script>{JS}</script></body></html>')
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="copilot_show", description=__doc__.split("\n\n")[0])
+    p.add_argument("session", help="session id prefix, session directory, or events.jsonl path")
+    p.add_argument("--root", default=DEFAULT_ROOT)
+    p.add_argument("--out", help="output file (default ~/.cache/copilot_show/<id8>.html)")
+    p.add_argument("--open", action="store_true", help="open the page afterwards")
+    p.add_argument("--max-result", type=int, default=1500, help="max chars of each tool argument/result shown")
+    p.add_argument("--no-redact", action="store_true", help="keep home paths and secret-looking strings")
+    args = p.parse_args(argv)
+    session_dir, events_path = resolve(args.session, args.root)
+    if not os.path.isfile(events_path):
+        print(f"copilot_show: no events.jsonl in {session_dir}", file=sys.stderr)
+        return 1
+    meta = read_meta(session_dir)
+    items = build_items(load_events(events_path))
+    page = render(meta, items, max(0, args.max_result), not args.no_redact)
+    sid = meta.get("id") or os.path.basename(session_dir)
+    out = os.path.expanduser(args.out) if args.out else os.path.expanduser(f"~/.cache/copilot_show/{sid[:8]}.html")
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write(page)
+    print(out)
+    if args.open:
+        subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", out], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

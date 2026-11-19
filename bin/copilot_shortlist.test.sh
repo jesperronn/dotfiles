@@ -97,4 +97,12 @@ test_json_format_parses() {
   assert_eq "ok" "$(run_cli --format json --bucket bad --top 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); print("ok" if d["bad"] else "no")')" "json output parses"
 }
 
+test_project_filter_keeps_only_matching_cwd() {
+  make_fixture
+  local out
+  out="$(run_cli --project /work/beta --bucket all --top 5)"
+  assert_contains "$out" "goodgood" "matching project kept"
+  assert_not_contains "$out" "badbadba" "other project dropped"
+}
+
 run_tests "$@"
