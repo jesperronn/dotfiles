@@ -79,6 +79,10 @@ const getter=k=>k.startsWith('l:')?(s=>labNum(s,k.slice(2))):METRICS.find(m=>m.k
 const chip=l=>`<span data-hl="l:${esc(l.name)}" data-l="${esc(l.name)}" class="chip${fLab.has(l.name)?' on':''}" title="${esc(l.help+' ['+SENT_WORD[l.sentiment||'']+'] (click to filter by this label)')}">${dot(l.sentiment)}${esc(l.name)}<span class="x">${esc(l.text.slice(l.name.length))}</span></span>`;
 const toggle=(set,v)=>set.has(v)?set.delete(v):set.add(v);
 let onlyFav=false,sortKey='bad',sortDir=-1;const fProj=new Set(),fLab=new Set(),open=new Set();
+const VKEY=KEY+':view';  // per-viewer convenience, kept apart from the exported marks
+try{const v=JSON.parse(localStorage.getItem(VKEY)||'{}');onlyFav=!!v.onlyFav;(v.labels||[]).forEach(n=>{if(LABEL_INFO[n])fLab.add(n)})}catch(e){}
+$('fall').classList.toggle('on',!onlyFav);$('ffav').classList.toggle('on',onlyFav);
+const saveView=()=>{try{localStorage.setItem(VKEY,JSON.stringify({onlyFav,labels:[...fLab]}))}catch(e){}};
 function visible(){
   const q=$('q').value.toLowerCase(),m=getter(sortKey);
   const rows=SESSIONS.filter(s=>{const x=st(s.id);
@@ -98,6 +102,7 @@ function pills(){
   const n=fProj.size+fLab.size;$('fclear').hidden=!n;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
 }
 function render(){
+  saveView();
   document.documentElement.style.setProperty('--projw',(Math.min(32,Math.max(8,...SESSIONS.map(s=>s.project.length)))+1)+'ch');
   pills();
   const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
