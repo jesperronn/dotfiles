@@ -60,7 +60,7 @@ td.n{width:1%;text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2
 .bad .pill{color:var(--bad);background:color-mix(in srgb,var(--bad) 16%,transparent)}.good .pill{color:var(--good);background:color-mix(in srgb,var(--good) 16%,transparent)}.out .pill{color:var(--out);background:color-mix(in srgb,var(--out) 16%,transparent)}
 .star{font-size:17px;line-height:1;background:none;border:0;padding:0 2px;color:var(--mut)}.fav .star{color:var(--star)}
 .chip{font-size:11px;padding:0 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg);margin-right:3px;display:inline-block}
-.chip.neg{color:var(--bad);border-color:var(--bad)}.chip.pos{color:var(--good);border-color:var(--good)}.chip.tag{color:var(--acc);border-color:var(--acc)}
+.chip{cursor:pointer}.chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}.chip.neg{color:var(--bad);border-color:var(--bad)}.chip.pos{color:var(--good);border-color:var(--good)}.chip.tag{color:var(--acc);border-color:var(--acc)}
 .role{font-size:11px;padding:0 7px;border-radius:4px;color:#fff;margin-right:4px}.role.bad{background:var(--bad)}.role.good{background:var(--good)}.role.outlier{background:var(--out)}
 .note{color:var(--mut);font-size:12px;font-style:italic}.sub{padding-left:10px;white-space:normal;max-width:0}
 tr.edit td{white-space:normal;background:var(--card);padding:8px 12px}.edit .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
@@ -72,7 +72,7 @@ dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px
 <div class="bar"><button id="fall" class="on">All</button><button id="ffav">Favourites</button>
 <input type="search" id="q" placeholder="search prompt, project, labels, notes, tags"><button id="exp">Export…</button><button id="help" title="what do the numbers mean?">?</button></div>
 <div class="bar" id="sorts"><span class="dim">sort</span></div>
-<div class="bar"><button id="ftoggle">Filters ▾</button><span class="dim" id="fsum"></span><span class="count" id="count"></span></div>
+<div class="bar"><button id="ftoggle">Filters ▾</button><span class="dim" id="fsum"></span><button id="fclear" hidden>clear</button><span class="count" id="count"></span></div>
 <div id="filters" hidden><div class="bar"><span class="dim">project</span><span id="fproj"></span></div><div class="bar"><span class="dim">label</span><span id="flab"></span></div></div>
 <div id="legend" hidden></div></header>
 <main id="list"></main>
@@ -107,7 +107,8 @@ const LABEL_HELP={'repeated-instruction':'You restated an earlier message (60%+ 
  'outlier-tokens':'Top 5% of this folder for tokens.','outlier-duration':'Top 5% of this folder for active minutes.','outlier-turns':'Top 5% of this folder for assistant turns.',
  'outlier-tool-calls':'Top 5% of this folder for tool calls.','outlier-premium':'Top 5% of this folder for premium requests.','subagents':'Spawned 3+ subagents.','big-diff':'2000+ lines added.'};
 const base=l=>l.replace(/\s.*$/,'');
-const chip=l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}" title="${esc(LABEL_HELP[base(l)]||l)}">${esc(l)}</span>`;
+const chip=l=>`<span data-l="${esc(base(l))}" class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}${fLab.has(base(l))?' on':''}" title="${esc((LABEL_HELP[base(l)]||l)+' (click to filter by this label)')}">${esc(l)}</span>`;
+const toggle=(set,v)=>set.has(v)?set.delete(v):set.add(v);
 let onlyFav=false,sortKey='bad',sortDir=-1;const fProj=new Set(),fLab=new Set(),open=new Set();
 function visible(){
   const q=$('q').value.toLowerCase(),m=METRICS.find(x=>x.k===sortKey).get;
@@ -123,7 +124,7 @@ function pills(){
   const cnt=(f)=>{const c={};SESSIONS.forEach(s=>f(s).forEach(v=>c[v]=(c[v]||0)+1));return Object.entries(c).sort((a,b)=>b[1]-a[1])};
   $('fproj').innerHTML=cnt(s=>[s.project]).map(([p,n])=>`<button data-p="${esc(p)}" class="${fProj.has(p)?'on':''}">${esc(p)} ${n}</button>`).join(' ');
   $('flab').innerHTML=cnt(s=>[...new Set(s.labels.map(base))]).map(([l,n])=>`<button data-l="${esc(l)}" class="${fLab.has(l)?'on':''}" title="${esc(LABEL_HELP[l]||l)}">${esc(l)} ${n}</button>`).join(' ');
-  const n=fProj.size+fLab.size;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
+  const n=fProj.size+fLab.size;$('fclear').hidden=!n;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
 }
 function render(){
   pills();
@@ -147,6 +148,7 @@ function render(){
 }
 $('list').addEventListener('click',e=>{
   if(e.target.closest('a'))return;
+  const lc=e.target.closest('.chip[data-l]');if(lc){toggle(fLab,lc.dataset.l);render();return}
   const tb=e.target.closest('tbody.item');if(!tb)return;const id=tb.dataset.id;
   if(e.target.closest('.edit')){const r=e.target.closest('[data-role]');if(r){st(id).role=r.dataset.role;save();render()}return}
   if(e.target.classList.contains('star'))st(id).fav=!st(id).fav;else open.has(id)?open.delete(id):open.add(id);
@@ -156,9 +158,9 @@ $('list').addEventListener('change',e=>{const tb=e.target.closest('tbody.item');
   save();render()});
 $('sorts').addEventListener('click',e=>{const k=e.target.dataset.k;if(!k||k===sortKey)return;sortKey=k;sortDir=-1;render()});
 $('sorts').addEventListener('dblclick',e=>{if(e.target.dataset.k){sortKey=e.target.dataset.k;sortDir=-sortDir;render()}});
-const toggle=(set,v)=>set.has(v)?set.delete(v):set.add(v);
 $('fproj').addEventListener('click',e=>{if(e.target.dataset.p){toggle(fProj,e.target.dataset.p);render()}});
 $('flab').addEventListener('click',e=>{if(e.target.dataset.l){toggle(fLab,e.target.dataset.l);render()}});
+$('fclear').onclick=()=>{fProj.clear();fLab.clear();render()};
 $('ftoggle').onclick=()=>{const f=$('filters');f.hidden=!f.hidden;$('ftoggle').textContent=f.hidden?'Filters ▾':'Filters ▴'};
 $('help').onclick=()=>{const l=$('legend');l.hidden=!l.hidden;
   l.innerHTML=METRICS.map(m=>`<div><b>${m.k}</b> — ${esc(m.tip)}</div>`).join('')+'<div class="dim">Hover any label chip for its meaning. Sort: click a pill; double-click reverses.</div>'};
