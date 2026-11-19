@@ -56,12 +56,12 @@ details.tool.err{background:var(--bad);border-color:var(--badfg)}
 details.tool summary{cursor:pointer;padding:4px 8px;font-family:ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 details.tool pre{margin:0;padding:8px;background:var(--code);overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
 .marker{text-align:center;color:var(--badfg);font-size:12px;margin:12px 0}.badge{font-size:11px;color:var(--badfg);margin-left:8px}
-.toolbar{margin-top:8px;font-size:13px}body.notools details.tool{display:none}
+.navtools{position:sticky;top:-12px;margin:-12px -12px 6px;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line);font-size:13px;cursor:pointer;z-index:1}body.notools details.tool{display:none}
 @media(max-width:800px){nav{display:none}}
 """
 
 JS = """
-document.getElementById('hide').addEventListener('change',function(e){document.body.classList.toggle('notools',e.target.checked)});
+document.getElementById('hide').addEventListener('change',function(e){document.body.classList.toggle('notools',!e.target.checked)});
 """
 
 
@@ -184,8 +184,8 @@ def assemble(parts, m=None, storage=None):
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<title>{parts["title"]}</title><style>{CSS}{KEY_CSS}</style></head><body><header><h1>{parts["title"]}</h1>'
             f'<div class="meta">{parts["sub"]}</div>{keys}{tms}{mark}'
-            f'<div class="toolbar"><label><input type="checkbox" id="hide"> hide tool calls</label></div></header>'
-            f'<div class="wrap"><nav>{parts["nav"]}</nav><main>{parts["body"]}</main></div><script>{JS}</script>{script}</body></html>')
+            f'</header>'
+            f'<div class="wrap"><nav><label class="navtools"><input type="checkbox" id="hide" checked> toggle tool calls</label>{parts["nav"]}</nav><main>{parts["body"]}</main></div><script>{JS}</script>{script}</body></html>')
 
 
 def render(session, max_result=1500, do_redact=True, m=None, storage=None):
