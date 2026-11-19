@@ -30,7 +30,10 @@ make_fixture() {
       echo '{"type":"tool.execution_start","data":{"toolName":"view","arguments":{"path":"/a"}},"timestamp":"2026-03-01T10:00:02.000Z"}'
     } >"$d/events.jsonl"
   done
-  mkdir -p "$SESSIONS/empty-dir"
+  d="$SESSIONS/cccc3333-w"
+  mkdir -p "$d" "$SESSIONS/empty-dir"
+  printf 'id: cccc3333-w\ncwd: /work/repo-wt\nclient_name: github/cli\ncreated_at: 2026-03-01T10:00:00.000Z\n' >"$d/workspace.yaml"
+  cp "$SESSIONS/aaaa1111-x/events.jsonl" "$d/events.jsonl"
 }
 
 run_overview() {
@@ -48,9 +51,14 @@ test_index_is_generic_and_data_lives_in_sessions_files() {
   run_overview
   assert_contains "$(cat "$OUT/index.html")" 'src="sessions.js"' "index loads sessions.js"
   assert_not_contains "$(cat "$OUT/index.html")" "aaaa1111" "no session data baked into index"
-  assert_eq "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$OUT/sessions.json")" "sessions.json lists both sessions"
+  assert_eq "3" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$OUT/sessions.json")" "sessions.json lists all sessions"
   assert_eq "0" "$(grep -c '</' "$OUT/sessions.js")" "sessions.js cannot close a script tag early"
   assert_contains "$(cat "$OUT/sessions.js")" "window.SESSIONS=" "sessions.js assigns the list"
+}
+
+test_worktree_suffix_folded_into_repo_name() {
+  run_overview
+  assert_eq "repo" "$(python3 -c 'import json,sys; print([s["project"] for s in json.load(open(sys.argv[1])) if s["id"].startswith("cccc")][0])' "$OUT/sessions.json")" "repo-wt shown as repo"
 }
 
 test_sessions_without_events_are_skipped() {

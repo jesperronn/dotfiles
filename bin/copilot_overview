@@ -29,9 +29,9 @@ def load_script(name):
     return module
 
 
-def session_row(s, link):
+def session_row(s, link, project_name):
     return {
-        "id": s["id"], "id8": s["id"][:8], "date": s["started"][:10], "project": os.path.basename(s["project"].rstrip("/")),
+        "id": s["id"], "id8": s["id"][:8], "date": s["started"][:10], "project": project_name(s["project"]),
         "client": s["client"], "userTurns": s["user_turns"], "turns": s["turns"], "minutes": round(s["duration_min"]),
         "tokens": s["tokens_total"], "toolCalls": s["tool_calls"], "toolErrors": s["tool_errors"],
         "added": s["lines_added"], "removed": s["lines_removed"], "bad": s["bad"], "good": s["good"],
@@ -214,7 +214,7 @@ def main(argv=None):
         rel = f"s/{s['id'][:8]}.html"
         with open(os.path.join(out, rel), "w", encoding="utf-8") as fh:
             fh.write(page)
-        row = session_row(s, rel)
+        row = session_row(s, rel, short.project_name)
         row["prompt"] = show.redact(row["prompt"])
         rows.append(row)
     data = json.dumps(rows, ensure_ascii=False)

@@ -32,6 +32,12 @@ IDLE_GAP_SECONDS = 600
 SENTENCE_RE = re.compile(r"[^.!?\n]{15,200}")
 
 
+def project_name(cwd):
+    """Short project name from a cwd: last path part, with a worktree suffix (-wt) folded into its repo."""
+    name = os.path.basename(cwd.rstrip("/")) or "/"
+    return name[:-3] if name.endswith("-wt") and len(name) > 3 else name
+
+
 def words(text):
     return re.findall(r"\w+", text.lower())
 
@@ -270,7 +276,7 @@ def fmt_tok(n):
 
 
 def row(s):
-    return [s["id"][:8], s["started"][:10], os.path.basename(s["project"].rstrip("/")) or "/", s["client"][-8:],
+    return [s["id"][:8], s["started"][:10], project_name(s["project"]), s["client"][-8:],
             str(s["user_turns"]), str(s["turns"]), f"{s['duration_min']:.0f}m", fmt_tok(s["tokens_total"]),
             f"{s['tool_errors']}/{s['tool_calls']}", f"+{s['lines_added']}/-{s['lines_removed']}",
             f"{s['bad']:g}", f"{s['good']:g}", f"{s['outlier']:g}", ", ".join(s["labels"]), s["first_prompt"]]
