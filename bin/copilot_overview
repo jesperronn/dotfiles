@@ -44,34 +44,37 @@ PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name
 :root{--bg:#fff;--fg:#1f2328;--mut:#656d76;--line:#d0d7de;--card:#f6f8fa;--acc:#0969da;--star:#bf8700;--bad:#cf222e;--good:#1a7f37;--out:#8250df}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#8d96a0;--line:#30363d;--card:#161b22;--acc:#58a6ff;--star:#e3b341;--bad:#ff7b72;--good:#3fb950;--out:#d2a8ff}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif}
-header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
-h1{font-size:17px;margin:0 0 8px}.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.bar input[type=search]{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:200px}
-button,select{padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer;font:inherit}
-button.on{background:var(--acc);color:#fff;border-color:var(--acc)}.count{color:var(--mut);margin-left:auto}
-main{padding:0 8px 40px;overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th{position:sticky;top:var(--hh,84px);background:var(--bg);text-align:left;color:var(--mut);font-weight:600;font-size:11px;padding:4px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
-td{padding:3px 6px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
-tr.row{cursor:pointer}tr.row:hover td{background:var(--card)}tr.fav td{background:color-mix(in srgb,var(--star) 12%,transparent)}
-td.num{text-align:right;font-variant-numeric:tabular-nums}td.p{max-width:0;width:100%;min-width:260px;overflow:hidden;text-overflow:ellipsis}
-td.p a{color:var(--acc);text-decoration:none}td.p a:hover{text-decoration:underline}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:8px 12px;z-index:5}
+h1{font-size:16px;margin:0 0 6px}.bar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.dim{color:var(--mut);font-size:12px}.bar input[type=search]{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:200px}
+button{padding:3px 10px;border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--fg);cursor:pointer;font:inherit;font-size:12px}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}.count{color:var(--mut);margin-left:auto;font-size:12px}
+#filters{max-height:32vh;overflow:auto;border-top:1px dashed var(--line);padding-top:6px}#filters[hidden],#legend[hidden]{display:none}
+#legend{font-size:12px;color:var(--mut);margin-top:6px;line-height:1.6}#legend b{color:var(--fg)}
+main{padding:0 8px 40px;overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px;min-width:860px}
+tbody.item{border-bottom:1px solid var(--line);cursor:pointer}tbody.item:hover td{background:var(--card)}tbody.fav td{background:color-mix(in srgb,var(--star) 12%,transparent)}
+td{padding:2px 6px;white-space:nowrap;vertical-align:middle}tr.l1 td{padding-top:5px}tr.l2 td{padding-bottom:5px}
+td.p{max-width:0;width:100%;min-width:180px;overflow:hidden;text-overflow:ellipsis;font-weight:600}td.p a{color:var(--acc);text-decoration:none}td.p a:hover{text-decoration:underline}
+td.n{width:1%;text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2px}td.n b{font-variant-numeric:tabular-nums;font-weight:600}
+.pill{display:inline-block;padding:0 7px;border-radius:10px}
+.bad .pill{color:var(--bad);background:color-mix(in srgb,var(--bad) 16%,transparent)}.good .pill{color:var(--good);background:color-mix(in srgb,var(--good) 16%,transparent)}.out .pill{color:var(--out);background:color-mix(in srgb,var(--out) 16%,transparent)}
 .star{font-size:17px;line-height:1;background:none;border:0;padding:0 2px;color:var(--mut)}.fav .star{color:var(--star)}
-.s-bad{color:var(--bad)}.s-good{color:var(--good)}.s-out{color:var(--out)}
-.chip{font-size:11px;padding:0 6px;border-radius:10px;border:1px solid var(--line);background:var(--bg);margin-right:3px;display:inline-block}
+.chip{font-size:11px;padding:0 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg);margin-right:3px;display:inline-block}
 .chip.neg{color:var(--bad);border-color:var(--bad)}.chip.pos{color:var(--good);border-color:var(--good)}.chip.tag{color:var(--acc);border-color:var(--acc)}
-.role{font-size:11px;padding:0 6px;border-radius:4px;color:#fff}.role.bad{background:var(--bad)}.role.good{background:var(--good)}.role.outlier{background:var(--out)}
-tr.detail td{white-space:normal;background:var(--card);padding:10px 12px}.meta{color:var(--mut);font-size:12px;margin-bottom:6px}
-.edit{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.edit input,.edit textarea{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+.role{font-size:11px;padding:0 7px;border-radius:4px;color:#fff;margin-right:4px}.role.bad{background:var(--bad)}.role.good{background:var(--good)}.role.outlier{background:var(--out)}
+.note{color:var(--mut);font-size:12px;font-style:italic}.sub{padding-left:10px;white-space:normal;max-width:0}
+tr.edit td{white-space:normal;background:var(--card);padding:8px 12px}.edit .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
+.edit input,.edit textarea{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
 .edit textarea{flex:1;min-width:240px;height:60px;resize:vertical}.edit input{width:220px}
 dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px}dialog textarea{width:100%;height:300px;font:12px ui-monospace,monospace}
 </style></head><body>
-<header><h1>Copilot sessions overview</h1><div class="bar">
-<button id="fall" class="on">All</button><button id="ffav">Favourites</button>
-<input type="search" id="q" placeholder="search prompt, project, labels, notes, tags">
-<select id="sort"><option value="bad">sort: worst first</option><option value="good">sort: best first</option><option value="outlier">sort: outlier score</option><option value="tokens">sort: tokens</option><option value="date">sort: newest</option><option value="turns">sort: user messages</option></select>
-<select id="role"><option value="">any role</option><option>bad</option><option>good</option><option>outlier</option><option value="none">no role</option></select>
-<button id="exp">Export…</button><span class="count" id="count"></span></div></header>
+<header><h1>Copilot sessions overview</h1>
+<div class="bar"><button id="fall" class="on">All</button><button id="ffav">Favourites</button>
+<input type="search" id="q" placeholder="search prompt, project, labels, notes, tags"><button id="exp">Export…</button><button id="help" title="what do the numbers mean?">?</button></div>
+<div class="bar" id="sorts"><span class="dim">sort</span></div>
+<div class="bar"><button id="ftoggle">Filters ▾</button><span class="dim" id="fsum"></span><span class="count" id="count"></span></div>
+<div id="filters" hidden><div class="bar"><span class="dim">project</span><span id="fproj"></span></div><div class="bar"><span class="dim">label</span><span id="flab"></span></div></div>
+<div id="legend" hidden></div></header>
 <main id="list"></main>
 <dialog id="dlg"><p><b>Favourites and notes</b> — copy this somewhere safe; localStorage is per browser.</p><textarea id="out" readonly></textarea>
 <p><button id="cmd">Markdown</button> <button id="cjson">JSON</button> <button id="imp">Import JSON</button> <button id="cls">Close</button></p></dialog>
@@ -84,48 +87,84 @@ try{state=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
 function st(id){return state[id]||(state[id]={fav:false,role:'',tags:'',note:''})}
 const $=id=>document.getElementById(id);
-let onlyFav=false;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const tok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
 const NEG=/repeated|corrections|loop|error-rate|aborted|no-shutdown|abandoned|burn|permission|session-errors/;
+const METRICS=[
+ {k:'date',get:s=>s.date,tip:'Date the session started.'},
+ {k:'msgs',get:s=>s.userTurns,tip:'Messages you typed in this session. Many messages usually means a lot of steering.'},
+ {k:'tokens',get:s=>s.tokens,tip:'Tokens the model read (uncached) plus wrote. Cached re-reads are not counted.'},
+ {k:'err',get:s=>s.toolErrors,tip:'Failed tool calls / all tool calls (file not found, command failed, ...).'},
+ {k:'bad',get:s=>s.bad,tip:'Struggle score: tool errors, loops, corrections, repeated instructions, aborts. Higher = worse.'},
+ {k:'good',get:s=>s.good,tip:'Smooth-run score: finished with real code changes, few messages, few errors. Higher = better.'},
+ {k:'out',get:s=>s.outlier,tip:'Outlier score: unusually many tokens, minutes, turns, tool calls, or a huge diff, compared with this folder.'}];
+const LABEL_HELP={'repeated-instruction':'You restated an earlier message (60%+ same words): the first instruction was not acted on.',
+ 'user-corrections':'Follow-ups that read as a correction: no, don\'t, I said, again, stop, nej, igen ...','tool-loop':'The same tool call with identical arguments ran 4+ times.',
+ 'error-rate':'20%+ of tool calls failed.','aborted':'You interrupted the agent (count shown).','no-shutdown':'Session never ended cleanly (crash or left open); token totals are estimates.',
+ 'abandoned':'Ended on your message or an abort, with no code written.','compacted':'The context window was compacted (count shown): a very long session.',
+ 'permission-prompts':'Number of permission requests: approval friction.','session-errors':'Copilot reported session-level errors.',
+ 'burn-no-edits':'Top 5% token use but no lines changed.','clean-run':'Finished with real changes, few prompts and almost no errors.',
+ 'outlier-tokens':'Top 5% of this folder for tokens.','outlier-duration':'Top 5% of this folder for active minutes.','outlier-turns':'Top 5% of this folder for assistant turns.',
+ 'outlier-tool-calls':'Top 5% of this folder for tool calls.','outlier-premium':'Top 5% of this folder for premium requests.','subagents':'Spawned 3+ subagents.','big-diff':'2000+ lines added.'};
+const base=l=>l.replace(/\s.*$/,'');
+const chip=l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}" title="${esc(LABEL_HELP[base(l)]||l)}">${esc(l)}</span>`;
+let onlyFav=false,sortKey='bad',sortDir=-1;const fProj=new Set(),fLab=new Set(),open=new Set();
 function visible(){
-  const q=$('q').value.toLowerCase(),role=$('role').value,key=$('sort').value;
-  let rows=SESSIONS.filter(s=>{const x=st(s.id);
+  const q=$('q').value.toLowerCase(),m=METRICS.find(x=>x.k===sortKey).get;
+  const rows=SESSIONS.filter(s=>{const x=st(s.id);
     if(onlyFav&&!x.fav)return false;
-    if(role==='none'?x.role:role&&x.role!==role)return false;
+    if(fProj.size&&!fProj.has(s.project))return false;
+    if(fLab.size&&!s.labels.some(l=>fLab.has(base(l))))return false;
     return !q||(s.prompt+' '+s.project+' '+s.labels.join(' ')+' '+x.note+' '+x.tags).toLowerCase().includes(q)});
-  const val={bad:s=>s.bad,good:s=>s.good,outlier:s=>s.outlier,tokens:s=>s.tokens,date:s=>s.date,turns:s=>s.userTurns};
-  return rows.sort((a,b)=>val[key](a)<val[key](b)?1:-1);
+  return rows.sort((a,b)=>{const A=m(a),B=m(b);return A<B?-sortDir:A>B?sortDir:(a.id<b.id?-1:1)});
 }
-const open=new Set();
-const chip=l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}">${esc(l)}</span>`;
+function pills(){
+  $('sorts').innerHTML='<span class="dim">sort</span>'+METRICS.map(m=>`<button data-k="${m.k}" class="${m.k===sortKey?'on':''}" title="${esc(m.tip)} Click to sort; double-click to reverse.">${m.k}${m.k===sortKey?(sortDir<0?' ↓':' ↑'):''}</button>`).join('');
+  const cnt=(f)=>{const c={};SESSIONS.forEach(s=>f(s).forEach(v=>c[v]=(c[v]||0)+1));return Object.entries(c).sort((a,b)=>b[1]-a[1])};
+  $('fproj').innerHTML=cnt(s=>[s.project]).map(([p,n])=>`<button data-p="${esc(p)}" class="${fProj.has(p)?'on':''}">${esc(p)} ${n}</button>`).join(' ');
+  $('flab').innerHTML=cnt(s=>[...new Set(s.labels.map(base))]).map(([l,n])=>`<button data-l="${esc(l)}" class="${fLab.has(l)?'on':''}" title="${esc(LABEL_HELP[l]||l)}">${esc(l)} ${n}</button>`).join(' ');
+  const n=fProj.size+fLab.size;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
+}
 function render(){
+  pills();
   const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
   $('count').textContent=rows.length+' shown · '+favs+' ★ of '+SESSIONS.length;
-  const head='<thead><tr><th></th><th>date</th><th>project</th><th>first prompt</th><th>msgs</th><th>tokens</th><th>err</th><th>bad</th><th>good</th><th>out</th><th>labels</th><th>role</th></tr></thead>';
-  $('list').innerHTML='<table>'+head+'<tbody>'+rows.map(s=>{const x=st(s.id),isOpen=open.has(s.id);
-    const tags=x.tags.split(',').map(t=>t.trim()).filter(Boolean);
-    const short=s.labels.slice(0,2).map(chip).join('')+(s.labels.length>2?`<span class="chip">+${s.labels.length-2}</span>`:'')+tags.map(t=>`<span class="chip tag">#${esc(t)}</span>`).join('');
-    let h=`<tr class="row${x.fav?' fav':''}" data-id="${s.id}"><td><button class="star" title="favourite">${x.fav?'★':'☆'}</button></td><td>${s.date.slice(5)}</td><td>${esc(s.project)}</td>
-      <td class="p"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a>${x.note?' <span class="meta">📝</span>':''}</td><td class="num">${s.userTurns}</td><td class="num">${tok(s.tokens)}</td><td class="num">${s.toolErrors}/${s.toolCalls}</td>
-      <td class="num s-bad">${s.bad}</td><td class="num s-good">${s.good}</td><td class="num s-out">${s.outlier}</td><td>${short}</td><td>${x.role?`<span class="role ${x.role}">${x.role}</span>`:''}</td></tr>`;
-    if(isOpen)h+=`<tr class="detail" data-id="${s.id}"><td></td><td colspan="11"><div class="meta">${esc(s.client)} · ${s.id8} · ${s.turns} turns · ${s.minutes}m active · +${s.added}/−${s.removed} lines</div>${s.labels.map(chip).join('')}
-      <div class="edit"><select class="roles">${['','bad','good','outlier'].map(r=>`<option value="${r}"${x.role===r?' selected':''}>${r||'role…'}</option>`).join('')}</select>
-      <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"><textarea class="note" placeholder="note: why this one?">${esc(x.note)}</textarea></div></td></tr>`;
-    return h}).join('')+'</tbody></table>';
+  const kv=(k,v,cls,tip)=>`<td class="n ${cls}" title="${esc(tip)}"><span class="k">${k}</span> ${cls?`<span class="pill"><b>${v}</b></span>`:`<b>${v}</b>`}</td>`;
+  const tip=k=>METRICS.find(m=>m.k===k).tip;
+  $('list').innerHTML='<table>'+rows.map(s=>{const x=st(s.id),isOpen=open.has(s.id);
+    const tags=x.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="chip tag">#${esc(t)}</span>`).join('');
+    let h=`<tbody class="item${x.fav?' fav':''}" data-id="${s.id}"><tr class="l1"><td rowspan="2" style="vertical-align:top;padding-top:4px"><button class="star" title="favourite">${x.fav?'★':'☆'}</button></td>
+      <td title="${tip('date')}"><span class="dim">${s.date.slice(5)}</span></td><td><span class="dim">${esc(s.project)}</span></td>
+      <td class="p"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a></td>
+      ${kv('msgs',s.userTurns,'',tip('msgs'))}${kv('tokens',tok(s.tokens),'',tip('tokens'))}${kv('err',s.toolErrors+'/'+s.toolCalls,'',tip('err'))}
+      ${kv('bad',s.bad,'bad',tip('bad'))}${kv('good',s.good,'good',tip('good'))}${kv('out',s.outlier,'out',tip('out'))}</tr>
+      <tr class="l2"><td colspan="9" class="sub">${x.role?`<span class="role ${x.role}">${x.role}</span>`:''}${s.labels.map(chip).join('')}${tags}${x.note?` <span class="note">📝 ${esc(x.note.slice(0,120))}</span>`:''}</td></tr>`;
+    if(isOpen)h+=`<tr class="edit"><td></td><td colspan="9"><div class="dim">${esc(s.client)} · ${s.id8} · ${s.turns} turns · ${s.minutes}m active · +${s.added}/−${s.removed} lines</div>
+      <div class="row"><span class="dim">role</span>${['bad','good','outlier',''].map(r=>`<button data-role="${r}" class="${x.role===r?'on':''}">${r||'none'}</button>`).join('')}
+      <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"></div>
+      <div class="row"><textarea class="notebox" placeholder="note: why this one?">${esc(x.note)}</textarea></div></td></tr>`;
+    return h+'</tbody>'}).join('')+'</table>';
 }
 $('list').addEventListener('click',e=>{
   if(e.target.closest('a'))return;
-  const tr=e.target.closest('tr.row');if(!tr)return;const id=tr.dataset.id;
-  if(e.target.classList.contains('star'))st(id).fav=!st(id).fav;
-  else open.has(id)?open.delete(id):open.add(id);
+  const tb=e.target.closest('tbody.item');if(!tb)return;const id=tb.dataset.id;
+  if(e.target.closest('.edit')){const r=e.target.closest('[data-role]');if(r){st(id).role=r.dataset.role;save();render()}return}
+  if(e.target.classList.contains('star'))st(id).fav=!st(id).fav;else open.has(id)?open.delete(id):open.add(id);
   save();render()});
-$('list').addEventListener('change',e=>{const id=e.target.closest('tr.detail').dataset.id,c=e.target.classList;
-  if(c.contains('roles'))st(id).role=e.target.value;else if(c.contains('tags'))st(id).tags=e.target.value;else if(c.contains('note'))st(id).note=e.target.value;
+$('list').addEventListener('change',e=>{const tb=e.target.closest('tbody.item');if(!tb)return;const id=tb.dataset.id;
+  if(e.target.classList.contains('tags'))st(id).tags=e.target.value;else if(e.target.classList.contains('notebox'))st(id).note=e.target.value;
   save();render()});
+$('sorts').addEventListener('click',e=>{const k=e.target.dataset.k;if(!k||k===sortKey)return;sortKey=k;sortDir=-1;render()});
+$('sorts').addEventListener('dblclick',e=>{if(e.target.dataset.k){sortKey=e.target.dataset.k;sortDir=-sortDir;render()}});
+const toggle=(set,v)=>set.has(v)?set.delete(v):set.add(v);
+$('fproj').addEventListener('click',e=>{if(e.target.dataset.p){toggle(fProj,e.target.dataset.p);render()}});
+$('flab').addEventListener('click',e=>{if(e.target.dataset.l){toggle(fLab,e.target.dataset.l);render()}});
+$('ftoggle').onclick=()=>{const f=$('filters');f.hidden=!f.hidden;$('ftoggle').textContent=f.hidden?'Filters ▾':'Filters ▴'};
+$('help').onclick=()=>{const l=$('legend');l.hidden=!l.hidden;
+  l.innerHTML=METRICS.map(m=>`<div><b>${m.k}</b> — ${esc(m.tip)}</div>`).join('')+'<div class="dim">Hover any label chip for its meaning. Sort: click a pill; double-click reverses.</div>'};
 $('fall').onclick=()=>{onlyFav=false;$('fall').classList.add('on');$('ffav').classList.remove('on');render()};
 $('ffav').onclick=()=>{onlyFav=true;$('ffav').classList.add('on');$('fall').classList.remove('on');render()};
-['q','sort','role'].forEach(i=>$(i).addEventListener('input',render));
+$('q').addEventListener('input',render);
 function exportMd(){return SESSIONS.filter(s=>st(s.id).fav).map(s=>{const x=st(s.id);
   return `- [${x.role||'?'}] ${s.id8} ${s.project} ${s.date} — ${s.prompt}\n  labels: ${s.labels.join(', ')}${x.tags?'\n  tags: '+x.tags:''}${x.note?'\n  note: '+x.note:''}`}).join('\n')}
 $('exp').onclick=()=>{$('out').value=exportMd();$('dlg').showModal()};
