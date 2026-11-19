@@ -3,7 +3,8 @@
 
 Usage: copilot_overview <sessions-dir> [--out DIR] [--max-result N] [--open]
 <sessions-dir> holds <session-id>/{workspace.yaml,events.jsonl} (e.g. made by copilot_shortlist --copy).
-Writes DIR/index.html plus DIR/s/<id8>.html (one transcript per session, via copilot_show).
+Writes DIR/index.html (generic page), DIR/sessions.json (+ sessions.js, the same list for file:// use),
+and DIR/s/<id8>.html (one transcript per session, via copilot_show).
 Favourites, role, tags and notes live in the browser's localStorage; use the export button to keep them.
 Default DIR: <sessions-dir>/../overview
 """
@@ -70,8 +71,9 @@ dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px
 <main id="list"></main>
 <dialog id="dlg"><p><b>Favourites and notes</b> — copy this somewhere safe; localStorage is per browser.</p><textarea id="out" readonly></textarea>
 <p><button id="cmd">Markdown</button> <button id="cjson">JSON</button> <button id="imp">Import JSON</button> <button id="cls">Close</button></p></dialog>
+<script src="sessions.js"></script>
 <script>
-const SESSIONS=__DATA__;
+const SESSIONS=window.SESSIONS||[];
 const KEY='copilot_overview_v1';
 let state={};
 try{state=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
@@ -160,10 +162,14 @@ def main(argv=None):
         row = session_row(s, rel)
         row["prompt"] = show.redact(row["prompt"])
         rows.append(row)
-    data = json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")
+    data = json.dumps(rows, ensure_ascii=False)
+    with open(os.path.join(out, "sessions.json"), "w", encoding="utf-8") as fh:
+        fh.write(data)
+    with open(os.path.join(out, "sessions.js"), "w", encoding="utf-8") as fh:  # file:// pages cannot fetch() JSON
+        fh.write("window.SESSIONS=" + data.replace("</", "<\\/") + ";\n")
     index = os.path.join(out, "index.html")
     with open(index, "w", encoding="utf-8") as fh:
-        fh.write(PAGE.replace("__DATA__", data))
+        fh.write(PAGE)
     print(index)
     if args.open:
         subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", index], check=False)

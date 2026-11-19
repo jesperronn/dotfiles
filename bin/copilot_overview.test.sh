@@ -41,19 +41,21 @@ run_overview() {
 test_writes_index_and_one_page_per_session() {
   run_overview
   assert_eq "yes" "$([[ -s "$OUT/index.html" && -s "$OUT/s/aaaa1111.html" && -s "$OUT/s/bbbb2222.html" ]] && echo yes || echo no)" "index and transcripts written"
-  assert_contains "$(cat "$OUT/index.html")" "s/aaaa1111.html" "index links to transcript"
+  assert_contains "$(cat "$OUT/sessions.json")" "s/aaaa1111.html" "list links to transcript"
 }
 
-test_embedded_data_cannot_break_out_of_script_tag() {
+test_index_is_generic_and_data_lives_in_sessions_files() {
   run_overview
-  local scripts
-  scripts="$(grep -c '</script>' "$OUT/index.html")"
-  assert_eq "1" "$scripts" "only the real closing script tag appears"
+  assert_contains "$(cat "$OUT/index.html")" 'src="sessions.js"' "index loads sessions.js"
+  assert_not_contains "$(cat "$OUT/index.html")" "aaaa1111" "no session data baked into index"
+  assert_eq "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$OUT/sessions.json")" "sessions.json lists both sessions"
+  assert_eq "0" "$(grep -c '</' "$OUT/sessions.js")" "sessions.js cannot close a script tag early"
+  assert_contains "$(cat "$OUT/sessions.js")" "window.SESSIONS=" "sessions.js assigns the list"
 }
 
 test_sessions_without_events_are_skipped() {
   run_overview
-  assert_not_contains "$(cat "$OUT/index.html")" "empty-dir" "directory without events.jsonl skipped"
+  assert_not_contains "$(cat "$OUT/sessions.json")" "empty-dir" "directory without events.jsonl skipped"
 }
 
 test_missing_directory_fails() {
