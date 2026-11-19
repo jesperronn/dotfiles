@@ -75,21 +75,25 @@ dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px
 </style></head><body>
 <header><h1>Copilot sessions overview</h1>
 <div class="bar"><button id="fall" class="on">All</button><button id="ffav">Favourites</button>
-<input type="search" id="q" placeholder="search prompt, project, labels, notes, tags"><button id="exp">Export…</button><button id="help" title="what do the numbers mean?">?</button></div>
+<input type="search" id="q" placeholder="search prompt, project, labels, notes, tags"><button id="exp">Export…</button><button id="imp0" title="restore favourites, roles, tags and notes from an export">Import…</button><button id="help" title="what do the numbers mean?">?</button></div>
 <div class="bar" id="sorts"><span class="dim">sort</span></div>
 <div class="bar"><button id="ftoggle">Filters ▾</button><span class="dim" id="fsum"></span><button id="fclear" hidden>clear</button><span class="count" id="count"></span></div>
 <div id="filters" hidden><div class="bar"><span class="dim">project</span><span id="fproj"></span></div><div class="bar"><span class="dim">label</span><span id="flab"></span></div></div>
 <div id="legend" hidden></div></header>
 <main id="list"></main>
-<dialog id="dlg"><p><b>Favourites and notes</b> — copy this somewhere safe; localStorage is per browser.</p><textarea id="out" readonly></textarea>
-<p><button id="cmd">Markdown</button> <button id="cjson">JSON</button> <button id="imp">Import JSON</button> <button id="cls">Close</button></p></dialog>
+<dialog id="dlg"><p id="dlgtitle"><b>Favourites and notes</b></p><p class="dim" id="dlghint"></p>
+<textarea id="out"></textarea>
+<p id="expbtns"><button id="cmd">Markdown</button> <button id="cjson">JSON</button></p>
+<p id="impbtns"><input type="file" id="file" accept=".json,application/json"> <button id="imp">Merge import</button></p>
+<p><button id="cls">Close</button></p></dialog>
 <script src="sessions.js"></script>
 <script>
 const SESSIONS=window.SESSIONS||[];
 const KEY='copilot_overview_v1';
 let state={};
 try{state=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+function prune(){for(const id of Object.keys(state)){const v=state[id];if(!v.fav&&!v.role&&!v.tags&&!v.note)delete state[id]}}
+function save(){prune();try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
 function st(id){return state[id]||(state[id]={fav:false,role:'',tags:'',note:''})}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -185,10 +189,24 @@ $('ffav').onclick=()=>{onlyFav=true;$('ffav').classList.add('on');$('fall').clas
 $('q').addEventListener('input',render);
 function exportMd(){return SESSIONS.filter(s=>st(s.id).fav).map(s=>{const x=st(s.id);
   return `- [${x.role||'?'}] ${s.id8} ${s.project} ${s.date} — ${s.prompt}\n  labels: ${s.labels.join(', ')}${x.tags?'\n  tags: '+x.tags:''}${x.note?'\n  note: '+x.note:''}`}).join('\n')}
-$('exp').onclick=()=>{$('out').value=exportMd();$('dlg').showModal()};
+function dlg(mode){
+  const exp=mode==='export';$('expbtns').hidden=!exp;$('impbtns').hidden=exp;$('out').readOnly=exp;
+  $('dlgtitle').innerHTML=exp?'<b>Export</b> favourites, roles, tags and notes':'<b>Import</b> favourites, roles, tags and notes';
+  $('dlghint').textContent=exp?'JSON restores everything on import; Markdown is a readable summary of favourites only. localStorage is per browser, so keep a copy.'
+    :'Paste a JSON export, or pick the .json file. Entries are merged: sessions in the import replace your entries for those sessions; others stay.';
+  prune();$('out').value=exp?JSON.stringify(state,null,1):'';$('file').value='';$('dlg').showModal()}
+$('exp').onclick=()=>dlg('export');
+$('imp0').onclick=()=>dlg('import');
 $('cmd').onclick=()=>{$('out').value=exportMd()};
-$('cjson').onclick=()=>{$('out').value=JSON.stringify(state,null,1);$('out').readOnly=false};
-$('imp').onclick=()=>{try{state=Object.assign(state,JSON.parse($('out').value));save();render();$('dlg').close()}catch(e){alert('Not valid JSON')}};
+$('cjson').onclick=()=>{prune();$('out').value=JSON.stringify(state,null,1)};
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{$('out').value=r.result};r.readAsText(f)};
+$('imp').onclick=()=>{
+  let data;try{data=JSON.parse($('out').value)}catch(e){alert('Not valid JSON');return}
+  if(!data||typeof data!=='object'||Array.isArray(data)){alert('Expected an object keyed by session id');return}
+  let n=0;
+  for(const [id,v] of Object.entries(data)){if(!v||typeof v!=='object')continue;
+    state[id]={fav:v.fav===true,role:['bad','good','outlier'].includes(v.role)?v.role:'',tags:String(v.tags||''),note:String(v.note||'')};n++}
+  save();render();$('dlg').close();alert('Imported '+n+' session entr'+(n===1?'y':'ies'))};
 $('cls').onclick=()=>$('dlg').close();
 render();
 </script></body></html>"""
