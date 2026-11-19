@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""copilot_overview — one HTML overview of a folder of copied Copilot sessions, to pick a talk shortlist.
+
+Usage: copilot_overview <sessions-dir> [--out DIR] [--max-result N] [--open]
+<sessions-dir> holds <session-id>/{workspace.yaml,events.jsonl} (e.g. made by copilot_shortlist --copy).
+Writes DIR/index.html plus DIR/s/<id8>.html (one transcript per session, via copilot_show).
+Favourites, role, tags and notes live in the browser's localStorage; use the export button to keep them.
+Default DIR: <sessions-dir>/../overview
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+def load_script(name):
+    """Import a sibling extension-less script as a module."""
+    path = os.path.join(HERE, name)
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def session_row(s, link):
+    return {
+        "id": s["id"], "id8": s["id"][:8], "date": s["started"][:10], "project": os.path.basename(s["project"].rstrip("/")),
+        "client": s["client"], "userTurns": s["user_turns"], "turns": s["turns"], "minutes": round(s["duration_min"]),
+        "tokens": s["tokens_total"], "toolCalls": s["tool_calls"], "toolErrors": s["tool_errors"],
+        "added": s["lines_added"], "removed": s["lines_removed"], "bad": s["bad"], "good": s["good"],
+        "outlier": s["outlier"], "labels": s["labels"], "prompt": s["first_prompt"], "link": link,
+    }
+
+
+PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Copilot sessions overview</title><style>
+:root{--bg:#fff;--fg:#1f2328;--mut:#656d76;--line:#d0d7de;--card:#f6f8fa;--acc:#0969da;--star:#bf8700;--bad:#cf222e;--good:#1a7f37;--out:#8250df}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mut:#8d96a0;--line:#30363d;--card:#161b22;--acc:#58a6ff;--star:#e3b341;--bad:#ff7b72;--good:#3fb950;--out:#d2a8ff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,system-ui,sans-serif}
+header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px;z-index:5}
+h1{font-size:17px;margin:0 0 8px}.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.bar input[type=search]{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:200px}
+button,select{padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer;font:inherit}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}.count{color:var(--mut);margin-left:auto}
+main{padding:12px 16px;max-width:1100px;margin:auto}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
+.card.fav{border-color:var(--star);box-shadow:inset 3px 0 0 var(--star)}
+.top{display:flex;gap:10px;align-items:flex-start}.star{font-size:20px;line-height:1;background:none;border:0;padding:0;color:var(--mut)}.fav .star{color:var(--star)}
+.title{font-weight:600;flex:1;min-width:0}.title a{color:var(--acc);text-decoration:none}.title a:hover{text-decoration:underline}
+.meta{color:var(--mut);font-size:12px;margin-top:2px}.scores span{margin-right:10px;font-variant-numeric:tabular-nums}
+.s-bad{color:var(--bad)}.s-good{color:var(--good)}.s-out{color:var(--out)}
+.chips{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}.chip{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg)}
+.chip.neg{color:var(--bad);border-color:var(--bad)}.chip.pos{color:var(--good);border-color:var(--good)}.chip.tag{color:var(--acc);border-color:var(--acc)}
+.edit{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.edit input,.edit textarea{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+.edit textarea{flex:1;min-width:240px;height:34px;resize:vertical}.edit input{width:200px}
+dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px}dialog textarea{width:100%;height:300px;font:12px ui-monospace,monospace}
+</style></head><body>
+<header><h1>Copilot sessions overview</h1><div class="bar">
+<button id="fall" class="on">All</button><button id="ffav">Favourites</button>
+<input type="search" id="q" placeholder="search prompt, project, labels, notes, tags">
+<select id="sort"><option value="bad">sort: worst first</option><option value="good">sort: best first</option><option value="outlier">sort: outlier score</option><option value="tokens">sort: tokens</option><option value="date">sort: newest</option><option value="turns">sort: user messages</option></select>
+<select id="role"><option value="">any role</option><option>bad</option><option>good</option><option>outlier</option><option value="none">no role</option></select>
+<button id="exp">Export…</button><span class="count" id="count"></span></div></header>
+<main id="list"></main>
+<dialog id="dlg"><p><b>Favourites and notes</b> — copy this somewhere safe; localStorage is per browser.</p><textarea id="out" readonly></textarea>
+<p><button id="cmd">Markdown</button> <button id="cjson">JSON</button> <button id="imp">Import JSON</button> <button id="cls">Close</button></p></dialog>
+<script>
+const SESSIONS=__DATA__;
+const KEY='copilot_overview_v1';
+let state={};
+try{state=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(state))}catch(e){}}
+function st(id){return state[id]||(state[id]={fav:false,role:'',tags:'',note:''})}
+const $=id=>document.getElementById(id);
+let onlyFav=false;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tok=n=>n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n);
+const NEG=/repeated|corrections|loop|error-rate|aborted|no-shutdown|abandoned|burn|permission|session-errors/;
+function visible(){
+  const q=$('q').value.toLowerCase(),role=$('role').value,key=$('sort').value;
+  let rows=SESSIONS.filter(s=>{const x=st(s.id);
+    if(onlyFav&&!x.fav)return false;
+    if(role==='none'?x.role:role&&x.role!==role)return false;
+    return !q||(s.prompt+' '+s.project+' '+s.labels.join(' ')+' '+x.note+' '+x.tags).toLowerCase().includes(q)});
+  const val={bad:s=>s.bad,good:s=>s.good,outlier:s=>s.outlier,tokens:s=>s.tokens,date:s=>s.date,turns:s=>s.userTurns};
+  return rows.sort((a,b)=>val[key](a)<val[key](b)?1:-1);
+}
+function render(){
+  const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
+  $('count').textContent=rows.length+' shown · '+favs+' ★ of '+SESSIONS.length;
+  $('list').innerHTML=rows.map(s=>{const x=st(s.id);
+    const chips=s.labels.map(l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}">${esc(l)}</span>`).join('')
+      +x.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="chip tag">#${esc(t)}</span>`).join('');
+    return `<div class="card${x.fav?' fav':''}" data-id="${s.id}"><div class="top"><button class="star" title="favourite">${x.fav?'★':'☆'}</button>
+      <div class="title"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a>
+      <div class="meta">${esc(s.project)} · ${s.date} · ${esc(s.client)} · ${s.id8} · ${s.userTurns} msgs · ${s.turns} turns · ${s.minutes}m active · ${tok(s.tokens)} tok · ${s.toolErrors}/${s.toolCalls} tool errors · +${s.added}/−${s.removed}</div></div>
+      <div class="scores"><span class="s-bad">bad ${s.bad}</span><span class="s-good">good ${s.good}</span><span class="s-out">out ${s.outlier}</span></div></div>
+      <div class="chips">${chips}</div>
+      <div class="edit"><select class="role">${['','bad','good','outlier'].map(r=>`<option value="${r}"${x.role===r?' selected':''}>${r||'role…'}</option>`).join('')}</select>
+      <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"><textarea class="note" placeholder="note: why this one?">${esc(x.note)}</textarea></div></div>`}).join('');
+}
+$('list').addEventListener('click',e=>{if(!e.target.classList.contains('star'))return;
+  const id=e.target.closest('.card').dataset.id;st(id).fav=!st(id).fav;save();render()});
+$('list').addEventListener('change',e=>{const id=e.target.closest('.card').dataset.id,c=e.target.classList;
+  if(c.contains('role'))st(id).role=e.target.value;else if(c.contains('tags'))st(id).tags=e.target.value;else if(c.contains('note'))st(id).note=e.target.value;
+  save();render()});
+$('fall').onclick=()=>{onlyFav=false;$('fall').classList.add('on');$('ffav').classList.remove('on');render()};
+$('ffav').onclick=()=>{onlyFav=true;$('ffav').classList.add('on');$('fall').classList.remove('on');render()};
+['q','sort','role'].forEach(i=>$(i).addEventListener('input',render));
+function exportMd(){return SESSIONS.filter(s=>st(s.id).fav).map(s=>{const x=st(s.id);
+  return `- [${x.role||'?'}] ${s.id8} ${s.project} ${s.date} — ${s.prompt}\n  labels: ${s.labels.join(', ')}${x.tags?'\n  tags: '+x.tags:''}${x.note?'\n  note: '+x.note:''}`}).join('\n')}
+$('exp').onclick=()=>{$('out').value=exportMd();$('dlg').showModal()};
+$('cmd').onclick=()=>{$('out').value=exportMd()};
+$('cjson').onclick=()=>{$('out').value=JSON.stringify(state,null,1);$('out').readOnly=false};
+$('imp').onclick=()=>{try{state=Object.assign(state,JSON.parse($('out').value));save();render();$('dlg').close()}catch(e){alert('Not valid JSON')}};
+$('cls').onclick=()=>$('dlg').close();
+render();
+</script></body></html>"""
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="copilot_overview", description=__doc__.split("\n\n")[0])
+    p.add_argument("sessions", help="folder of copied session directories")
+    p.add_argument("--out", help="output directory (default: <sessions>/../overview)")
+    p.add_argument("--max-result", type=int, default=1500)
+    p.add_argument("--open", action="store_true")
+    args = p.parse_args(argv)
+    root = os.path.abspath(os.path.expanduser(args.sessions))
+    if not os.path.isdir(root):
+        print(f"copilot_overview: no such directory: {root}", file=sys.stderr)
+        return 1
+    out = os.path.abspath(os.path.expanduser(args.out)) if args.out else os.path.join(os.path.dirname(root), "overview")
+    short, show = load_script("copilot_shortlist"), load_script("copilot_show")
+    sessions = []
+    for sid in sorted(os.listdir(root)):
+        path = os.path.join(root, sid)
+        if os.path.isdir(path):
+            s = short.analyze_session(path, sid)
+            if s:
+                sessions.append(s)
+    if not sessions:
+        print("copilot_overview: no sessions with events.jsonl found.", file=sys.stderr)
+        return 1
+    short.score(sessions)  # outlier cut-offs are relative to this folder, not your whole history
+    os.makedirs(os.path.join(out, "s"), exist_ok=True)
+    rows = []
+    for s in sessions:
+        meta = show.read_meta(s["path"])
+        page = show.render(meta, show.build_items(show.load_events(os.path.join(s["path"], "events.jsonl"))),
+                           max(0, args.max_result), True)
+        rel = f"s/{s['id'][:8]}.html"
+        with open(os.path.join(out, rel), "w", encoding="utf-8") as fh:
+            fh.write(page)
+        row = session_row(s, rel)
+        row["prompt"] = show.redact(row["prompt"])
+        rows.append(row)
+    data = json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")
+    index = os.path.join(out, "index.html")
+    with open(index, "w", encoding="utf-8") as fh:
+        fh.write(PAGE.replace("__DATA__", data))
+    print(index)
+    if args.open:
+        subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", index], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
