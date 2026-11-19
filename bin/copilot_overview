@@ -52,7 +52,7 @@ button.on{background:color-mix(in srgb,var(--acc) 16%,var(--bg));border-color:va
 #filters{max-height:32vh;overflow:auto;border-top:1px dashed var(--line);padding-top:6px}#filters[hidden],#legend[hidden]{display:none}
 #legend{font-size:12px;color:var(--mut);margin-top:6px;line-height:1.6}#legend b{color:var(--fg)}
 main{padding:0 8px 40px;overflow-x:auto}.grid{min-width:820px;font-size:13px}
-.item{display:grid;grid-template-columns:24px 40px 112px minmax(160px,1fr) 66px 92px 92px 82px 92px 66px;column-gap:6px;align-items:center;padding:5px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.item{display:grid;grid-template-columns:24px 40px var(--projw,112px) minmax(160px,1fr) 66px 92px 92px 82px 92px 66px;column-gap:6px;align-items:center;padding:5px 4px;border-bottom:1px solid var(--line);cursor:pointer}
 .item:hover{background:var(--card)}.item.fav{background:color-mix(in srgb,var(--star) 12%,transparent)}
 .item>*{min-width:0;white-space:nowrap}.c-star{grid-row:span 2;align-self:start}
 .c-proj,.c-p{overflow:hidden;text-overflow:ellipsis}.c-p{font-weight:600}.c-p a{color:var(--acc);text-decoration:none}.c-p a:hover{text-decoration:underline}
@@ -135,6 +135,7 @@ function pills(){
   const n=fProj.size+fLab.size;$('fclear').hidden=!n;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
 }
 function render(){
+  document.documentElement.style.setProperty('--projw',(Math.min(32,Math.max(8,...SESSIONS.map(s=>s.project.length)))+1)+'ch');
   pills();
   const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
   $('count').textContent=rows.length+' shown · '+favs+' ★ of '+SESSIONS.length;
