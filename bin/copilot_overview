@@ -51,11 +51,13 @@ button{padding:3px 10px;border:1px solid var(--line);border-radius:14px;backgrou
 button.on{background:color-mix(in srgb,var(--acc) 16%,var(--bg));border-color:var(--acc);box-shadow:0 0 0 1px var(--acc)}.count{color:var(--mut);margin-left:auto;font-size:12px}
 #filters{max-height:32vh;overflow:auto;border-top:1px dashed var(--line);padding-top:6px}#filters[hidden],#legend[hidden]{display:none}
 #legend{font-size:12px;color:var(--mut);margin-top:6px;line-height:1.6}#legend b{color:var(--fg)}
-main{padding:0 8px 40px;overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:13px;min-width:860px}
-tbody.item{border-bottom:1px solid var(--line);cursor:pointer}tbody.item:hover td{background:var(--card)}tbody.fav td{background:color-mix(in srgb,var(--star) 12%,transparent)}
-td{padding:2px 6px;white-space:nowrap;vertical-align:middle}tr.l1 td{padding-top:5px}tr.l2 td{padding-bottom:5px}
-td.p{max-width:0;width:100%;min-width:180px;overflow:hidden;text-overflow:ellipsis;font-weight:600}td.p a{color:var(--acc);text-decoration:none}td.p a:hover{text-decoration:underline}
-td.n{width:1%;text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2px}td.n b{font-variant-numeric:tabular-nums;font-weight:600}
+main{padding:0 8px 40px;overflow-x:auto}.grid{min-width:820px;font-size:13px}
+.item{display:grid;grid-template-columns:24px 40px 112px minmax(160px,1fr) 66px 92px 92px 82px 92px 66px;column-gap:6px;align-items:center;padding:5px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.item:hover{background:var(--card)}.item.fav{background:color-mix(in srgb,var(--star) 12%,transparent)}
+.item>*{min-width:0;white-space:nowrap}.c-star{grid-row:span 2;align-self:start}
+.c-proj,.c-p{overflow:hidden;text-overflow:ellipsis}.c-p{font-weight:600}.c-p a{color:var(--acc);text-decoration:none}.c-p a:hover{text-decoration:underline}
+.c-n{text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2px}.c-n b{font-variant-numeric:tabular-nums;font-weight:600}
+.item>.l2{grid-column:2 / -1;white-space:normal}
 .pill{display:inline-block;padding:0 7px;border-radius:10px}
 .bad .pill{color:var(--bad);background:color-mix(in srgb,var(--bad) 16%,transparent)}.good .pill{color:var(--good);background:color-mix(in srgb,var(--good) 16%,transparent)}.out .pill{color:var(--out);background:color-mix(in srgb,var(--out) 16%,transparent)}
 .star{font-size:17px;line-height:1;background:none;border:0;padding:0 2px;color:var(--mut)}.fav .star{color:var(--star)}
@@ -66,7 +68,7 @@ td.n{width:1%;text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2
 .chip.on{background:color-mix(in srgb,var(--acc) 16%,var(--bg));border-color:var(--acc);box-shadow:0 0 0 1px var(--acc);color:var(--fg)}
 .role{font-size:11px;padding:0 7px;border-radius:4px;color:#fff;margin-right:4px}.role.bad{background:var(--bad)}.role.good{background:var(--good)}.role.outlier{background:var(--out)}
 .note{color:var(--mut);font-size:12px;font-style:italic}.sub{padding-left:10px;white-space:normal;max-width:0}
-tr.edit td{white-space:normal;background:var(--card);padding:8px 12px}.edit .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
+.item>.edit{grid-column:2 / -1;white-space:normal;background:var(--card);padding:8px 12px;border-radius:6px;margin-top:4px;cursor:default}.edit .row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;align-items:center}
 .edit input,.edit textarea{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
 .edit textarea{flex:1;min-width:240px;height:60px;resize:vertical}.edit input{width:220px}
 dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px}dialog textarea{width:100%;height:300px;font:12px ui-monospace,monospace}
@@ -136,30 +138,30 @@ function render(){
   pills();
   const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
   $('count').textContent=rows.length+' shown · '+favs+' ★ of '+SESSIONS.length;
-  const kv=(k,v,cls,tip)=>`<td class="n ${cls}" title="${esc(tip)}"><span class="k">${k}</span> ${cls?`<span class="pill"><b>${v}</b></span>`:`<b>${v}</b>`}</td>`;
+  const kv=(k,v,cls,tip)=>`<div class="c-n ${cls}" title="${esc(tip)}"><span class="k">${k}</span> ${cls?`<span class="pill"><b>${v}</b></span>`:`<b>${v}</b>`}</div>`;
   const tip=k=>METRICS.find(m=>m.k===k).tip;
-  $('list').innerHTML='<table>'+rows.map(s=>{const x=st(s.id),isOpen=open.has(s.id);
+  $('list').innerHTML='<div class="grid">'+rows.map(s=>{const x=st(s.id),isOpen=open.has(s.id);
     const tags=x.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="chip tag" data-hl="t:${esc(t)}">#${esc(t)}</span>`).join('');
-    let h=`<tbody class="item${x.fav?' fav':''}" data-id="${s.id}"><tr class="l1"><td rowspan="2" style="vertical-align:top;padding-top:4px"><button class="star" title="favourite">${x.fav?'★':'☆'}</button></td>
-      <td title="${tip('date')}"><span class="dim">${s.date.slice(5)}</span></td><td><span class="dim">${esc(s.project)}</span></td>
-      <td class="p"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a></td>
+    let h=`<div class="item${x.fav?' fav':''}" data-id="${s.id}"><div class="c-star"><button class="star" title="favourite">${x.fav?'★':'☆'}</button></div>
+      <div class="dim" title="${esc(tip('date'))}">${s.date.slice(5)}</div><div class="dim c-proj" title="${esc(s.project)}">${esc(s.project)}</div>
+      <div class="c-p"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a></div>
       ${kv('msgs',s.userTurns,'',tip('msgs'))}${kv('tokens',tok(s.tokens),'',tip('tokens'))}${kv('err',s.toolErrors+'/'+s.toolCalls,'',tip('err'))}
-      ${kv('bad',s.bad,'bad',tip('bad'))}${kv('good',s.good,'good',tip('good'))}${kv('out',s.outlier,'out',tip('out'))}</tr>
-      <tr class="l2"><td colspan="9" class="sub">${x.role?`<span class="role ${x.role}">${x.role}</span>`:''}${s.labels.map(chip).join('')}${tags}${x.note?` <span class="note">📝 ${esc(x.note.slice(0,120))}</span>`:''}</td></tr>`;
-    if(isOpen)h+=`<tr class="edit"><td></td><td colspan="9"><div class="dim">${esc(s.client)} · ${s.id8} · ${s.turns} turns · ${s.minutes}m active · +${s.added}/−${s.removed} lines</div>
+      ${kv('bad',s.bad,'bad',tip('bad'))}${kv('good',s.good,'good',tip('good'))}${kv('out',s.outlier,'out',tip('out'))}
+      <div class="l2">${x.role?`<span class="role ${x.role}">${x.role}</span>`:''}${s.labels.map(chip).join('')}${tags}${x.note?` <span class="note">📝 ${esc(x.note.slice(0,120))}</span>`:''}</div>`;
+    if(isOpen)h+=`<div class="edit"><div class="dim">${esc(s.client)} · ${s.id8} · ${s.turns} turns · ${s.minutes}m active · +${s.added}/−${s.removed} lines</div>
       <div class="row"><span class="dim">role</span>${['bad','good','outlier',''].map(r=>`<button data-role="${r}" class="${x.role===r?'on':''}">${r||'none'}</button>`).join('')}
       <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"></div>
-      <div class="row"><textarea class="notebox" placeholder="note: why this one?">${esc(x.note)}</textarea></div></td></tr>`;
-    return h+'</tbody>'}).join('')+'</table>';
+      <div class="row"><textarea class="notebox" placeholder="note: why this one?">${esc(x.note)}</textarea></div></div>`;
+    return h+'</div>'}).join('')+'</div>';
 }
 $('list').addEventListener('click',e=>{
   if(e.target.closest('a'))return;
   const lc=e.target.closest('.chip[data-l]');if(lc){toggle(fLab,lc.dataset.l);render();return}
-  const tb=e.target.closest('tbody.item');if(!tb)return;const id=tb.dataset.id;
+  const tb=e.target.closest('.item');if(!tb)return;const id=tb.dataset.id;
   if(e.target.closest('.edit')){const r=e.target.closest('[data-role]');if(r){st(id).role=r.dataset.role;save();render()}return}
   if(e.target.classList.contains('star'))st(id).fav=!st(id).fav;else open.has(id)?open.delete(id):open.add(id);
   save();render()});
-$('list').addEventListener('change',e=>{const tb=e.target.closest('tbody.item');if(!tb)return;const id=tb.dataset.id;
+$('list').addEventListener('change',e=>{const tb=e.target.closest('.item');if(!tb)return;const id=tb.dataset.id;
   if(e.target.classList.contains('tags'))st(id).tags=e.target.value;else if(e.target.classList.contains('notebox'))st(id).note=e.target.value;
   save();render()});
 $('sorts').addEventListener('click',e=>{const k=e.target.dataset.k;if(!k||k===sortKey)return;sortKey=k;sortDir=-1;render()});
