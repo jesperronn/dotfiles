@@ -49,17 +49,21 @@ h1{font-size:17px;margin:0 0 8px}.bar{display:flex;flex-wrap:wrap;gap:8px;align-
 .bar input[type=search]{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);min-width:200px}
 button,select{padding:4px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer;font:inherit}
 button.on{background:var(--acc);color:#fff;border-color:var(--acc)}.count{color:var(--mut);margin-left:auto}
-main{padding:12px 16px;max-width:1100px;margin:auto}
-.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:8px 0;background:var(--card)}
-.card.fav{border-color:var(--star);box-shadow:inset 3px 0 0 var(--star)}
-.top{display:flex;gap:10px;align-items:flex-start}.star{font-size:20px;line-height:1;background:none;border:0;padding:0;color:var(--mut)}.fav .star{color:var(--star)}
-.title{font-weight:600;flex:1;min-width:0}.title a{color:var(--acc);text-decoration:none}.title a:hover{text-decoration:underline}
-.meta{color:var(--mut);font-size:12px;margin-top:2px}.scores span{margin-right:10px;font-variant-numeric:tabular-nums}
+main{padding:0 8px 40px;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{position:sticky;top:var(--hh,84px);background:var(--bg);text-align:left;color:var(--mut);font-weight:600;font-size:11px;padding:4px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:3px 6px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+tr.row{cursor:pointer}tr.row:hover td{background:var(--card)}tr.fav td{background:color-mix(in srgb,var(--star) 12%,transparent)}
+td.num{text-align:right;font-variant-numeric:tabular-nums}td.p{max-width:0;width:100%;min-width:260px;overflow:hidden;text-overflow:ellipsis}
+td.p a{color:var(--acc);text-decoration:none}td.p a:hover{text-decoration:underline}
+.star{font-size:17px;line-height:1;background:none;border:0;padding:0 2px;color:var(--mut)}.fav .star{color:var(--star)}
 .s-bad{color:var(--bad)}.s-good{color:var(--good)}.s-out{color:var(--out)}
-.chips{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}.chip{font-size:11px;padding:1px 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg)}
+.chip{font-size:11px;padding:0 6px;border-radius:10px;border:1px solid var(--line);background:var(--bg);margin-right:3px;display:inline-block}
 .chip.neg{color:var(--bad);border-color:var(--bad)}.chip.pos{color:var(--good);border-color:var(--good)}.chip.tag{color:var(--acc);border-color:var(--acc)}
+.role{font-size:11px;padding:0 6px;border-radius:4px;color:#fff}.role.bad{background:var(--bad)}.role.good{background:var(--good)}.role.outlier{background:var(--out)}
+tr.detail td{white-space:normal;background:var(--card);padding:10px 12px}.meta{color:var(--mut);font-size:12px;margin-bottom:6px}
 .edit{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.edit input,.edit textarea{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
-.edit textarea{flex:1;min-width:240px;height:34px;resize:vertical}.edit input{width:200px}
+.edit textarea{flex:1;min-width:240px;height:60px;resize:vertical}.edit input{width:220px}
 dialog{max-width:700px;width:90%;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:8px}dialog textarea{width:100%;height:300px;font:12px ui-monospace,monospace}
 </style></head><body>
 <header><h1>Copilot sessions overview</h1><div class="bar">
@@ -93,24 +97,31 @@ function visible(){
   const val={bad:s=>s.bad,good:s=>s.good,outlier:s=>s.outlier,tokens:s=>s.tokens,date:s=>s.date,turns:s=>s.userTurns};
   return rows.sort((a,b)=>val[key](a)<val[key](b)?1:-1);
 }
+const open=new Set();
+const chip=l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}">${esc(l)}</span>`;
 function render(){
   const rows=visible(),favs=SESSIONS.filter(s=>st(s.id).fav).length;
   $('count').textContent=rows.length+' shown · '+favs+' ★ of '+SESSIONS.length;
-  $('list').innerHTML=rows.map(s=>{const x=st(s.id);
-    const chips=s.labels.map(l=>`<span class="chip ${NEG.test(l)?'neg':l.startsWith('clean')?'pos':''}">${esc(l)}</span>`).join('')
-      +x.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>`<span class="chip tag">#${esc(t)}</span>`).join('');
-    return `<div class="card${x.fav?' fav':''}" data-id="${s.id}"><div class="top"><button class="star" title="favourite">${x.fav?'★':'☆'}</button>
-      <div class="title"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a>
-      <div class="meta">${esc(s.project)} · ${s.date} · ${esc(s.client)} · ${s.id8} · ${s.userTurns} msgs · ${s.turns} turns · ${s.minutes}m active · ${tok(s.tokens)} tok · ${s.toolErrors}/${s.toolCalls} tool errors · +${s.added}/−${s.removed}</div></div>
-      <div class="scores"><span class="s-bad">bad ${s.bad}</span><span class="s-good">good ${s.good}</span><span class="s-out">out ${s.outlier}</span></div></div>
-      <div class="chips">${chips}</div>
-      <div class="edit"><select class="role">${['','bad','good','outlier'].map(r=>`<option value="${r}"${x.role===r?' selected':''}>${r||'role…'}</option>`).join('')}</select>
-      <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"><textarea class="note" placeholder="note: why this one?">${esc(x.note)}</textarea></div></div>`}).join('');
+  const head='<thead><tr><th></th><th>date</th><th>project</th><th>first prompt</th><th>msgs</th><th>tokens</th><th>err</th><th>bad</th><th>good</th><th>out</th><th>labels</th><th>role</th></tr></thead>';
+  $('list').innerHTML='<table>'+head+'<tbody>'+rows.map(s=>{const x=st(s.id),isOpen=open.has(s.id);
+    const tags=x.tags.split(',').map(t=>t.trim()).filter(Boolean);
+    const short=s.labels.slice(0,2).map(chip).join('')+(s.labels.length>2?`<span class="chip">+${s.labels.length-2}</span>`:'')+tags.map(t=>`<span class="chip tag">#${esc(t)}</span>`).join('');
+    let h=`<tr class="row${x.fav?' fav':''}" data-id="${s.id}"><td><button class="star" title="favourite">${x.fav?'★':'☆'}</button></td><td>${s.date.slice(5)}</td><td>${esc(s.project)}</td>
+      <td class="p"><a href="${esc(s.link)}" target="_blank">${esc(s.prompt||'(no prompt)')}</a>${x.note?' <span class="meta">📝</span>':''}</td><td class="num">${s.userTurns}</td><td class="num">${tok(s.tokens)}</td><td class="num">${s.toolErrors}/${s.toolCalls}</td>
+      <td class="num s-bad">${s.bad}</td><td class="num s-good">${s.good}</td><td class="num s-out">${s.outlier}</td><td>${short}</td><td>${x.role?`<span class="role ${x.role}">${x.role}</span>`:''}</td></tr>`;
+    if(isOpen)h+=`<tr class="detail" data-id="${s.id}"><td></td><td colspan="11"><div class="meta">${esc(s.client)} · ${s.id8} · ${s.turns} turns · ${s.minutes}m active · +${s.added}/−${s.removed} lines</div>${s.labels.map(chip).join('')}
+      <div class="edit"><select class="roles">${['','bad','good','outlier'].map(r=>`<option value="${r}"${x.role===r?' selected':''}>${r||'role…'}</option>`).join('')}</select>
+      <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"><textarea class="note" placeholder="note: why this one?">${esc(x.note)}</textarea></div></td></tr>`;
+    return h}).join('')+'</tbody></table>';
 }
-$('list').addEventListener('click',e=>{if(!e.target.classList.contains('star'))return;
-  const id=e.target.closest('.card').dataset.id;st(id).fav=!st(id).fav;save();render()});
-$('list').addEventListener('change',e=>{const id=e.target.closest('.card').dataset.id,c=e.target.classList;
-  if(c.contains('role'))st(id).role=e.target.value;else if(c.contains('tags'))st(id).tags=e.target.value;else if(c.contains('note'))st(id).note=e.target.value;
+$('list').addEventListener('click',e=>{
+  if(e.target.closest('a'))return;
+  const tr=e.target.closest('tr.row');if(!tr)return;const id=tr.dataset.id;
+  if(e.target.classList.contains('star'))st(id).fav=!st(id).fav;
+  else open.has(id)?open.delete(id):open.add(id);
+  save();render()});
+$('list').addEventListener('change',e=>{const id=e.target.closest('tr.detail').dataset.id,c=e.target.classList;
+  if(c.contains('roles'))st(id).role=e.target.value;else if(c.contains('tags'))st(id).tags=e.target.value;else if(c.contains('note'))st(id).note=e.target.value;
   save();render()});
 $('fall').onclick=()=>{onlyFav=false;$('fall').classList.add('on');$('ffav').classList.remove('on');render()};
 $('ffav').onclick=()=>{onlyFav=true;$('ffav').classList.add('on');$('fall').classList.remove('on');render()};
