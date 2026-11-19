@@ -1,98 +1,105 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1090,SC1091
+
 set -euo pipefail
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
-BUILDER="$DIR/presentation-builder"
-PASS=0; FAIL=0
+DOTFILES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILDER="$DOTFILES_ROOT/bin/presentation-builder"
 
-ok()   { echo "[PASS] $1"; ((++PASS)); }
-fail() { echo "[FAIL] $1"; ((++FAIL)); }
+source "$DOTFILES_ROOT/bin/lib/bash_test.sh"
 
-# Setup
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+cleanup_test_tmp() { rm -rf "$TMP"; }
+trap 'cleanup_test_tmp' EXIT
 
-# ── Test: no args prints usage and exits non-zero ────────────────
-USAGE_OUT="$("$BUILDER" 2>&1 || true)"
-if echo "$USAGE_OUT" | grep -qi "usage"; then
-  ok "no args prints usage"
-else
-  fail "no args should print usage"
-fi
+write_slides() {
+  printf '# Hello World\n\nSubtitle here\n\n---\n\n## Slide Two\n\n- Bullet one\n- Bullet two\n' > "$1"
+}
 
-# ── Test: missing file exits non-zero ───────────────────────────
-if ! "$BUILDER" "$TMP/nonexistent.md" 2>/dev/null; then
-  ok "missing file exits non-zero"
-else
-  fail "missing file should exit non-zero"
-fi
+# Stub opener: records its arguments instead of launching a browser.
+make_opener_stub() {
+  OPENER_LOG="$TMP/opener.log"
+  OPENER_STUB="$TMP/opener"
+  : > "$OPENER_LOG"
+  printf '#!/usr/bin/env bash\necho "$@" >> "%s"\n' "$OPENER_LOG" > "$OPENER_STUB"
+  chmod +x "$OPENER_STUB"
+}
 
-# ── Test: basic build produces .html with same basename ─────────
-cat > "$TMP/my-slides.md" <<'MD'
-# Hello World
+test_no_args_prints_usage() {
+  local out status
+  capture_command out status "$BUILDER"
+  assert_not_status 0 "$status" "no args exits non-zero"
+  assert_contains "$out" "Usage" "no args prints usage"
+}
 
-Subtitle here
+test_missing_file_exits_non_zero() {
+  local out status
+  capture_command out status "$BUILDER" "$TMP/nonexistent.md"
+  assert_not_status 0 "$status" "missing file exits non-zero"
+}
 
----
+test_unknown_option_errors() {
+  local out status
+  capture_command out status "$BUILDER" --bogus
+  assert_not_status 0 "$status" "unknown option exits non-zero"
+  assert_contains "$out" "unknown option" "unknown option is reported"
+}
 
-## Slide Two
+test_help() {
+  local out status flag
+  for flag in --help -h; do
+    capture_command out status "$BUILDER" "$flag"
+    assert_status 0 "$status" "$flag exits 0"
+    assert_contains "$out" "--open" "$flag mentions --open"
+    assert_contains "$out" "--help" "$flag mentions --help"
+    assert_contains "$out" "<input.md>" "$flag mentions input argument"
+  done
+}
 
-- Bullet one
-- Bullet two
-MD
+test_build_output() {
+  write_slides "$TMP/my-slides.md"
+  local out status
+  capture_command out status "$BUILDER" "$TMP/my-slides.md"
+  assert_status 0 "$status" "build exits 0"
+  assert_contains "$out" "Built: $TMP/my-slides.html" "prints output path"
+  [[ -f "$TMP/my-slides.html" ]] || test_fail "output file not created"
+  test_pass "output file created with .html extension"
+  local html
+  html="$(cat "$TMP/my-slides.html")"
+  assert_contains "$html" "<!DOCTYPE html>" "output has DOCTYPE"
+  assert_contains "$html" "</html>" "output has closing html tag"
+  assert_contains "$html" "Bullet one" "markdown embedded in output"
+  assert_contains "$html" "text/markdown" "markdown script tag present"
+}
 
-"$BUILDER" "$TMP/my-slides.md" > /dev/null
-OUTPUT="$TMP/my-slides.html"
+test_hidden_slide_content_kept() {
+  printf '# Visible\n\n---\n\n[slide:hidden]\n## Hidden\n\nSecret content\n' > "$TMP/hidden.md"
+  "$BUILDER" "$TMP/hidden.md" > /dev/null
+  assert_contains "$(cat "$TMP/hidden.html")" "Secret content" "[slide:hidden] content present in source"
+}
 
-if [[ -f "$OUTPUT" ]]; then
-  ok "output file created with .html extension"
-else
-  fail "output file not found: $OUTPUT"
-fi
+test_open_invokes_opener() {
+  write_slides "$TMP/open.md"
+  make_opener_stub
+  local out status
+  PRESENTATION_BUILDER_OPENER="$OPENER_STUB" capture_command out status "$BUILDER" --open "$TMP/open.md"
+  assert_status 0 "$status" "--open exits 0"
+  assert_contains "$out" "Built: $TMP/open.html" "--open still prints output path"
+  assert_eq "$TMP/open.html" "$(cat "$OPENER_LOG")" "opener called with output path"
+}
 
-# ── Test: output is valid HTML (has doctype and closing tag) ─────
-if grep -q "<!DOCTYPE html>" "$OUTPUT" && grep -q "</html>" "$OUTPUT"; then
-  ok "output contains DOCTYPE and closing html tag"
-else
-  fail "output missing DOCTYPE or </html>"
-fi
+test_open_flag_after_input() {
+  write_slides "$TMP/after.md"
+  make_opener_stub
+  PRESENTATION_BUILDER_OPENER="$OPENER_STUB" "$BUILDER" "$TMP/after.md" --open > /dev/null
+  assert_eq "$TMP/after.html" "$(cat "$OPENER_LOG")" "--open after input also opens"
+}
 
-# ── Test: markdown content is embedded in source block ──────────
-if grep -q "Hello World" "$OUTPUT" && grep -q "Bullet one" "$OUTPUT"; then
-  ok "markdown content embedded in output"
-else
-  fail "markdown content missing from output"
-fi
+test_no_open_without_flag() {
+  write_slides "$TMP/noopen.md"
+  make_opener_stub
+  PRESENTATION_BUILDER_OPENER="$OPENER_STUB" "$BUILDER" "$TMP/noopen.md" > /dev/null
+  assert_eq "" "$(cat "$OPENER_LOG")" "opener not invoked without --open"
+}
 
-# ── Test: slide separator (---) is preserved in source block ────
-if grep -q "text/markdown" "$OUTPUT"; then
-  ok "markdown script tag present"
-else
-  fail "markdown script tag missing"
-fi
-
-# ── Test: [slide:hidden] slides supported (content still in source) ─
-cat > "$TMP/hidden.md" <<'MD'
-# Visible Slide
-
-Content here
-
----
-
-[slide:hidden]
-## Hidden Slide
-
-Secret content
-MD
-
-"$BUILDER" "$TMP/hidden.md" > /dev/null
-if grep -q "Secret content" "$TMP/hidden.html"; then
-  ok "[slide:hidden] content present in source (filtered by JS)"
-else
-  fail "[slide:hidden] content missing from source block"
-fi
-
-# ── Summary ──────────────────────────────────────────────────────
-echo ""
-echo "Results: $PASS passed, $FAIL failed"
-[[ $FAIL -eq 0 ]]
+run_tests "$@"

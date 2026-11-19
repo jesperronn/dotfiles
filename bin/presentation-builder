@@ -2,12 +2,60 @@
 # presentation-builder — turn a Markdown file into an HTML slide presentation.
 set -euo pipefail
 
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $(basename "$0") <input.md>" >&2
+usage() {
+  cat <<'USAGE'
+Usage: presentation-builder [--open] <input.md>
+       presentation-builder -h | --help
+
+Turn a Markdown file into a self-contained HTML slide presentation.
+Slides are separated by a line containing only '---'; a slide whose first
+line is '[slide:hidden]' is skipped.
+
+Arguments:
+  <input.md>    Markdown file to convert (required).
+
+Options:
+  --open        After building, open the HTML file in the default browser
+                ('open' on macOS, 'xdg-open' elsewhere). Override the
+                command with the PRESENTATION_BUILDER_OPENER env var.
+  -h, --help    Show this help and exit.
+
+Output:
+  Writes <input>.html next to the input file (a trailing .md is replaced
+  by .html) and prints "Built: <path>".
+
+Examples:
+  presentation-builder talk.md           # writes talk.html
+  presentation-builder --open talk.md    # build, then open in the browser
+USAGE
+}
+
+OPEN=0
+INPUT=""
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+    --open) OPEN=1 ;;
+    -*)
+      echo "Error: unknown option: $arg" >&2
+      usage >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "$INPUT" ]]; then
+        echo "Error: unexpected extra argument: $arg" >&2
+        usage >&2
+        exit 1
+      fi
+      INPUT="$arg"
+      ;;
+  esac
+done
+
+if [[ -z "$INPUT" ]]; then
+  echo "Usage: $(basename "$0") [--open] <input.md>" >&2
   exit 1
 fi
-
-INPUT="$1"
 
 if [[ ! -f "$INPUT" ]]; then
   echo "Error: file not found: $INPUT" >&2
@@ -435,3 +483,14 @@ cat >> "$OUTPUT" <<'HTMLEOF'
 HTMLEOF
 
 echo "Built: $OUTPUT"
+
+if [[ "$OPEN" == "1" ]]; then
+  if [[ -n "${PRESENTATION_BUILDER_OPENER:-}" ]]; then
+    OPENER="$PRESENTATION_BUILDER_OPENER"
+  elif [[ "$(uname -s)" == "Darwin" ]]; then
+    OPENER="open"
+  else
+    OPENER="xdg-open"
+  fi
+  "$OPENER" "$OUTPUT"
+fi
