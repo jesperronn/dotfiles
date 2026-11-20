@@ -12,7 +12,7 @@ button.on{background:color-mix(in srgb,var(--acc) 16%,var(--bg));border-color:va
 #legend{font-size:12px;color:var(--mut);margin-top:6px;line-height:1.6}#legend b{color:var(--fg)}
 main{padding:0 8px 40px;overflow-x:auto}.grid{min-width:820px;font-size:13px}
 .item{display:grid;grid-template-columns:24px 40px var(--projw,112px) minmax(160px,1fr) 66px 92px 92px 82px 92px 66px;column-gap:6px;align-items:center;padding:5px 4px;border-bottom:1px solid var(--line);cursor:pointer}
-.item:hover{background:var(--card)}.item.fav{background:color-mix(in srgb,var(--star) 12%,transparent)}
+.item:hover{background:var(--card)}.item.cur{box-shadow:inset 3px 0 0 var(--acc);background:var(--card)}.item.fav{background:color-mix(in srgb,var(--star) 12%,transparent)}
 .item>*{min-width:0;white-space:nowrap}.c-star{grid-row:span 2;align-self:start}
 .c-proj,.c-p{overflow:hidden;text-overflow:ellipsis}.c-p{font-weight:600}.c-p a{color:var(--acc);text-decoration:none}.c-p a:hover{text-decoration:underline}
 .c-n{text-align:right}.k{color:var(--mut);font-size:11px;margin-right:2px}.c-n b{font-variant-numeric:tabular-nums;font-weight:600}
@@ -102,6 +102,28 @@ function pills(){
   $('flab').innerHTML=cnt(s=>[...new Set(s.labels.map(l=>l.name))]).map(([l,n])=>`<button data-l="${esc(l)}" class="${fLab.has(l)?'on':''}" title="${esc((LABEL_INFO[l]||{}).help+' ['+SENT_WORD[(LABEL_INFO[l]||{}).sentiment||'']+']')}">${dot((LABEL_INFO[l]||{}).sentiment)}${esc(l)} <span class="x">${n}</span></button>`).join('');
   const n=fProj.size+fLab.size;$('fclear').hidden=!n;$('fsum').textContent=n?n+' filter'+(n>1?'s':'')+' active':'';
 }
+let curId=null,curIdx=0,visIds=[];
+function applyCur(rows){
+  visIds=rows.map(s=>s.id);
+  if(!visIds.length){curId=null;return}
+  let i=visIds.indexOf(curId);if(i<0)i=Math.min(curIdx,visIds.length-1);  // item vanished (e.g. unstarred in favourites view): stay at the same position
+  if(curId===null)i=-1;
+  curIdx=Math.max(i,0);curId=i<0?null:visIds[i];
+  const el=curId&&document.querySelector(`.item[data-id="${CSS.escape(curId)}"]`);if(el)el.classList.add('cur');
+}
+function moveCur(d,scroll=true){
+  if(!visIds.length)return;
+  const i=curId===null?(d>0?0:visIds.length-1):Math.max(0,Math.min(visIds.length-1,visIds.indexOf(curId)+d));
+  document.querySelectorAll('.item.cur').forEach(e=>e.classList.remove('cur'));
+  curId=visIds[i];curIdx=i;
+  const el=document.querySelector(`.item[data-id="${CSS.escape(curId)}"]`);if(el){el.classList.add('cur');if(scroll)el.scrollIntoView({block:'nearest'})}
+}
+document.addEventListener('keydown',e=>{
+  if(e.metaKey||e.ctrlKey||e.altKey||(e.target.closest&&e.target.closest('input,textarea,select,dialog')))return;
+  if(e.key==='j')moveCur(1);else if(e.key==='k')moveCur(-1);
+  else if(e.key==='s'&&curId){st(curId).fav=!st(curId).fav;save();render();const el=document.querySelector('.item.cur');if(el)el.scrollIntoView({block:'nearest'})}
+  else return;
+  e.preventDefault()});
 function render(){
   saveView();
   document.documentElement.style.setProperty('--projw',(Math.min(32,Math.max(8,...SESSIONS.map(s=>s.project.length)))+1)+'ch');
@@ -123,6 +145,7 @@ function render(){
       <input class="tags" placeholder="tags, comma separated" value="${esc(x.tags)}"></div>
       <div class="row"><textarea class="notebox" placeholder="note: why this one?">${esc(x.note)}</textarea></div></div>`;
     return h+'</div>'}).join('')+'</div>';
+  applyCur(rows);
 }
 $('list').addEventListener('click',e=>{
   if(e.target.closest('a'))return;
