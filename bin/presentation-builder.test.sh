@@ -102,4 +102,32 @@ test_no_open_without_flag() {
   assert_eq "" "$(cat "$OPENER_LOG")" "opener not invoked without --open"
 }
 
+# Run the embedded parser (inline + parseSlide) from a built HTML file on a
+# markdown snippet and print the resulting slide HTML (slide counter stripped).
+render_slide() {
+  local html_file="$1" md="$2"
+  node -e '
+    const fs = require("fs");
+    const src = fs.readFileSync(process.argv[1], "utf8");
+    const start = src.indexOf("function inline");
+    const end = src.indexOf("/* ── Build DOM");
+    const parse = new Function(src.slice(start, end) + "; return parseSlide;")();
+    process.stdout.write(parse(process.argv[2], 0, 1).replace(/^<span[^>]*>[^<]*<\/span>/, ""));
+  ' "$html_file" "$md"
+}
+
+test_nested_lists() {
+  write_slides "$TMP/nest.md"
+  "$BUILDER" "$TMP/nest.md" > /dev/null
+  local out
+  out="$(render_slide "$TMP/nest.html" $'- a\n  - b\n    - c\n- d')"
+  assert_eq "<ul><li>a<ul><li>b<ul><li>c</li></ul></li></ul></li><li>d</li></ul>" "$out" "nested unordered list"
+  out="$(render_slide "$TMP/nest.html" $'1. a\n   1. b\n   2. c\n2. d')"
+  assert_eq "<ol><li>a<ol><li>b</li><li>c</li></ol></li><li>d</li></ol>" "$out" "nested ordered list"
+  out="$(render_slide "$TMP/nest.html" $'1. a\n   - b\n   - c\n2. d\n- e')"
+  assert_eq "<ol><li>a<ul><li>b</li><li>c</li></ul></li><li>d</li></ol><ul><li>e</li></ul>" "$out" "ordered with nested unordered, then switch at top level"
+  out="$(render_slide "$TMP/nest.html" $'- a\n\t- tab child\n\npara')"
+  assert_eq "<ul><li>a<ul><li>tab child</li></ul></li></ul><p>para</p>" "$out" "tab indent and blank line ends list"
+}
+
 run_tests "$@"

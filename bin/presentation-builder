@@ -172,11 +172,33 @@ body {
   margin-bottom: 0.5rem;
 }
 
-.slide ul {
+.slide ul,
+.slide ol {
   list-style: none;
   padding: 0;
   margin-top: 0.25rem;
+  counter-reset: item;
 }
+
+.slide li > ul,
+.slide li > ol {
+  margin-top: 0;
+  margin-left: 0.75rem;
+}
+
+.slide ol > li { counter-increment: item; padding-left: 2rem; }
+
+.slide ol > li::before {
+  content: counter(item) '.';
+  top: 0;
+  width: auto;
+  height: auto;
+  background: none;
+  border-radius: 0;
+  color: var(--accent);
+}
+
+.slide li > ul > li::before { background: transparent; border: 1px solid var(--accent); }
 
 .slide li {
   font-size: var(--font-size-body);
@@ -348,32 +370,50 @@ cat >> "$OUTPUT" <<'HTMLEOF'
   function parseSlide(md, index, total) {
     const lines = md.trim().split('\n');
     let html = `<span class="slide-num">${String(index + 1).padStart(2,'0')} / ${String(total).padStart(2,'0')}</span>`;
-    let inList = false;
+    // Open lists, outermost first: { indent, tag } ('ul' or 'ol').
+    // An <li> stays open until the next item, so nested lists can live inside it.
+    const stack = [];
+
+    function closeTo(indent) {
+      while (stack.length && stack[stack.length - 1].indent > indent) {
+        html += `</li></${stack.pop().tag}>`;
+      }
+    }
+    function closeAll() { closeTo(-1); }
 
     for (const raw of lines) {
       const line = raw.trim();
-      if (!line) {
-        if (inList) { html += '</ul>'; inList = false; }
+      if (!line) { closeAll(); continue; }
+
+      const item = /^(\s*)([-*]|\d+[.)])\s+(.*)$/.exec(raw.replace(/\t/g, '    '));
+      if (item) {
+        const indent = item[1].length;
+        const tag = /^\d/.test(item[2]) ? 'ol' : 'ul';
+        closeTo(indent);
+        const top = stack[stack.length - 1];
+        if (top && top.indent === indent) {
+          html += '</li>';
+          if (top.tag !== tag) { html += `</${top.tag}><${tag}>`; top.tag = tag; }
+        } else {
+          html += `<${tag}>`;
+          stack.push({ indent, tag });
+        }
+        html += `<li>${inline(item[3])}`;
         continue;
       }
+
+      closeAll();
       if (line.startsWith('### ')) {
-        if (inList) { html += '</ul>'; inList = false; }
         html += `<h3>${inline(line.slice(4))}</h3>`;
       } else if (line.startsWith('## ')) {
-        if (inList) { html += '</ul>'; inList = false; }
         html += `<h2>${inline(line.slice(3))}</h2>`;
       } else if (line.startsWith('# ')) {
-        if (inList) { html += '</ul>'; inList = false; }
         html += `<h1>${inline(line.slice(2))}</h1>`;
-      } else if (/^[-*] /.test(line)) {
-        if (!inList) { html += '<ul>'; inList = true; }
-        html += `<li>${inline(line.slice(2))}</li>`;
       } else {
-        if (inList) { html += '</ul>'; inList = false; }
         html += `<p>${inline(line)}</p>`;
       }
     }
-    if (inList) html += '</ul>';
+    closeAll();
     return html;
   }
 
