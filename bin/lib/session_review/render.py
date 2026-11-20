@@ -56,7 +56,7 @@ details.tool.err{background:var(--bad);border-color:var(--badfg)}
 details.tool summary{cursor:pointer;padding:4px 8px;font-family:ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 details.tool pre{margin:0;padding:8px;background:var(--code);overflow:auto;max-height:340px;font-size:12px;white-space:pre-wrap;word-break:break-word}
 .marker{text-align:center;color:var(--badfg);font-size:12px;margin:12px 0}.badge{font-size:11px;color:var(--badfg);margin-left:8px}
-.navtools{position:sticky;top:-12px;margin:-12px -12px 6px;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line);font-size:13px;cursor:pointer;z-index:1}body.notools details.tool{display:none}
+.navtools{position:sticky;top:-12px;margin:-12px -12px 6px;padding:10px 12px;background:var(--bg);border-bottom:1px solid var(--line);font-size:13px;cursor:pointer;z-index:1}body.notools .toolrun>details{display:none}.toolrun::before{content:none}body.notools .toolrun::before{content:'— tool calls × ' attr(data-n) ' —';display:block;text-align:center;color:var(--mut);opacity:.6;font-size:12px;margin:6px 0}
 @media(max-width:800px){nav{display:none}}
 """
 
@@ -157,16 +157,27 @@ def render_parts(session, max_result=1500, do_redact=True):
             result = str(it["result"] or "")
             more = f"\n… [{len(result) - max_result} more chars]" if len(result) > max_result else ""
             args_txt = json.dumps(it["args"], indent=1, ensure_ascii=False) if it["args"] is not None else ""
+            if not (body and body[-1] == "</div><!--run-->"):  # consecutive tools share one run wrapper
+                body.append('<div class="toolrun" data-n="0">')
+            else:
+                body.pop()
             body.append(
                 f'<details class="tool{"" if it["ok"] else " err"}"><summary>{"✗ " if not it["ok"] else ""}'
                 f'{esc(it["name"])} — {esc(label[:140])}</summary>'
                 f'<pre>{esc(args_txt[:max_result])}</pre><pre>{esc(result[:max_result] + more)}</pre></details>')
+            body.append("</div><!--run-->")
         else:
             body.append(f'<div class="marker">— {esc(it["text"])} · {hms(it["ts"])} —</div>')
+    body_html = "".join(body)
+    parts_ = body_html.split('<div class="toolrun" data-n="0">')
+    body_html = parts_[0]
+    for seg in parts_[1:]:
+        cnt = seg.split("</div><!--run-->", 1)[0].count('<details class="tool')
+        body_html += f'<div class="toolrun" data-n="{cnt}">' + seg
     title = esc((users[0]["text"].strip().splitlines() or ["session"])[0][:90]) if users else "session"
     sub = (f'{esc(os.path.basename(session["project"].rstrip("/")))} · {esc(session["client"])} · '
            f'{session["started"][:10]} · {len(users)} prompts · {tool_n} tool calls · {err_n} failed')
-    return {"title": title, "sub": sub, "nav": "".join(nav), "body": "".join(body), "esc": esc, "timings": tm}
+    return {"title": title, "sub": sub, "nav": "".join(nav), "body": body_html, "esc": esc, "timings": tm}
 
 
 def assemble(parts, m=None, storage=None):
