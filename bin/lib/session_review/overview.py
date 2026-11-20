@@ -39,7 +39,8 @@ def build(adapter, sessions_dir, out, max_result=1500, name=None, title=None):
         with open(os.path.join(out, "s", f"{m['id'][:8]}.html"), "w", encoding="utf-8") as fh:
             fh.write(render.assemble(p, m, {"key": STORAGE_PREFIX + name, "id": m["id"]}))
     rows = [session_row(m, f"s/{m['id'][:8]}.html") for m in ms]
-    data = {"meta": {"name": name, "title": title or f"{name}: session overview",
+    dates = sorted(r["date"] for r in rows if r.get("date"))
+    data = {"meta": {"name": name, "from": dates[0] if dates else "", "to": dates[-1] if dates else "", "title": title or f"{name}: session overview",
                      "harnesses": sorted({r["harness"] for r in rows}), "metricTips": metrics.METRIC_TIPS,
                      "generated": datetime.now(timezone.utc).isoformat(timespec="seconds")},
             "sessions": rows}

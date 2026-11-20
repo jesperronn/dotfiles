@@ -53,6 +53,7 @@ const OV=window.OVERVIEW||{meta:{},sessions:[]};
 const SESSIONS=OV.sessions,META=OV.meta||{};
 const KEY='session_review_v1:'+(META.name||'default');
 document.title=META.title||'Session overview';document.querySelector('h1').textContent=META.title||'Session overview';
+if(META.from){const d=document.createElement('small');d.className='dim';d.style.cssText='font-weight:400;margin-left:10px';d.textContent=META.from+' → '+META.to;document.querySelector('h1').append(d)}
 let state={};
 try{state=JSON.parse(localStorage.getItem(KEY)||'{}')}catch(e){}
 window.addEventListener('storage',e=>{if(e.key===KEY){try{state=JSON.parse(e.newValue||'{}')}catch(_){state={}}render()}});  // marks changed on a detail page
