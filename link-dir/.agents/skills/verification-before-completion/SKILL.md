@@ -1,6 +1,5 @@
 ---
 name: verification-before-completion
-group: skills-meta
 summary: "Requires evidence from verification before claiming work is complete."
 description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always
 ---

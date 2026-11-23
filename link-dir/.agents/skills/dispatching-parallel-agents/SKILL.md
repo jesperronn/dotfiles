@@ -1,6 +1,5 @@
 ---
 name: dispatching-parallel-agents
-group: skills-meta
 summary: "Coordinates independent tasks across isolated parallel agents."
 description: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
 ---

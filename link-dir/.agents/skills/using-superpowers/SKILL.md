@@ -1,6 +1,5 @@
 ---
 name: using-superpowers
-group: skills-meta
 summary: "Selects and invokes applicable skills before taking task actions."
 description: Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions
 ---
@@ -55,9 +54,12 @@ These thoughts mean STOP—you're rationalizing:
 
 If your harness appears here, read its reference file for special instructions:
 
+- Claude Code: `references/claude-code-tools.md`
 - Codex: `references/codex-tools.md`
 - Pi: `references/pi-tools.md`
 - Antigravity: `references/antigravity-tools.md`
+- Hermes Agent: `references/hermes-tools.md`
+- Muse: `references/muse-tools.md`
 
 ## User Instructions
 

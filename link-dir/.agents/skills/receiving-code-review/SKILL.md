@@ -1,6 +1,5 @@
 ---
 name: receiving-code-review
-group: skills-meta
 summary: "Evaluates code review feedback rigorously before applying changes."
 description: Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation
 ---

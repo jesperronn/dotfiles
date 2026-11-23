@@ -1,6 +1,5 @@
 ---
 name: requesting-code-review
-group: skills-meta
 summary: "Prepares completed work for focused review against its requirements."
 description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
 ---
@@ -27,7 +26,7 @@ Dispatch a code reviewer subagent to catch issues before they cascade. The revie
 
 **1. Get git SHAs:**
 ```bash
-BASE_SHA=$(git rev-parse HEAD~1)  # or origin/main
+BASE_SHA=$(git rev-parse HEAD~1)  # or: git merge-base origin/main HEAD
 HEAD_SHA=$(git rev-parse HEAD)
 ```
 
@@ -54,7 +53,7 @@ Dispatch a `general-purpose` subagent, filling the template at [code-reviewer.md
 
 You: Let me request code review before proceeding.
 
-BASE_SHA=$(git log --oneline | grep "Task 1" | head -1 | awk '{print $1}')
+BASE_SHA=$(git log --oneline | grep "Task 1" | head -1 | cut -d' ' -f1)
 HEAD_SHA=$(git rev-parse HEAD)
 
 [Dispatch code reviewer subagent]
