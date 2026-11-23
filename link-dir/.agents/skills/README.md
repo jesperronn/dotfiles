@@ -44,4 +44,4 @@ Edit each skill's `summary`, then run `bin/gen_skills_readme`.
 | **writing-plans** | Creates detailed implementation plans from requirements before coding. |
 | **writing-skills** | Creates, improves, and validates reusable agent skills. |
 
-*Last updated: 2026-11-17 · 37 skills*
+*Last updated: 2026-11-23 · 37 skills*
