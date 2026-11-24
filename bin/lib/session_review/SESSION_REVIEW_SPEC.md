@@ -26,7 +26,10 @@ Non-goals: judging whether an answer was correct; calling any LLM; editing or de
 
 ## A1. Command line
 
-Entry: `bin/session_review <shortlist|show|overview> [options]`. `--harness copilot|claude` is optional: if absent it is inferred from `--root` (or the given path) by asking each adapter's `detect`, and falls back to copilot. An unknown harness is an error with a non-zero exit. `bin/copilot_shortlist`, `copilot_show` and `copilot_overview` are three-line shims that add `--harness copilot`.
+Entry: `bin/session_review <list|shortlist|show|overview> [options]`. `--harness copilot|claude` is optional: if absent it is inferred from `--root` (or the given path) by asking each adapter's `detect`, and falls back to copilot. An unknown harness is an error with a non-zero exit. `bin/copilot_shortlist`, `copilot_show` and `copilot_overview` are three-line shims that add `--harness copilot`.
+
+### list
+Finds sessions without paths: searches every harness's default folder (copilot `~/.copilot/session-state`, claude `~/.claude/projects`; `--root` limits it to one folder). Prints numbered rows, newest first: row number, id8, date and time, harness, project, first prompt. Options: `--harness`, `--root`, `--project`, `--since`, `--exclude`, `--include-bench`, `--limit N` (default 20). Ends with a dim `next: session_review show <#|id>` line on stderr. Benchmark and sandbox sessions are skipped unless `--include-bench`.
 
 ### shortlist
 Ranks sessions and prints them.
@@ -45,10 +48,12 @@ Ranks sessions and prints them.
 | `--copy DIR` | copy every listed session into DIR (created with `mkdir -p`) so `overview` can read it |
 | `--recurring N` | also list sentences typed in follow-ups across at least N sessions (default 3; 0 disables) |
 
+Usage errors (unknown id, ambiguous prefix, empty folder, missing directory) go to stderr, exit 2 and end with a `try: <command>` line. `--help` works before or after the subcommand and every subcommand help ends with examples; the top-level help lists where each harness keeps its sessions.
+
 Must: a session listed in several buckets is copied once. Must: `--copy` only copies the files the adapter names (copilot: `workspace.yaml`, `events.jsonl`), never the rest of the harness's state.
 
 ### show
-Renders one session to a self-contained HTML transcript. `session` is an id prefix, a session directory/file or an `events.jsonl` path. Options: `--root`, `--out FILE` (default `~/.cache/session_review/<id8>.html`), `--open`, `--max-result N` (characters of each tool argument or result, default 1500), `--no-redact`. Standalone `show` has key numbers, labels and timings but no star, role or notes (it belongs to no investigation). Outlier labels are not computed for a single session (`score(..., outliers=False)`), since there is nothing to compare with.
+Renders one session to a self-contained HTML transcript. `session` is optional and can be a row number from `list` (up to 3 digits), an id prefix (searched across all harnesses), or a session directory/file or `events.jsonl` path. With no argument it opens a picker on a terminal (`fzf` if installed, else a numbered prompt) and the latest session otherwise; `--last` forces the latest. It prints a dim line saying which session it used. Options: `--root`, `--out FILE` (default `~/.cache/session_review/<id8>.html`), `--open`, `--max-result N` (characters of each tool argument or result, default 1500), `--no-redact`. Standalone `show` has key numbers, labels and timings but no star, role or notes (it belongs to no investigation). Outlier labels are not computed for a single session (`score(..., outliers=False)`), since there is nothing to compare with.
 
 ### overview
 `overview SESSIONS_DIR` builds the page for a folder of copied sessions. Options: `--out DIR` (default `<sessions>/../overview`), `--name` (investigation name, default the parent folder's name), `--title`, `--max-result`, `--open`. Outputs:
