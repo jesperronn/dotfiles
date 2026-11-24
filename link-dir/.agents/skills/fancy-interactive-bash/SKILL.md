@@ -135,6 +135,7 @@ Rules:
 - Positive group flags should allow "only mode" semantics when relevant.
 - `--no-x` must work symmetrically with `--x`.
 - Unknown options should print a warning, show usage, and exit non-zero.
+- A flag the chosen mode ignores (e.g. `--open` on a report-only run) is an error, not a silent no-op: stderr, exit 2, end with `try: <the working command>` built from what the user typed.
 - `--help` should print usage and exit without running work.
 - `--verbose` should expose useful per-step detail without becoming shell trace noise.
 - Support `--timings` when runtime cost matters and users need to see where time is going.
