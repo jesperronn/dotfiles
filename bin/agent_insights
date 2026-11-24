@@ -29,6 +29,44 @@ def open_file(path):
         print(f"agent_insights: could not run {opener}: {exc}", file=sys.stderr)
 
 
+def dim(text):
+    return f"\033[2m{text}\033[0m" if sys.stderr.isatty() and "NO_COLOR" not in os.environ else text
+
+
+def wait_for_open_key(seconds) -> bool:
+    """Count down on one line; True if the user pressed 'o' before it ran out. Needs a terminal on stdin."""
+    import select
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        for left in range(seconds, 0, -1):
+            sys.stderr.write(dim(f"\rPress o to open in the browser ({left}s) "))
+            sys.stderr.flush()
+            if select.select([sys.stdin], [], [], 1)[0] and sys.stdin.read(1).lower() == "o":
+                return True
+        return False
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        sys.stderr.write("\r" + " " * 48 + "\r")
+
+
+def finish_html(args, path):
+    """Announce the written file (dim), then open it: at once with --open, else after an 'o' press within the countdown."""
+    print(dim(f"agent_insights: wrote {path}"), file=sys.stderr)
+    if not args.open:
+        try:
+            wait = int(os.environ.get("AGENT_INSIGHTS_OPEN_WAIT_SECONDS", "5"))
+        except ValueError:
+            wait = 5
+        if wait <= 0 or not (sys.stdin.isatty() and sys.stderr.isatty()) or not wait_for_open_key(wait):
+            return
+    open_file(path)
+
+
 def run_analyze(args, sessions) -> int:
     from agent_insights import analyze
 
@@ -66,16 +104,14 @@ def run_analyze(args, sessions) -> int:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print(f"agent_insights: wrote {path}", file=sys.stderr)
-    if args.open:
-        open_file(path)
+    finish_html(args, path)
     return status
 
 
 def run_tune(args, sessions) -> int:
     from agent_insights import tune
 
-    return tune.run_tune(args, sessions, open_file)
+    return tune.run_tune(args, sessions, lambda path: finish_html(args, path))
 
 
 def main(argv=None) -> int:

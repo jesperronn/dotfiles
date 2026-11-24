@@ -454,7 +454,5 @@ def run_tune(args, sessions, open_file) -> int:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print(f"agent_insights: wrote {path}", file=sys.stderr)
-    if args.open:
-        open_file(path)
+    open_file(path)  # announces the path and opens it (now, or after an 'o' press); see finish_html in bin/agent_insights
     return status

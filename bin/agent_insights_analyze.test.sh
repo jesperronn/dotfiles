@@ -269,6 +269,54 @@ test_html_without_suggestions_and_open() {
   assert_contains "$(<"$TEST_TMP/opened")" "$TEST_TMP/o.html" "--open launches the opener on the file"
 }
 
+test_open_countdown_without_open_flag() {
+  mkdir -p "$TEST_TMP/bin"
+  printf '#!/usr/bin/env bash\necho "$@" >>"%s/opened2"\n' "$TEST_TMP" >"$TEST_TMP/bin/open"
+  cp "$TEST_TMP/bin/open" "$TEST_TMP/bin/xdg-open"; chmod +x "$TEST_TMP/bin/open" "$TEST_TMP/bin/xdg-open"
+  rm -f "$TEST_TMP/opened2"
+
+  # No terminal: path is printed, nothing is opened, no waiting.
+  PATH="$TEST_TMP/bin:$PATH" run_analyze ok --out "$TEST_TMP/p.html"
+  assert_contains "$ERR" "wrote $TEST_TMP/p.html" "path printed without --open"
+  assert_eq "no" "$([[ -e $TEST_TMP/opened2 ]] && echo yes || echo no)" "no terminal: not opened"
+
+  # Real terminal (pty): pressing 'o' during the countdown opens the file; any other key does not.
+  local key got
+  for key in o x; do
+    rm -f "$TEST_TMP/opened2"
+    got="$(PATH="$TEST_TMP/bin:$PATH" HOME="$TEST_TMP/home" STUB_MODE=ok PROMPT_DIR="$TEST_TMP/prompts" KEY="$key" \
+      AGENT_INSIGHTS_OPEN_WAIT_SECONDS=1 python3 - "$SCRIPT_UNDER_TEST" "$ROOT" "$STUB" "$TEST_TMP/q.html" <<'PY'
+import os, pty, sys, time
+script, root, stub, out = sys.argv[1:5]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(script, [script, "omp", "analyze", "--root", root, "--llm", stub, "--out", out])
+buf = b""
+sent = False
+while True:
+    try:
+        chunk = os.read(fd, 4096)
+    except OSError:
+        break
+    if not chunk:
+        break
+    buf += chunk
+    if not sent and b"Press o" in buf:
+        os.write(fd, os.environ["KEY"].encode())
+        sent = True
+os.waitpid(pid, 0)
+print("prompted" if b"Press o to open" in buf else "no-prompt")
+PY
+)"
+    assert_eq "prompted" "$got" "countdown prompt shown on a terminal (key $key)"
+    if [[ "$key" == "o" ]]; then
+      assert_contains "$(cat "$TEST_TMP/opened2" 2>/dev/null)" "$TEST_TMP/q.html" "'o' opens the file"
+    else
+      assert_eq "no" "$([[ -e $TEST_TMP/opened2 ]] && echo yes || echo no)" "other key does not open"
+    fi
+  done
+}
+
 test_batching_and_digest_content() {
   run_analyze ok --format md --batch-size 3
   assert_eq "3" "$(call_count map)" "8 sessions / batch 3 = 3 map calls"
