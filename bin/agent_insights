@@ -114,6 +114,27 @@ def run_tune(args, sessions) -> int:
     return tune.run_tune(args, sessions, lambda path: finish_html(args, path))
 
 
+ANALYZE_FLAGS = {"llm": "--llm", "format": "--format", "out": "--out", "open": "--open", "config": "--config",
+                 "no_config": "--no-config", "dry_run": "--dry-run", "batch_size": "--batch-size"}
+TUNE_FLAGS = {"model": "--model", "no_llm": "--no-llm", "no_server": "--no-server"}
+
+
+def check_mode_flags(parser, args):
+    """A flag the chosen mode ignores is an error that names the command to run (exit 2), not a silent no-op."""
+    def given(table):
+        return [(flag, getattr(args, dest)) for dest, flag in table.items() if getattr(args, dest)]
+
+    tune_only = given(TUNE_FLAGS) if args.mode != "tune" else []
+    analyze_only = given(ANALYZE_FLAGS) if args.mode in ("report", "list") else []
+    if not (tune_only or analyze_only):
+        return
+    need, applies = ("tune", "tune") if tune_only else ("analyze", "analyze or tune")
+    wrong = tune_only + analyze_only if tune_only else analyze_only
+    shown = " ".join(flag if value is True else f"{flag} {' '.join(value) if isinstance(value, list) else value}" for flag, value in wrong)
+    parser.error(f"{', '.join(flag for flag, _ in wrong)} only {'applies' if len(wrong) == 1 else 'apply'} to {applies}, not {args.mode}; "
+                 f"try: agent_insights {args.harness} {need} {shown}")
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="agent_insights", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="harness", required=True, metavar="HARNESS")
@@ -130,8 +151,8 @@ def main(argv=None) -> int:
         p.add_argument("--json", action="store_true", help="machine-readable output (with per-session rows)")
         p.add_argument("--llm", help="analyze: shell command reading the prompt on stdin, answer on stdout "
                                      "(default: 'claude -p')")
-        p.add_argument("--format", choices=("md", "html"), default="html",
-                       help="analyze: output format (default html; md goes to stdout unless --out is given)")
+        p.add_argument("--format", choices=("md", "html"), default=None,
+                       help="analyze: output format (html by default; md goes to stdout unless --out is given)")
         p.add_argument("--out", help="analyze: report file (default ~/.cache/agent_insights/<harness>-<date>.html; "
                                      "'-' prints to stdout)")
         p.add_argument("--open", action="store_true", help="analyze: open the written HTML file (open/xdg-open)")
@@ -146,8 +167,11 @@ def main(argv=None) -> int:
         p.add_argument("--no-llm", action="store_true", help="tune: print the local metrics and server evidence, "
                                                               "no LLM call")
         p.add_argument("--no-server", action="store_true", help="tune: skip reading local model-server files")
-        p.add_argument("--batch-size", type=int, default=40, help="analyze: sessions per map call (default 40)")
+        p.add_argument("--batch-size", type=int, default=None, help="analyze: sessions per map call (default 40)")
     args = parser.parse_args(argv)
+    check_mode_flags(parser, args)
+    args.format = args.format or "html"
+    args.batch_size = args.batch_size or 40
 
     module = importlib.import_module(f"agent_insights.{args.harness}")
     root = os.path.expanduser(args.root or module.DEFAULT_ROOT)

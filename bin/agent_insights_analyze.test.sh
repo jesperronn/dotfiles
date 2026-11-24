@@ -317,6 +317,21 @@ PY
   done
 }
 
+test_mode_flags_that_do_not_apply_are_errors() {
+  local out status=0
+  out="$(HOME="$TEST_TMP/home" "$SCRIPT_UNDER_TEST" omp --root "$ROOT" --batch-size 200 --open 2>&1)" || status=$?
+  assert_eq "2" "$status" "analyze flags in report mode exit 2"
+  assert_contains "$out" "only apply to analyze or tune, not report" "error names the mode problem"
+  assert_contains "$out" "try: agent_insights omp analyze --open --batch-size 200" "error suggests the working command"
+  status=0
+  out="$(HOME="$TEST_TMP/home" "$SCRIPT_UNDER_TEST" omp analyze --root "$ROOT" --model foo 2>&1)" || status=$?
+  assert_eq "2" "$status" "tune flag in analyze mode exits 2"
+  assert_contains "$out" "try: agent_insights omp tune --model foo" "error suggests tune"
+  status=0
+  out="$(HOME="$TEST_TMP/home" "$SCRIPT_UNDER_TEST" omp --root "$ROOT" 2>&1)" || status=$?
+  assert_eq "0" "$status" "plain report still works"
+}
+
 test_batching_and_digest_content() {
   run_analyze ok --format md --batch-size 3
   assert_eq "3" "$(call_count map)" "8 sessions / batch 3 = 3 map calls"
