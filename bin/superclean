@@ -51,6 +51,7 @@ export C_RESET=''
 SUPER_CLEAN_VERBOSE=0
 SUPER_CLEAN_INTERACTIVE=0
 SUPER_CLEAN_AGGRESSIVE=0
+SUPER_CLEAN_SHOW_HELP=0
 SUPER_CLEAN_COLOR_ENABLED=1
 SUPER_CLEAN_SUDO_ENABLED=1
 SUPER_CLEAN_HAS_FD=0
@@ -785,8 +786,9 @@ superclean_parse_args() {
         superclean_set_group "${1#--no-}" 0
         ;;
       -h|--help)
+        SUPER_CLEAN_SHOW_HELP=1
         superclean_usage
-        return 1
+        return 0
         ;;
       *)
         superclean_warn "Unknown option: $1"
@@ -2987,6 +2989,9 @@ superclean_confirm_aggressive_steps() {
 
 superclean_main() {
   superclean_parse_args "$@" || return $?
+  if (( SUPER_CLEAN_SHOW_HELP )); then
+    return 0
+  fi
   superclean_register_cleanup_trap
   superclean_detect_tools
   if (( SUPER_CLEAN_INTERACTIVE )); then

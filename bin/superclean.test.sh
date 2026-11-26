@@ -25,6 +25,7 @@ superclean_reset_state() {
   SUPER_CLEAN_VERBOSE=0
   SUPER_CLEAN_INTERACTIVE=0
   SUPER_CLEAN_AGGRESSIVE=0
+  SUPER_CLEAN_SHOW_HELP=0
   SUPER_CLEAN_COLOR_ENABLED=1
   SUPER_CLEAN_SUDO_ENABLED=1
   SUPER_CLEAN_HAS_FD=0
@@ -909,6 +910,16 @@ test_brew_bin_resolution() {
     test_pass "workbrew present on host; PATH fallback not asserted"
   fi
   rm -rf "$tmp_root"
+}
+
+test_help_flag_sets_show_help_and_returns_zero() {
+  local output="" status=0
+
+  superclean_reset_state
+  capture_command output status superclean_parse_args --help
+  assert_status "0" "$status" "parse_args --help returns 0"
+  assert_eq "1" "$SUPER_CLEAN_SHOW_HELP" "parse_args --help sets show-help flag"
+  assert_contains "$output" "Usage:" "parse_args --help prints usage"
 }
 
 run_tests "$@"
