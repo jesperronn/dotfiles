@@ -9,9 +9,9 @@ Tasks are grouped by priority. Dependencies are explicit — follow the order wh
 
 **Priority:** 🔴 Highest — these are user-facing tools with CLI options but no way to discover them.
 
-**Scope:** 11 scripts in `bin/` that accept flags/options but have no `--help`, no usage text, and no purpose comments.
+**Scope:** 11 scripts in `bin/` that accept flags/options. Most were already fully documented by 2026-11 (header comment with purpose, usage, options, dependencies and a working `--help`); the remaining gaps were fixed in the `task1/*` branches.
 
-**Status:** 🟡 Ready to start — no dependencies on other tasks.
+**Status:** ✅ Done (2026-11) — awaiting review of the `task1/*` branches.
 
 **Dependencies:** None. Can be done in parallel with Task 2.
 
@@ -52,12 +52,19 @@ Tasks are grouped by priority. Dependencies are explicit — follow the order wh
 | 1.11 | `bin/git-gpg-wrapper` | Git GPG signing wrapper with cache keygrip lookup. Bypasses cache for non-signing commands. | (transparent wrapper — document when it activates) |
 
 **Acceptance criteria (per script):**
-- [ ] Header comment with one-line purpose
-- [ ] Usage section with example invocation(s)
-- [ ] All flags/options documented with defaults
-- [ ] Dependencies listed (external tools, env vars)
-- [ ] `--help` flag works and shows the documented usage
-- [ ] No existing functionality changed
+- [x] Header comment with one-line purpose
+- [x] Usage section with example invocation(s)
+- [x] All flags/options documented with defaults
+- [x] Dependencies listed (external tools, env vars)
+- [x] `--help` flag works and shows the documented usage
+- [x] No existing functionality changed
+
+**What changed (2026-11), one commit per branch:**
+- `task1/superclean` — `--help` now returns 0 (was 1); contract test added.
+- `task1/gwt` — `--help` now returns 0 (was 1); contract tests updated.
+- `task1/jqlog` — added `--help` (was ignored on stdin / read as a file on a tty); colocated test added; fixed doc inaccuracies (`@timestamp` → `@timeStamp`; bad lines abort jq instead of being skipped).
+- `task1/git-gpg-wrapper` — added `--help` (previously printed gpg's own help); Options section added to the header; colocated test added.
+- Already compliant, no changes: `dotfiles`, `podman_troubleshoot`, `local_agent`, `looper`, `returner`, `rehome_doctor`, `coverup`.
 
 ---
 
