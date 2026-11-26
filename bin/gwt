@@ -27,6 +27,7 @@ set -euo pipefail
 GWT_TILDE='~'
 GWT_COLOR_ENABLED=0
 GWT_VERBOSE=0
+GWT_SHOW_HELP=0
 GWT_FZF_FOUND=0
 GWT_REPOSITORY_ROOT=""
 GWT_WORKTREE_LINES=()
@@ -44,6 +45,7 @@ GWT_C_ACCENT=$'\033[35m'
 gwt_reset_state() {
   GWT_COLOR_ENABLED=0
   GWT_VERBOSE=0
+  GWT_SHOW_HELP=0
   GWT_FZF_FOUND=0
   GWT_REPOSITORY_ROOT=""
   GWT_WORKTREE_LINES=()
@@ -127,8 +129,9 @@ gwt_parse_opts() {
 
   case "${1-}" in
     -h|--help)
+      GWT_SHOW_HELP=1
       gwt_usage
-      return 1
+      return 0
       ;;
   esac
 
@@ -551,6 +554,9 @@ gwt_apply_delete() {
 gwt_run_main() {
   gwt_reset_state
   gwt_parse_opts "$@" || return $?
+  if (( GWT_SHOW_HELP )); then
+    return 0
+  fi
   gwt_parse_prereqs
 
   gwt_find_repo_root || return $?

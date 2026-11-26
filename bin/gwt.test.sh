@@ -135,17 +135,19 @@ gwt_test_parse_opts() {
   gwt_parse_opts
   test_assert_status "parse_opts with no args returns 0" "0" "$?"
 
-  # Test: --help prints usage and returns 1
+  # Test: --help prints usage and returns 0
   gwt_reset_state
   local help_status=0
   gwt_parse_opts --help 2>/dev/null || help_status=$?
-  test_assert_status "parse_opts --help returns 1" "1" "$help_status"
+  test_assert_status "parse_opts --help returns 0" "0" "$help_status"
+  test_assert_eq "parse_opts --help sets show-help flag" "1" "$GWT_SHOW_HELP"
 
-  # Test: -h returns 1
+  # Test: -h returns 0
   gwt_reset_state
   local h_status=0
   gwt_parse_opts -h 2>/dev/null || h_status=$?
-  test_assert_status "parse_opts -h returns 1" "1" "$h_status"
+  test_assert_status "parse_opts -h returns 0" "0" "$h_status"
+  test_assert_eq "parse_opts -h sets show-help flag" "1" "$GWT_SHOW_HELP"
 
 }
 
